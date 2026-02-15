@@ -1,0 +1,9 @@
+{
+  "name": "Home Assistant Config Auditor (H.A.C.A)",
+  "content_in_root": false,
+  "zip_release": false,
+  "filename": "custom_components/config_auditor",
+  "render_readme": true,
+  "country": ["FR"],
+  "homeassistant": "2024.1.0"
+}

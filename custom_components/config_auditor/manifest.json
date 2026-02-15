@@ -5,8 +5,8 @@
     "@haca"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/yourusername/ha-config-auditor",
-  "issue_tracker": "https://github.com/yourusername/ha-config-auditor/issues",
+  "documentation": "https://github.com/JeanMarc-Labs/ha-config-auditor",
+  "issue_tracker": "https://github.com/JeanMarc-Labs/ha-config-auditor/issues",
   "requirements": [
     "PyYAML>=6.0",
     "fpdf2>=2.7.4"
