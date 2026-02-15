@@ -1,0 +1,164 @@
+scan_all:
+  name: Scan All
+  description: Run a complete configuration audit including automations, entities, and performance checks.
+
+scan_automations:
+  name: Scan Automations
+  description: Scan all automations for best practice violations and potential issues.
+
+scan_entities:
+  name: Scan Entities
+  description: Scan all entities for issues like zombies, unavailable, or stale entities.
+
+generate_report:
+  name: Generate Report
+  description: Generate a comprehensive audit report (Markdown and JSON) with health score and recommendations.
+
+list_reports:
+  name: List Reports
+  description: List all generated reports.
+
+preview_device_id:
+  name: Preview device_id Fix
+  description: Analyse une automatisation pour identifier l'usage de device_id et prévisualiser la conversion vers entity_id sans modifier le fichier.
+  supports_response: only
+  fields:
+    automation_id:
+      name: Automation ID
+      description: L'identifiant unique (ID) de l'automatisation à analyser.
+      required: true
+      example: "1234567890abc"
+      selector:
+        text:
+
+fix_device_id:
+  name: Fix device_id
+  description: Applique la conversion de device_id vers entity_id dans les déclencheurs et actions d'une automatisation. Une sauvegarde est créée automatiquement avant modification.
+  fields:
+    automation_id:
+      name: Automation ID
+      description: L'identifiant unique (ID) de l'automatisation à corriger.
+      required: true
+      example: "1234567890abc"
+      selector:
+        text:
+    dry_run:
+      name: Dry Run
+      description: Simulate the fix without applying changes.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+preview_mode:
+  name: Preview Mode Change
+  description: Preview automation mode change without applying.
+  supports_response: only
+  fields:
+    automation_id:
+      name: Automation ID
+      description: The ID of the automation.
+      required: true
+      example: "1234567890abc"
+      selector:
+        text:
+    mode:
+      name: Mode
+      description: The new mode to apply.
+      required: true
+      example: "restart"
+      selector:
+        select:
+          options:
+            - "single"
+            - "restart"
+            - "queued"
+            - "parallel"
+
+fix_mode:
+  name: Fix Mode
+  description: Change automation mode (creates backup).
+  fields:
+    automation_id:
+      name: Automation ID
+      description: The ID of the automation.
+      required: true
+      example: "1234567890abc"
+      selector:
+        text:
+    mode:
+      name: Mode
+      description: The new mode to apply.
+      required: true
+      example: "restart"
+      selector:
+        select:
+          options:
+            - "single"
+            - "restart"
+            - "queued"
+            - "queued"
+            - "parallel"
+
+preview_template:
+  name: Preview Template Fix
+  description: Preview conversion of simple template conditions into native state conditions.
+  supports_response: only
+  fields:
+    automation_id:
+      name: Automation ID
+      description: The ID of the automation.
+      required: true
+      example: "1234567890abc"
+
+fix_template:
+  name: Fix Template
+  description: Convert simple template conditions into native state conditions (creates backup).
+  fields:
+    automation_id:
+      name: Automation ID
+      description: The ID of the automation.
+      required: true
+      example: "1234567890abc"
+    dry_run:
+      name: Dry Run
+      description: Simulate the fix without applying changes.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+list_backups:
+  name: List Backups
+  description: List all available automation backups.
+  supports_response: only
+
+
+create_backup:
+  name: Create Backup
+  description: Manually create a backup of automations.yaml.
+  supports_response: optional
+
+restore_backup:
+  name: Restore Backup
+  description: Restore automations from a backup file (creates backup of current state first).
+  supports_response: optional
+  fields:
+    backup_path:
+      name: Backup Path
+      description: Full path to the backup file.
+      required: true
+      example: "/config/.haca_backups/automations_20260209_120000.yaml"
+      selector:
+        text:
+
+get_report_content:
+  name: Get Report Content
+  description: Retrieve the content of a generated report file.
+  supports_response: only
+  fields:
+    filename:
+      name: Filename
+      description: The name of the report file (e.g., report_20231027_123456.md).
+      required: true
+      example: "report_20231027_123456.md"

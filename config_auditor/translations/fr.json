@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Assistant Config Auditor",
+        "description": "Configurez H.A.C.A pour surveiller et auditer votre configuration Home Assistant.",
+        "data": {
+          "scan_interval": "Intervalle de scan (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "L'intervalle doit être entre 5 et 1440 minutes"
+    },
+    "abort": {
+      "already_configured": "H.A.C.A est déjà configuré"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options H.A.C.A",
+        "description": "Configurez le comportement de H.A.C.A",
+        "data": {
+          "scan_interval": "Intervalle de scan (minutes)",
+          "auto_fix_enabled": "Activer les corrections automatiques",
+          "backup_enabled": "Activer les sauvegardes automatiques"
+        }
+      }
+    }
+  },
+  "title": "H.A.C.A",
+  "entity": {
+    "sensor": {
+      "health_score": {
+        "name": "Score de Santé"
+      },
+      "automation_issues": {
+        "name": "Problèmes d'Automatisations"
+      },
+      "entity_issues": {
+        "name": "Problèmes d'Entités"
+      },
+      "performance_issues": {
+        "name": "Problèmes de Performance"
+      },
+      "total_issues": {
+        "name": "Total des Problèmes"
+      }
+    }
+  },
+  "services": {
+    "scan_all": {
+      "name": "Scanner Tout",
+      "description": "Effectuer un audit complet de la configuration"
+    },
+    "scan_automations": {
+      "name": "Scanner les Automatisations",
+      "description": "Scanner les automatisations pour détecter les problèmes"
+    },
+    "scan_entities": {
+      "name": "Scanner les Entités",
+      "description": "Scanner les entités pour détecter les problèmes"
+    },
+    "generate_report": {
+      "name": "Générer un Rapport",
+      "description": "Générer un rapport d'audit complet"
+    },
+    "fix_device_id": {
+      "name": "Corriger Device ID",
+      "description": "Convertir device_id en entity_id dans une automatisation"
+    }
+  }
+}

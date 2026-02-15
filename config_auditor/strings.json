@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Assistant Config Auditor",
+        "description": "Configure H.A.C.A to monitor your Home Assistant configuration.",
+        "data": {
+          "scan_interval": "Scan interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Scan interval must be between 5 and 1440 minutes"
+    },
+    "abort": {
+      "already_configured": "H.A.C.A is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "H.A.C.A Options",
+        "data": {
+          "scan_interval": "Scan interval (minutes)",
+          "auto_fix_enabled": "Enable automatic fixes",
+          "backup_enabled": "Enable automatic backups"
+        }
+      }
+    }
+  },
+  "title": "H.A.C.A"
+}

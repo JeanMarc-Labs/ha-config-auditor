@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Assistant Config Auditor",
+        "description": "Configure H.A.C.A to monitor and audit your Home Assistant configuration.",
+        "data": {
+          "scan_interval": "Scan interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Scan interval must be between 5 and 1440 minutes"
+    },
+    "abort": {
+      "already_configured": "H.A.C.A is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "H.A.C.A Options",
+        "description": "Configure H.A.C.A behavior",
+        "data": {
+          "scan_interval": "Scan interval (minutes)",
+          "auto_fix_enabled": "Enable automatic fixes",
+          "backup_enabled": "Enable automatic backups"
+        }
+      }
+    }
+  },
+  "title": "H.A.C.A",
+  "entity": {
+    "sensor": {
+      "health_score": {
+        "name": "Health Score"
+      },
+      "automation_issues": {
+        "name": "Automation Issues"
+      },
+      "entity_issues": {
+        "name": "Entity Issues"
+      },
+      "performance_issues": {
+        "name": "Performance Issues"
+      },
+      "total_issues": {
+        "name": "Total Issues"
+      }
+    }
+  },
+  "services": {
+    "scan_all": {
+      "name": "Scan All",
+      "description": "Run a complete configuration audit"
+    },
+    "scan_automations": {
+      "name": "Scan Automations",
+      "description": "Scan automations for issues"
+    },
+    "scan_entities": {
+      "name": "Scan Entities",
+      "description": "Scan entities for issues"
+    },
+    "generate_report": {
+      "name": "Generate Report",
+      "description": "Generate a comprehensive audit report"
+    },
+    "fix_device_id": {
+      "name": "Fix Device ID",
+      "description": "Convert device_id to entity_id in an automation"
+    }
+  }
+}
