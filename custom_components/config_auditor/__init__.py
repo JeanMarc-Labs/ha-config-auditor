@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -36,6 +39,9 @@ from .const import (
     SERVICE_RESTORE_BACKUP,
     MODULE_4_COMPLIANCE_REPORT,
     MODULE_5_REFACTORING_ASSISTANT,
+    BACKUP_DIR,
+    REPORTS_DIR,
+    HISTORY_FILE,
 )
 from .automation_analyzer import AutomationAnalyzer
 from .entity_analyzer import EntityAnalyzer
@@ -619,24 +625,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading %s", NAME)
     
-    if len([e for e in hass.config_entries.async_entries(DOMAIN) if e.state.recoverable]) == 1:
-        hass.services.async_remove(DOMAIN, SERVICE_SCAN_ALL)
-        hass.services.async_remove(DOMAIN, SERVICE_SCAN_AUTOMATIONS)
-        hass.services.async_remove(DOMAIN, SERVICE_SCAN_ENTITIES)
-        
-        if MODULE_4_COMPLIANCE_REPORT:
-            hass.services.async_remove(DOMAIN, SERVICE_GENERATE_REPORT)
-            hass.services.async_remove(DOMAIN, SERVICE_LIST_REPORTS)
-        
-        if MODULE_5_REFACTORING_ASSISTANT:
-            hass.services.async_remove(DOMAIN, SERVICE_PREVIEW_DEVICE_ID)
-            hass.services.async_remove(DOMAIN, SERVICE_FIX_DEVICE_ID)
-            hass.services.async_remove(DOMAIN, SERVICE_PREVIEW_MODE)
-            hass.services.async_remove(DOMAIN, SERVICE_FIX_MODE)
-            hass.services.async_remove(DOMAIN, SERVICE_LIST_BACKUPS)
-            hass.services.async_remove(DOMAIN, SERVICE_RESTORE_BACKUP)
-        
-        # Unregister panel when last instance is removed
+    # Unregister panel when last instance is removed
+    if len(hass.config_entries.async_entries(DOMAIN)) == 1:
         await async_unregister_panel(hass)
         _LOGGER.info("Panel unregistered - last instance removed")
     
@@ -652,3 +642,56 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload config entry."""
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle removal of an entry - Clean Uninstall."""
+    _LOGGER.info("Tracer: Removing %s - Clean Uninstall Initialized", NAME)
+
+    # 0. Ensure panel is unregistered
+    await async_unregister_panel(hass)
+
+    # 1. Paths
+    reports_path = hass.config.path(REPORTS_DIR)
+    backups_path = hass.config.path(BACKUP_DIR)
+    history_path = hass.config.path(HISTORY_FILE)
+    integration_path = Path(__file__).parent
+
+    # 2. Helper functions for safe deletion
+    def safe_remove_dir(path_str: str | Path):
+        path = Path(path_str)
+        if path.exists() and path.is_dir():
+            try:
+                shutil.rmtree(path)
+                _LOGGER.info("✅ Removed directory: %s", path)
+            except Exception as e:
+                _LOGGER.error("❌ Failed to remove directory %s: %s", path, e)
+
+    def safe_remove_file(path_str: str | Path):
+        path = Path(path_str)
+        if path.exists() and path.is_file():
+            try:
+                os.remove(path)
+                _LOGGER.info("✅ Removed file: %s", path)
+            except Exception as e:
+                _LOGGER.error("❌ Failed to remove file %s: %s", path, e)
+
+    # 3. Delete data directories and files
+    safe_remove_dir(reports_path)
+    safe_remove_dir(backups_path)
+    safe_remove_file(history_path)
+
+    # 4. Delete the integration folder itself
+    _LOGGER.info("🗑️ Removing technical integration folder: %s", integration_path)
+    safe_remove_dir(integration_path)
+
+    # 5. Persistent notification
+    await hass.services.async_call(
+        "persistent_notification",
+        "create",
+        {
+            "title": f"{NAME} Uninstalled",
+            "message": "The integration and all its data (reports, backups) have been cleanly removed. Please restart Home Assistant.",
+            "notification_id": "haca_uninstall_notice"
+        }
+    )
