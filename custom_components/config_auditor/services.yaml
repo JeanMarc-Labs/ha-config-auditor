@@ -17,6 +17,7 @@ generate_report:
 list_reports:
   name: List Reports
   description: List all generated reports.
+  supports_response: only
 
 preview_device_id:
   name: Preview device_id Fix
@@ -127,6 +128,32 @@ fix_template:
       default: false
       selector:
         boolean:
+
+suggest_description_ai:
+  name: Suggest Description AI
+  description: Use AI to suggest a description for an automation or script based on its logic.
+  supports_response: only
+  fields:
+    entity_id:
+      name: Entity ID
+      description: The entity ID of the automation or script.
+      required: true
+      example: "automation.my_cool_automation"
+
+fix_description:
+  name: Fix Description
+  description: Apply a description to an automation or script.
+  fields:
+    entity_id:
+      name: Entity ID
+      description: The entity ID of the automation or script.
+      required: true
+      example: "automation.my_cool_automation"
+    description:
+      name: Description
+      description: The description text to apply.
+      required: true
+      example: "This automation turns on the light when movement is detected."
 
 list_backups:
   name: List Backups

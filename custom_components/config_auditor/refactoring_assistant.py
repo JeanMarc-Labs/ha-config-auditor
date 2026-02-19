@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import difflib
 import logging
 import re
 from pathlib import Path
@@ -25,6 +26,7 @@ class RefactoringAssistant:
         self._backup_dir = Path(hass.config.config_dir) / BACKUP_DIR
         self._backup_dir.mkdir(exist_ok=True)
         self._automations_file = Path(hass.config.config_dir) / "automations.yaml"
+        self._scripts_file = Path(hass.config.config_dir) / "scripts.yaml"
 
     async def preview_device_id_fix(self, automation_id: str) -> dict[str, Any]:
         """Preview device_id to entity_id conversion without applying."""
@@ -652,6 +654,44 @@ class RefactoringAssistant:
                 "error": str(e)
             }
 
+    async def delete_backup(self, backup_path: str) -> dict[str, Any]:
+        """Delete a specific backup file."""
+        backup_file = Path(backup_path)
+        
+        # Security check: ensure file is in backup directory
+        try:
+            backup_file.resolve().relative_to(self._backup_dir.resolve())
+        except ValueError:
+            return {
+                "success": False,
+                "error": "Invalid backup path - file must be in backup directory"
+            }
+        
+        if not backup_file.exists():
+            return {
+                "success": False,
+                "error": "Backup file not found"
+            }
+        
+        try:
+            def delete_file():
+                backup_file.unlink()
+            
+            await self.hass.async_add_executor_job(delete_file)
+            
+            _LOGGER.info("Deleted backup: %s", backup_file)
+            return {
+                "success": True,
+                "deleted_file": backup_file.name,
+                "message": f"Backup deleted: {backup_file.name}"
+            }
+        except Exception as e:
+            _LOGGER.error("Error deleting backup: %s", e)
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     async def _create_backup(self) -> Path:
         """Create backup of automations.yaml."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -670,18 +710,20 @@ class RefactoringAssistant:
         return backup_file
 
     async def _cleanup_old_backups(self):
-        """Keep only the last 10 backups."""
-        backups = sorted(self._backup_dir.glob("automations_*.yaml"), reverse=True)
-        
-        for old_backup in backups[10:]:
-            try:
-                old_backup.unlink()
-                _LOGGER.debug("Deleted old backup: %s", old_backup)
-            except Exception as e:
-                _LOGGER.warning("Failed to delete old backup %s: %s", old_backup, e)
+        """Keep only the last 10 backups (runs in executor to avoid blocking)."""
+        def _do_cleanup():
+            backups = sorted(self._backup_dir.glob("automations_*.yaml"), reverse=True)
+            for old_backup in backups[10:]:
+                try:
+                    old_backup.unlink()
+                    _LOGGER.debug("Deleted old backup: %s", old_backup)
+                except Exception as e:
+                    _LOGGER.warning("Failed to delete old backup %s: %s", old_backup, e)
+
+        await self.hass.async_add_executor_job(_do_cleanup)
 
     async def _load_automation_by_id(self, automation_id: str) -> dict | None:
-        """Load a specific automation configuration."""
+        """Load a specific automation configuration by ID, alias, or entity_id."""
         
         def read_automations():
             with open(self._automations_file, "r", encoding="utf-8") as f:
@@ -690,9 +732,72 @@ class RefactoringAssistant:
         try:
             automations = await self.hass.async_add_executor_job(read_automations)
             
+            # 1. Search by precise 'id'
             for automation in automations:
                 if automation.get("id") == automation_id:
                     return automation
+            
+            # 2. Search by 'alias' (common if 'id' is missing)
+            for automation in automations:
+                alias = automation.get("alias")
+                if alias and (alias == automation_id or alias.lower().replace(" ", "_").replace(".", "_") == automation_id):
+                    return automation
+            
+            # 3. Handle entity_id format (e.g., "automation.presence_entree_2")
+            # Extract the automation name from entity_id and search by alias
+            if automation_id.startswith("automation."):
+                automation_name = automation_id.replace("automation.", "")
+                
+                # Try to find by alias that matches the entity name
+                for automation in automations:
+                    alias = automation.get("alias")
+                    if alias:
+                        generated_alias = alias.lower().replace(' ', '_').replace('-', '_')
+                        if generated_alias == automation_name:
+                            return automation
+                
+                # Try to find by exact alias match
+                for automation in automations:
+                    alias = automation.get("alias")
+                    if alias and alias.lower() == automation_name.lower():
+                        return automation
+            
+            # 4. Handle "unknown" entity_id fallback (fix for the reported issue)
+            # If automation_id looks like "automation.unknown_123456", try to find by the original ID
+            if automation_id.startswith("automation.unknown_"):
+                # Extract the original ID or index from the unknown string
+                original_part = automation_id.replace("automation.unknown_", "")
+                
+                # Try to find automation by original ID
+                for automation in automations:
+                    if automation.get("id") == original_part:
+                        return automation
+                
+                # Try to find automation by alias that matches the original part
+                for automation in automations:
+                    alias = automation.get("alias")
+                    if alias:
+                        generated_alias = alias.lower().replace(' ', '_').replace('-', '_')
+                        if generated_alias == original_part:
+                            return automation
+                
+                # Try to parse as index (if it's a number)
+                try:
+                    index = int(original_part)
+                    if 0 <= index < len(automations):
+                        return automations[index]
+                except ValueError:
+                    pass
+            
+            # 5. Try to resolve via entity registry (if automation_id is an entity_id)
+            if automation_id.startswith("automation."):
+                entity_reg = er.async_get(self.hass)
+                entity_entry = entity_reg.async_get(automation_id)
+                if entity_entry and entity_entry.unique_id:
+                    # Search by unique_id (which should match the automation's id in YAML)
+                    for automation in automations:
+                        if automation.get("id") == entity_entry.unique_id:
+                            return automation
             
             return None
             
@@ -754,3 +859,239 @@ class RefactoringAssistant:
         # Step 3: Fallback to first entity
         _LOGGER.info("Fallback: using first entity for device %s → %s", device_id, all_entities[0])
         return all_entities[0]
+
+    async def get_fuzzy_suggestions(self, broken_entity_id: str) -> list[str]:
+        """Get similar entity IDs for a broken reference."""
+        all_entities = [e.entity_id for e in self.hass.states.async_all()]
+        
+        # Also check registry for potentially disabled ones
+        entity_reg = er.async_get(self.hass)
+        all_entities.extend([e.entity_id for e in entity_reg.entities.values() if e.entity_id not in all_entities])
+        
+        return difflib.get_close_matches(broken_entity_id, all_entities, n=3, cutoff=0.6)
+
+    async def purge_orphaned_entities(self, dry_run: bool = True) -> dict[str, Any]:
+        """Purge entities from registry that have no backing integration."""
+        entity_reg = er.async_get(self.hass)
+        orphaned = []
+        
+        for entry in list(entity_reg.entities.values()):
+            if entry.config_entry_id:
+                config_entry = self.hass.config_entries.async_get_entry(entry.config_entry_id)
+                if config_entry is None or config_entry.state.recoverable is False:
+                    orphaned.append(entry.entity_id)
+                    if not dry_run:
+                        entity_reg.async_remove(entry.entity_id)
+                        _LOGGER.info("Removed orphaned entity: %s", entry.entity_id)
+                        
+        return {
+            "success": True,
+            "purged_count": len(orphaned),
+            "entities": orphaned,
+            "dry_run": dry_run
+        }
+
+    async def suggest_description_ai(self, entity_id: str) -> dict[str, Any]:
+        """Get an AI-suggested description for an automation or script."""
+        is_script = entity_id.startswith("script.")
+        
+        if is_script:
+            config = await self._load_script_by_entity_id(entity_id)
+        else:
+            # For automations, we need to resolve the entity_id to the YAML 'id'
+            registry = er.async_get(self.hass)
+            entry = registry.async_get(entity_id)
+            automation_id = None
+            
+            if entry and entry.unique_id:
+                automation_id = entry.unique_id
+            else:
+                automation_id = entity_id.replace("automation.", "")
+
+            config = await self._load_automation_by_id(automation_id)
+            
+            # Second attempt: if not found, try by alias mapping (as slug)
+            if not config:
+                config = await self._load_automation_by_id(entity_id.replace("automation.", ""))
+            
+        if not config:
+            return {"success": False, "error": f"Configuration not found for {entity_id}"}
+            
+        alias = config.get("alias", entity_id)
+        
+        # Prepare content for prompt
+        if is_script:
+            triggers_part = "Actions (Script) :"
+            triggers_yaml = yaml.dump(config.get("sequence", []), default_flow_style=False, allow_unicode=True)
+            actions_part = ""
+            actions_yaml = ""
+        else:
+            triggers_part = "Déclencheurs (YAML) :"
+            triggers_yaml = yaml.dump(config.get("trigger", []) or config.get("triggers", []), default_flow_style=False, allow_unicode=True)
+            actions_part = "Actions (YAML) :"
+            actions_yaml = yaml.dump(config.get("action", []) or config.get("actions", []), default_flow_style=False, allow_unicode=True)
+
+        prompt = f"""
+        En tant qu'expert Home Assistant, suggère une courte description (une seule phrase claire, maximum 150 caractères) pour cette configuration :
+        Nom : {alias}
+        {triggers_part}
+        {triggers_yaml}
+        {actions_part}
+        {actions_yaml}
+        
+        Réponds UNIQUEMENT par la description suggérée en français, sans guillemets.
+        """
+        
+        try:
+            from .conversation import _async_find_llm_agent
+            agent_data = await _async_find_llm_agent(self.hass)
+            
+            reply = ""
+            if agent_data and agent_data["type"] == "ai_task":
+                 result = await self.hass.services.async_call(
+                    "ai_task", "generate_data",
+                    {
+                        "entity_id": agent_data["id"],
+                        "task_name": "HACA Description Fix",
+                        "instructions": prompt
+                    },
+                    blocking=True, return_response=True
+                )
+                 if result:
+                    if agent_data["id"] in result and isinstance(result[agent_data["id"]], dict):
+                        reply = result[agent_data["id"]].get("data", "")
+                    else:
+                        reply = result.get("data", "")
+            elif agent_data:
+                from homeassistant.components import conversation
+                result = await conversation.async_converse(
+                    self.hass, text=prompt, conversation_id=None, context=None, agent_id=agent_data["id"]
+                )
+                reply = result.response.speech.get("plain", {}).get("speech", "")
+
+            if not reply:
+                return {"success": False, "error": "AI returned no response"}
+                
+            return {"success": True, "suggestion": reply.strip().strip('"').strip("'")}
+            
+        except Exception as e:
+            _LOGGER.error("AI suggestion failed: %s", e)
+            return {"success": False, "error": str(e)}
+
+    async def apply_description_fix(self, entity_id: str, description: str) -> dict[str, Any]:
+        """Apply a description to an automation or script."""
+        is_script = entity_id.startswith("script.")
+        target_file = self._scripts_file if is_script else self._automations_file
+        
+        if not target_file.exists():
+            return {"success": False, "error": f"File {target_file} not found"}
+            
+        # Create backup
+        backup_path = await self._create_backup_file(target_file)
+        
+        # Resolve automation_id if not a script
+        resolved_id = None
+        if not is_script:
+            registry = er.async_get(self.hass)
+            entry = registry.async_get(entity_id)
+            if entry and entry.unique_id:
+                resolved_id = entry.unique_id
+            else:
+                resolved_id = entity_id.replace("automation.", "")
+
+        try:
+            def update_description():
+                with open(target_file, "r", encoding="utf-8") as f:
+                    config = yaml.safe_load(f)
+                
+                found = False
+                if is_script:
+                    # Scripts are a dict: { slug: config }
+                    script_slug = entity_id.replace("script.", "")
+                    if isinstance(config, dict) and script_slug in config:
+                        config[script_slug]["description"] = description
+                        found = True
+                else:
+                    # Automations are a list of dicts
+                    if isinstance(config, list):
+                        for item in config:
+                            if item.get("id") == resolved_id:
+                                item["description"] = description
+                                found = True
+                                break
+                        
+                        # Fallback to slug-based ID if not found and was originally slug-like
+                        if not found:
+                            slug_id = entity_id.replace("automation.", "")
+                            for item in config:
+                                if item.get("id") == slug_id:
+                                    item["description"] = description
+                                    found = True
+                                    break
+                        
+                        # Fallback to alias matching if still not found
+                        if not found:
+                            slug_id = entity_id.replace("automation.", "")
+                            for item in config:
+                                alias = item.get("alias")
+                                if alias and (alias == slug_id or alias.lower().replace(" ", "_").replace(".", "_") == slug_id):
+                                    item["description"] = description
+                                    found = True
+                                    break
+                                
+                if not found:
+                    return False
+                    
+                with open(target_file, "w", encoding="utf-8") as f:
+                    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+                return True
+
+            success = await self.hass.async_add_executor_job(update_description)
+            
+            if not success:
+                return {"success": False, "error": "Entity not found in configuration file"}
+                
+            # Trigger reload of automations/scripts so changes take effect
+            try:
+                domain = "script" if is_script else "automation"
+                await self.hass.services.async_call(domain, "reload", blocking=False)
+                _LOGGER.info("Triggered %s reload after description fix", domain)
+            except Exception as re:
+                _LOGGER.warning("Failed to trigger %s reload: %s", domain, re)
+
+            return {
+                "success": True,
+                "message": f"Description applied to {entity_id}.",
+                "backup_path": str(backup_path)
+            }
+        except Exception as e:
+            _LOGGER.error("Error applying description fix: %s", e)
+            return {"success": False, "error": str(e)}
+
+    async def _load_script_by_entity_id(self, entity_id: str) -> dict | None:
+        """Load a specific script configuration."""
+        if not self._scripts_file.exists(): return None
+        
+        def read_scripts():
+            with open(self._scripts_file, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+                
+        try:
+            scripts = await self.hass.async_add_executor_job(read_scripts)
+            slug = entity_id.replace("script.", "")
+            return scripts.get(slug)
+        except Exception:
+            return None
+
+    async def _create_backup_file(self, target: Path) -> Path:
+        """Create backup of a specific file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = target.stem # automations or scripts
+        backup_file = self._backup_dir / f"{suffix}_{timestamp}.yaml"
+        
+        def create_backup():
+            import shutil
+            shutil.copy2(target, backup_file)
+        
+        await self.hass.async_add_executor_job(create_backup)
+        return backup_file

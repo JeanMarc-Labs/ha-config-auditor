@@ -5,7 +5,13 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import (
+    entity_registry as er,
+    device_registry as dr,
+    area_registry as ar,
+)
+
+from .translation_utils import TranslationHelper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,14 +24,23 @@ class EntityAnalyzer:
         self.hass = hass
         self.issues: list[dict[str, Any]] = []
         self._entity_references: dict[str, list[str]] = defaultdict(list)
+        self._translator = TranslationHelper(hass)
 
-    async def analyze_all(self, automation_configs: dict[str, dict] = None) -> list[dict[str, Any]]:
+    async def analyze_all(
+        self,
+        automation_configs: dict[str, dict] = None,
+        script_configs: dict[str, dict] = None,
+    ) -> list[dict[str, Any]]:
         """Analyze all entities."""
         self.issues = []
         
-        # Build entity reference map
-        if automation_configs:
-            await self._build_entity_references(automation_configs)
+        # Load language for translations
+        language = self.hass.config.language or "en"
+        await self._translator.async_load_language(language)
+        
+        # Build entity reference map (automations + scripts)
+        if automation_configs or script_configs:
+            await self._build_entity_references(automation_configs or {}, script_configs or {})
         
         # Analyze entity states
         await self._analyze_entity_states()
@@ -36,21 +51,37 @@ class EntityAnalyzer:
         # Analyze entity registry
         await self._analyze_entity_registry()
         
+        # Analyze ghost registry entries (Spook inspired)
+        await self._analyze_ghost_registry_entries()
+        
+        # Analyze broken device references
+        await self._analyze_device_integrity(automation_configs)
+        
         _LOGGER.info("Entity analysis complete: %d issues found", len(self.issues))
         
         return self.issues
 
-    async def _build_entity_references(self, automation_configs: dict[str, dict]) -> None:
-        """Build a map of which automations reference which entities."""
+    async def _build_entity_references(
+        self,
+        automation_configs: dict[str, dict],
+        script_configs: dict[str, dict] = None,
+    ) -> None:
+        """Build a map of which automations AND scripts reference which entities.
+        
+        Supports both legacy (trigger/condition/action) and new HA UI format
+        (triggers/conditions/actions).
+        """
         self._entity_references.clear()
         
         for idx, (automation_id, config) in enumerate(automation_configs.items()):
-            # Extract entity_ids from triggers
-            triggers = config.get("trigger", [])
+            # Support both old and new HA YAML key formats
+            triggers = config.get("triggers") or config.get("trigger", [])
             if not isinstance(triggers, list):
                 triggers = [triggers] if triggers else []
             
             for trigger in triggers:
+                if not isinstance(trigger, dict):
+                    continue
                 entity_id = trigger.get("entity_id")
                 if entity_id:
                     if isinstance(entity_id, list):
@@ -59,12 +90,14 @@ class EntityAnalyzer:
                     else:
                         self._entity_references[entity_id].append(automation_id)
             
-            # Extract from conditions
-            conditions = config.get("condition", [])
+            # Extract from conditions (support both key formats)
+            conditions = config.get("conditions") or config.get("condition", [])
             if not isinstance(conditions, list):
                 conditions = [conditions] if conditions else []
             
             for condition in conditions:
+                if not isinstance(condition, dict):
+                    continue
                 entity_id = condition.get("entity_id")
                 if entity_id:
                     if isinstance(entity_id, list):
@@ -73,26 +106,66 @@ class EntityAnalyzer:
                     else:
                         self._entity_references[entity_id].append(automation_id)
             
-            # Extract from actions
-            actions = config.get("action", [])
+            # Extract from actions (support both key formats)
+            actions = config.get("actions") or config.get("action", [])
             if not isinstance(actions, list):
                 actions = [actions] if actions else []
             
             for action in actions:
-                target = action.get("target", {})
-                entity_id = target.get("entity_id")
-                if entity_id:
-                    if isinstance(entity_id, list):
-                        for eid in entity_id:
+                if not isinstance(action, dict):
+                    continue
+                # Check entity_id at action level
+                action_entity = action.get("entity_id")
+                if action_entity:
+                    if isinstance(action_entity, list):
+                        for eid in action_entity:
                             self._entity_references[eid].append(automation_id)
                     else:
-                        self._entity_references[entity_id].append(automation_id)
+                        self._entity_references[action_entity].append(automation_id)
+                # Check entity_id in target
+                target = action.get("target", {})
+                if isinstance(target, dict):
+                    entity_id = target.get("entity_id")
+                    if entity_id:
+                        if isinstance(entity_id, list):
+                            for eid in entity_id:
+                                self._entity_references[eid].append(automation_id)
+                        else:
+                            self._entity_references[entity_id].append(automation_id)
             
             if idx % 10 == 0: await asyncio.sleep(0)
+        
+        # Also scan scripts for entity references
+        if script_configs:
+            for idx, (script_id, config) in enumerate(script_configs.items()):
+                sequence = config.get("sequence", [])
+                if not isinstance(sequence, list):
+                    sequence = [sequence] if sequence else []
+                for action in sequence:
+                    if not isinstance(action, dict):
+                        continue
+                    action_entity = action.get("entity_id")
+                    if action_entity:
+                        if isinstance(action_entity, list):
+                            for eid in action_entity:
+                                self._entity_references[eid].append(script_id)
+                        else:
+                            self._entity_references[action_entity].append(script_id)
+                    target = action.get("target", {})
+                    if isinstance(target, dict):
+                        entity_id = target.get("entity_id")
+                        if entity_id:
+                            if isinstance(entity_id, list):
+                                for eid in entity_id:
+                                    self._entity_references[eid].append(script_id)
+                            else:
+                                self._entity_references[entity_id].append(script_id)
+                if idx % 10 == 0: await asyncio.sleep(0)
 
     async def _analyze_entity_states(self) -> None:
         """Analyze entity states."""
         all_entities = self.hass.states.async_all()
+        t = self._translator.t
         
         for idx, entity in enumerate(all_entities):
             entity_id = entity.entity_id
@@ -106,16 +179,14 @@ class EntityAnalyzer:
                 referencing_automations = self._entity_references.get(entity_id, [])
                 severity = "high" if referencing_automations else "medium"
                 
-                message = "Entity is unavailable"
-                if referencing_automations:
-                    message += f" (used by {len(referencing_automations)} automation(s))"
+                message = t("entity_unavailable_referenced", count=len(referencing_automations)) if referencing_automations else t("entity_unknown_state")
                 
                 self.issues.append({
                     "entity_id": entity_id,
                     "type": "unavailable_entity",
                     "severity": severity,
                     "message": message,
-                    "recommendation": "Check if device is online",
+                    "recommendation": t("verify_entity_updates"),
                 })
             
             # Check for unknown state
@@ -124,8 +195,8 @@ class EntityAnalyzer:
                     "entity_id": entity_id,
                     "type": "unknown_state",
                     "severity": "medium",
-                    "message": "Entity has unknown state",
-                    "recommendation": "Verify entity is receiving updates",
+                    "message": t("entity_unknown_state"),
+                    "recommendation": t("verify_entity_updates"),
                 })
             
             # Check for stale entities (>7 days without update)
@@ -143,8 +214,8 @@ class EntityAnalyzer:
                             "entity_id": entity_id,
                             "type": "stale_entity",
                             "severity": severity,
-                            "message": f"Entity hasn't updated in {time_since_update.days} days",
-                            "recommendation": "Entity may be broken or no longer in use",
+                            "message": t("entity_not_updated", days=time_since_update.days),
+                            "recommendation": t("entity_may_be_broken"),
                         })
             
             if idx % 50 == 0: await asyncio.sleep(0)
@@ -153,6 +224,7 @@ class EntityAnalyzer:
         """Detect zombie entities - referenced but don't exist."""
         all_entities = self.hass.states.async_all()
         existing_entities = {entity.entity_id for entity in all_entities}
+        t = self._translator.t
         
         for idx, (entity_id, automations) in enumerate(self._entity_references.items()):
             if entity_id not in existing_entities:
@@ -160,14 +232,15 @@ class EntityAnalyzer:
                     "entity_id": entity_id,
                     "type": "zombie_entity",
                     "severity": "high",
-                    "message": f"Referenced by {len(automations)} automation(s) but doesn't exist",
-                    "recommendation": "Remove references or recreate entity",
+                    "message": t("entity_referenced_not_exist", count=len(automations)),
+                    "recommendation": t("remove_or_recreate"),
                 })
             if idx % 50 == 0: await asyncio.sleep(0)
 
     async def _analyze_entity_registry(self) -> None:
         """Analyze entity registry."""
         entity_reg = er.async_get(self.hass)
+        t = self._translator.t
         
         for idx, entry in enumerate(entity_reg.entities.values()):
             entity_id = entry.entity_id
@@ -180,10 +253,83 @@ class EntityAnalyzer:
                         "entity_id": entity_id,
                         "type": "disabled_but_referenced",
                         "severity": "high",
-                        "message": f"Disabled but referenced by {len(referencing_automations)} automation(s)",
-                        "recommendation": "Enable entity or remove references",
+                        "message": t("entity_disabled_referenced", count=len(referencing_automations)),
+                        "recommendation": t("enable_or_remove_refs"),
                     })
             if idx % 50 == 0: await asyncio.sleep(0)
+
+    async def _analyze_ghost_registry_entries(self) -> None:
+        """Detect ghost registry entries (orphaned entities in registry)."""
+        entity_reg = er.async_get(self.hass)
+        t = self._translator.t
+        
+        for idx, entry in enumerate(entity_reg.entities.values()):
+            # A ghost entry is often one where the platform is defined but doesn't exist anymore
+            # or the integration that created it is no longer available.
+            # HA usually marks these as orphaned but doesn't always show them to users.
+            
+            # Simple check: is it enabled but has no state AND no info in current platforms
+            if entry.disabled_by is None:
+                state = self.hass.states.get(entry.entity_id)
+                if state is None:
+                    # If it has no state, it might be a ghost.
+                    # We check if it's a 'manual' entity or if the platform exists.
+                    # Spook also checks if the config_entry is still valid.
+                    if entry.config_entry_id:
+                        config_entry = self.hass.config_entries.async_get_entry(entry.config_entry_id)
+                        if config_entry is None or config_entry.state.recoverable is False:
+                            self.issues.append({
+                                "entity_id": entry.entity_id,
+                                "type": "ghost_registry_entry",
+                                "severity": "medium",
+                                "message": t("orphaned_registry_entry", platform=entry.platform),
+                                "recommendation": t("remove_orphaned"),
+                                "fix_available": True,
+                            })
+            
+            if idx % 50 == 0: await asyncio.sleep(0)
+
+    async def _analyze_device_integrity(self, automation_configs: dict[str, dict] = None) -> None:
+        """Analyze if device_ids referenced in automations actually exist."""
+        if not automation_configs:
+            return
+            
+        dev_reg = dr.async_get(self.hass)
+        t = self._translator.t
+        
+        for idx, (automation_id, config) in enumerate(automation_configs.items()):
+            # Collect all device_ids in this automation
+            device_ids = self._extract_field_recursively(config, "device_id")
+            
+            for device_id in device_ids:
+                if not dev_reg.async_get(device_id):
+                    self.issues.append({
+                        "entity_id": automation_id,
+                        "device_id": device_id,
+                        "type": "broken_device_reference",
+                        "severity": "high",
+                        "message": t("broken_device_reference", device_id=device_id),
+                        "recommendation": t("use_entity_id_or_update"),
+                        "fix_available": True,
+                    })
+            
+            if idx % 20 == 0: await asyncio.sleep(0)
+
+    def _extract_field_recursively(self, config: Any, field_name: str) -> set[str]:
+        """Extract all occurrences of a field from a nested dict/list."""
+        results = set()
+        
+        if isinstance(config, dict):
+            for k, v in config.items():
+                if k == field_name and isinstance(v, str):
+                    results.add(v)
+                else:
+                    results.update(self._extract_field_recursively(v, field_name))
+        elif isinstance(config, list):
+            for item in config:
+                results.update(self._extract_field_recursively(item, field_name))
+                
+        return results
 
     def get_issue_summary(self) -> dict[str, Any]:
         """Get a summary of entity issues."""

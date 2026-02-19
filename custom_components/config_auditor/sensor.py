@@ -32,8 +32,11 @@ async def async_setup_entry(
     sensors = [
         HACAHealthScoreSensor(coordinator, entry),
         HACAAutomationIssuesSensor(coordinator, entry),
+        HACAScriptIssuesSensor(coordinator, entry),
+        HACASceneIssuesSensor(coordinator, entry),
         HACAEntityIssuesSensor(coordinator, entry),
         HACAPerformanceIssuesSensor(coordinator, entry),
+        HACASecurityIssuesSensor(coordinator, entry),
         HACATotalIssuesSensor(coordinator, entry),
     ]
     
@@ -71,7 +74,7 @@ class HACAHealthScoreSensor(HACASensorBase):
         """Initialize the sensor."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_health_score"
-        self._attr_name = "Health Score"
+        self._attr_translation_key = "health_score"
         self._attr_native_unit_of_measurement = "%"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_icon = "mdi:heart-pulse"
@@ -124,7 +127,7 @@ class HACAAutomationIssuesSensor(HACASensorBase):
         """Initialize the sensor."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_automation_issues"
-        self._attr_name = "Automation Issues"
+        self._attr_translation_key = "automation_issues"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_icon = "mdi:robot"
 
@@ -134,16 +137,6 @@ class HACAAutomationIssuesSensor(HACASensorBase):
         if self.coordinator.data:
             return self.coordinator.data.get("automation_issues", 0)
         return None
-    
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes."""
-        if not self.coordinator.data:
-            return {}
-        
-        return {
-            "automation_issue_list": self.coordinator.data.get("automation_issue_list", [])
-        }
 
 
 
@@ -158,7 +151,7 @@ class HACAEntityIssuesSensor(HACASensorBase):
         """Initialize the sensor."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_entity_issues"
-        self._attr_name = "Entity Issues"
+        self._attr_translation_key = "entity_issues"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_icon = "mdi:alert-circle"
 
@@ -168,16 +161,6 @@ class HACAEntityIssuesSensor(HACASensorBase):
         if self.coordinator.data:
             return self.coordinator.data.get("entity_issues", 0)
         return None
-    
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes."""
-        if not self.coordinator.data:
-            return {}
-        
-        return {
-            "entity_issue_list": self.coordinator.data.get("entity_issue_list", [])
-        }
 
 
 
@@ -192,7 +175,7 @@ class HACAPerformanceIssuesSensor(HACASensorBase):
         """Initialize the sensor."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_performance_issues"
-        self._attr_name = "Performance Issues"
+        self._attr_translation_key = "performance_issues"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_icon = "mdi:speedometer"
 
@@ -202,16 +185,6 @@ class HACAPerformanceIssuesSensor(HACASensorBase):
         if self.coordinator.data:
             return self.coordinator.data.get("performance_issues", 0)
         return None
-    
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes."""
-        if not self.coordinator.data:
-            return {}
-        
-        return {
-            "performance_issue_list": self.coordinator.data.get("performance_issue_list", [])
-        }
 
 
 
@@ -226,7 +199,7 @@ class HACATotalIssuesSensor(HACASensorBase):
         """Initialize the sensor."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_total_issues"
-        self._attr_name = "Total Issues"
+        self._attr_translation_key = "total_issues"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_icon = "mdi:counter"
 
@@ -235,4 +208,73 @@ class HACATotalIssuesSensor(HACASensorBase):
         """Return the state."""
         if self.coordinator.data:
             return self.coordinator.data.get("total_issues", 0)
+        return None
+
+
+class HACAScriptIssuesSensor(HACASensorBase):
+    """Sensor for script issues."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_script_issues"
+        self._attr_translation_key = "script_issues"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:script-text"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("script_issues", 0)
+        return None
+
+
+class HACASceneIssuesSensor(HACASensorBase):
+    """Sensor for scene issues."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_scene_issues"
+        self._attr_translation_key = "scene_issues"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:palette"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("scene_issues", 0)
+        return None
+
+
+class HACASecurityIssuesSensor(HACASensorBase):
+    """Sensor for security issues (proper CoordinatorEntity)."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_security_issues"
+        self._attr_translation_key = "security_issues"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:shield-alert"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("security_issues", 0)
         return None

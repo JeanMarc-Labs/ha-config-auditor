@@ -14,6 +14,10 @@
 > **H.A.C.A is currently in active development.**
 > Any modifications made through this tool should be performed with full knowledge of the changes being applied. **Always perform a full Home Assistant backup before using the refactoring tools.**
 > The H.A.C.A team declines all responsibility for any Home Assistant crashes, data loss, or configuration issues resulting from the use of this integration. Use at your own risk.
+>
+> **H.A.C.A is not affiliated with, endorsed, recommended, or supported by the Home Assistant project.**
+>
+> This custom integration is provided as-is, without any warranty.
 
 ## ✨ Key Features
 

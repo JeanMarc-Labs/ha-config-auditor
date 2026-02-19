@@ -4,16 +4,25 @@ import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from .translation_utils import TranslationHelper
 
 _LOGGER = logging.getLogger(__name__)
 
 # Regular expressions for sensitive data detection
+# Applied only to raw string VALUES (not keys, not entity_ids)
 SECRET_PATTERNS = [
-    r"api_key[:=]\s*['\"]?[a-zA-Z0-9_\-]{16,}['\"]?",
-    r"password[:=]\s*['\"]?[a-zA-Z0-9_\-]{8,}['\"]?",
-    r"token[:=]\s*['\"]?[a-zA-Z0-9_\-]{20,}['\"]?",
-    r"secret[:=]\s*['\"]?[a-zA-Z0-9_\-]{16,}['\"]?",
+    r"^[a-zA-Z0-9_\-]{16,}$",   # Long alphanumeric-only strings (likely a raw token/key)
 ]
+
+# Suspicious key names that should not hold raw string values
+SENSITIVE_KEY_NAMES = {"api_key", "password", "token", "secret", "api_token",
+                       "access_token", "client_secret", "client_id", "bearer", "auth_key"}
+
+# Regex to exclude values that are clearly NOT secrets
+ENTITY_ID_PATTERN = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")         # entity_id
+URL_PATTERN       = re.compile(r"^https?://")                      # URLs
+TEMPLATE_PATTERN  = re.compile(r"\{[%{]")                          # Jinja2 templates
+SECRET_REF_PATTERN = re.compile(r"!secret\s+\w+")                  # already using !secret
 
 SENSITIVE_DATA_REGEX = re.compile("|".join(SECRET_PATTERNS), re.IGNORECASE)
 
@@ -24,10 +33,16 @@ class SecurityAnalyzer:
         """Initialize the security analyzer."""
         self.hass = hass
         self.issues: list[dict[str, Any]] = []
+        self._translator = TranslationHelper(hass)
 
     async def analyze_all(self, automation_configs: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
         """Run all security checks."""
         self.issues = []
+        
+        # Load language for translations
+        language = self.hass.config.language or "en"
+        await self._translator.async_load_language(language)
+        
         automation_configs = automation_configs or {}
         
         # 1. Scan for hardcoded secrets in automation configs
@@ -39,32 +54,80 @@ class SecurityAnalyzer:
         _LOGGER.info("Security analysis complete: %d issues found", len(self.issues))
         return self.issues
 
+    def _is_likely_secret(self, value: str) -> bool:
+        """Return True if a string value looks like a hardcoded secret.
+        
+        Excludes:
+        - Entity IDs  (domain.name)
+        - URLs        (http://...)
+        - Jinja2 templates  ({{ ... }} / {% ... %})
+        - Values that are too short (< 16 chars)
+        - Values that contain spaces (likely a human-readable string)
+        """
+        if not isinstance(value, str):
+            return False
+        v = value.strip()
+        if len(v) < 16:
+            return False
+        if ' ' in v:
+            return False
+        if ENTITY_ID_PATTERN.match(v):
+            return False
+        if URL_PATTERN.match(v):
+            return False
+        if TEMPLATE_PATTERN.search(v):
+            return False
+        if SECRET_REF_PATTERN.search(v):
+            return False
+        # Must be long alphanumeric (possible raw key/token)
+        return bool(SENSITIVE_DATA_REGEX.match(v))
+
+    def _find_secrets_in_dict(self, obj: Any, path: str = "") -> list[str]:
+        """Recursively walk a dict and return paths where a secret might be hardcoded."""
+        found = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                child_path = f"{path}.{k}" if path else k
+                # If the key name is suspicious AND the value looks like a secret
+                if isinstance(k, str) and k.lower() in SENSITIVE_KEY_NAMES:
+                    if self._is_likely_secret(v):
+                        found.append(child_path)
+                # Recurse into nested dicts/lists regardless
+                found.extend(self._find_secrets_in_dict(v, child_path))
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                found.extend(self._find_secrets_in_dict(item, f"{path}[{i}]"))
+        return found
+
     async def _scan_for_hardcoded_secrets(self, configs: dict[str, dict[str, Any]]) -> None:
-        """Find strings that look like keys/passwords but aren't using !secret."""
+        """Find strings that look like keys/passwords but aren't using !secret.
+        
+        Uses recursive value inspection instead of str(config) to avoid false
+        positives on key names, entity_ids, URLs and Jinja2 templates.
+        """
+        t = self._translator.t
+
         for idx, (entity_id, config) in enumerate(configs.items()):
-            config_str = str(config)
-            
-            # This is a bit simplified as we often get the dict already parsed
-            # and !secret values are already resolved or marked.
-            # However, if someone typed a raw string, we can detect it.
-            
-            matches = SENSITIVE_DATA_REGEX.findall(config_str)
-            if matches:
+            secret_paths = self._find_secrets_in_dict(config)
+            if secret_paths:
                 self.issues.append({
                     "entity_id": entity_id,
                     "alias": config.get("alias", entity_id),
                     "type": "hardcoded_secret",
                     "severity": "high",
-                    "message": "Potential hardcoded secret or API key detected",
-                    "location": "configuration",
-                    "recommendation": "Use !secret in secrets.yaml instead of hardcoding sensitive data",
+                    "message": t("hardcoded_secret"),
+                    "location": ", ".join(secret_paths[:3]),  # Show up to 3 paths
+                    "recommendation": t("use_secret_yaml"),
                     "fix_available": False,
                 })
-            
-            if idx % 10 == 0: await asyncio.sleep(0)
+
+            if idx % 10 == 0:
+                await asyncio.sleep(0)
 
     async def _scan_for_data_exposure(self, configs: dict[str, dict[str, Any]]) -> None:
         """Check if sensitive info is being sent to external notification services."""
+        t = self._translator.t
+        
         for idx_config, (entity_id, config) in enumerate(configs.items()):
             actions = config.get("action", [])
             if not isinstance(actions, list):
@@ -84,9 +147,9 @@ class SecurityAnalyzer:
                             "alias": config.get("alias", entity_id),
                             "type": "sensitive_data_exposure",
                             "severity": "high",
-                            "message": f"Action {idx}: Potential exposure of sensitive data in notification",
+                            "message": t("sensitive_data_exposure", idx=idx),
                             "location": f"action[{idx}]",
-                            "recommendation": "Avoid sending secrets or passwords in notification messages",
+                            "recommendation": t("avoid_secrets_notifications"),
                             "fix_available": False,
                         })
             

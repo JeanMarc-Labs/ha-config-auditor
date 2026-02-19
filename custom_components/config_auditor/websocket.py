@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import logging
+import json
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.translation import async_get_translations
 
 from .const import DOMAIN
 
@@ -23,6 +26,7 @@ def async_register_websocket_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, handle_apply_fix)
     websocket_api.async_register_command(hass, handle_list_backups)
     websocket_api.async_register_command(hass, handle_restore_backup)
+    websocket_api.async_register_command(hass, handle_get_translations)
     _LOGGER.info("✅ WebSocket handlers registered")
 
 
@@ -59,12 +63,18 @@ async def handle_get_data(
             {
                 "health_score": coordinator.data.get("health_score", 0),
                 "automation_issues": coordinator.data.get("automation_issues", 0),
+                "script_issues": coordinator.data.get("script_issues", 0),
+                "scene_issues": coordinator.data.get("scene_issues", 0),
                 "entity_issues": coordinator.data.get("entity_issues", 0),
                 "performance_issues": coordinator.data.get("performance_issues", 0),
+                "security_issues": coordinator.data.get("security_issues", 0),
                 "total_issues": coordinator.data.get("total_issues", 0),
                 "automation_issue_list": coordinator.data.get("automation_issue_list", []),
+                "script_issue_list": coordinator.data.get("script_issue_list", []),
+                "scene_issue_list": coordinator.data.get("scene_issue_list", []),
                 "entity_issue_list": coordinator.data.get("entity_issue_list", []),
                 "performance_issue_list": coordinator.data.get("performance_issue_list", []),
+                "security_issue_list": coordinator.data.get("security_issue_list", []),
             },
         )
     except Exception as e:
@@ -280,4 +290,56 @@ async def handle_restore_backup(
         
     except Exception as e:
         _LOGGER.error("Error restoring backup: %s", e, exc_info=True)
+        connection.send_error(msg["id"], "error", str(e))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "haca/get_translations",
+    }
+)
+@websocket_api.async_response
+async def handle_get_translations(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Handle get translations request for the panel."""
+    try:
+        # Get the current language from Home Assistant
+        language = hass.config.language
+        
+        # Build path to translations file
+        integration_path = Path(__file__).parent
+        translations_file = integration_path / "translations" / f"{language}.json"
+        
+        # Fallback to English if the language file doesn't exist
+        if not translations_file.exists():
+            translations_file = integration_path / "translations" / "en.json"
+            _LOGGER.debug("Translation file for %s not found, falling back to English", language)
+        
+        # Load translations (in executor to avoid blocking the event loop)
+        translations = {}
+        if translations_file.exists():
+            try:
+                def _read_translations():
+                    with open(translations_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                translations = await hass.async_add_executor_job(_read_translations)
+            except Exception as e:
+                _LOGGER.error("Error loading translations: %s", e)
+        
+        # Extract panel translations
+        panel_translations = translations.get("panel", {})
+        
+        connection.send_result(
+            msg["id"],
+            {
+                "language": language,
+                "translations": panel_translations,
+            },
+        )
+        
+    except Exception as e:
+        _LOGGER.error("Error getting translations: %s", e, exc_info=True)
         connection.send_error(msg["id"], "error", str(e))

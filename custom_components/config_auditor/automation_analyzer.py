@@ -12,6 +12,8 @@ import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from .translation_utils import TranslationHelper
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -22,13 +24,21 @@ class AutomationAnalyzer:
         """Initialize the analyzer."""
         self.hass = hass
         self.issues: list[dict[str, Any]] = []
+        self.automation_issues: list[dict[str, Any]] = []
+        self.script_issues: list[dict[str, Any]] = []
+        self.scene_issues: list[dict[str, Any]] = []
         self._automation_configs: dict[str, dict[str, Any]] = {}
         self._script_configs: dict[str, dict[str, Any]] = {}
         self._scene_configs: dict[str, dict[str, Any]] = {}
+        self._translator = TranslationHelper(hass)
 
     async def analyze_all(self) -> list[dict[str, Any]]:
         """Analyze all automations."""
         self.issues = []
+        
+        # Load language for translations
+        language = self.hass.config.language or "en"
+        await self._translator.async_load_language(language)
         
         # Load configurations
         await self._load_automation_configs()
@@ -56,10 +66,27 @@ class AutomationAnalyzer:
         # Check for never-triggered automations
         await self._check_never_triggered()
         
+        # Separate issues by entity_id prefix
+        self.automation_issues = []
+        self.script_issues = []
+        self.scene_issues = []
+        
+        for issue in self.issues:
+            entity_id = issue.get("entity_id", "")
+            if entity_id.startswith("script."):
+                self.script_issues.append(issue)
+            elif entity_id.startswith("scene."):
+                self.scene_issues.append(issue)
+            else:
+                # Everything else goes to automation issues
+                self.automation_issues.append(issue)
+        
         _LOGGER.info(
-            "Automation analysis complete: %d automations, %d issues",
+            "Automation analysis complete: %d automations, %d automation issues, %d script issues, %d scene issues",
             len(self._automation_configs),
-            len(self.issues)
+            len(self.automation_issues),
+            len(self.script_issues),
+            len(self.scene_issues)
         )
         
         return self.issues
@@ -164,6 +191,7 @@ class AutomationAnalyzer:
     def _analyze_script(self, entity_id: str, config: dict[str, Any]) -> None:
         """Analyze a single script."""
         alias = config.get("alias", entity_id)
+        t = self._translator.t
         
         # Check for missing description
         if not config.get("description"):
@@ -171,8 +199,8 @@ class AutomationAnalyzer:
                 "entity_id": entity_id,
                 "type": "no_description",
                 "severity": "low",
-                "message": f"Script '{alias}' has no description",
-                "recommendation": "Add a description to clarify script purpose",
+                "message": t("script_no_description", alias=alias),
+                "recommendation": t("add_description"),
             })
             
         # Check for missing sequence
@@ -181,24 +209,27 @@ class AutomationAnalyzer:
                 "entity_id": entity_id,
                 "type": "empty_script",
                 "severity": "high",
-                "message": f"Script '{alias}' has no sequence of actions",
-                "recommendation": "Add actions to the script sequence",
+                "message": t("script_no_sequence", alias=alias),
+                "recommendation": t("add_description"),
             })
 
     def _analyze_scene(self, entity_id: str, config: dict[str, Any]) -> None:
         """Analyze a single scene."""
+        t = self._translator.t
+        
         if not config.get("entities"):
              self.issues.append({
                 "entity_id": entity_id,
                 "type": "empty_scene",
                 "severity": "medium",
-                "message": "Scene has no entities defined",
-                "recommendation": "Add entities to the scene state definition",
+                "message": t("scene_no_entities"),
+                "recommendation": t("add_description"),
             })
 
     def _analyze_automation(self, entity_id: str, config: dict[str, Any]) -> None:
         """Analyze a single automation."""
         alias = config.get("alias", "")
+        t = self._translator.t
         
         # Check for missing alias
         if not alias:
@@ -207,9 +238,9 @@ class AutomationAnalyzer:
                 "alias": entity_id,
                 "type": "no_alias",
                 "severity": "medium",
-                "message": "Automation has no alias/name",
+                "message": t("no_alias"),
                 "location": "root",
-                "recommendation": "Add an alias to make automation identifiable",
+                "recommendation": t("add_alias"),
                 "fix_available": False,
             })
         
@@ -220,9 +251,9 @@ class AutomationAnalyzer:
                 "alias": alias or entity_id,
                 "type": "no_description",
                 "severity": "low",
-                "message": "Automation has no description",
+                "message": t("no_description"),
                 "location": "root",
-                "recommendation": "Add a description to document automation purpose",
+                "recommendation": t("add_description"),
                 "fix_available": False,
             })
         
@@ -263,6 +294,7 @@ class AutomationAnalyzer:
     ) -> None:
         """Analyze a trigger."""
         platform = trigger.get("platform") or trigger.get("trigger", "")
+        t = self._translator.t
         
         # Check for device_id in triggers (HIGH severity)
         # Peut être directement dans le trigger ou dans des sous-champs
@@ -273,9 +305,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "device_id_in_trigger",
                 "severity": "high",
-                "message": f"Trigger {idx} uses device_id which breaks when device is re-added",
+                "message": t("trigger_uses_device_id", idx=idx),
                 "location": f"trigger[{idx}]",
-                "recommendation": "Use entity_id instead of device_id for reliability",
+                "recommendation": t("use_entity_id_instead_device"),
                 "fix_available": True,
             })
         
@@ -287,9 +319,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "device_trigger_platform",
                 "severity": "high",
-                "message": f"Trigger {idx} uses 'device' platform which is fragile",
+                "message": t("trigger_uses_device_platform", idx=idx),
                 "location": f"trigger[{idx}]",
-                "recommendation": "Use state/numeric_state platform with entity_id instead",
+                "recommendation": t("use_state_platform"),
                 "fix_available": True,
             })
         
@@ -300,9 +332,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "zone_no_entity",
                 "severity": "medium",
-                "message": f"Trigger {idx}: zone trigger missing entity_id",
+                "message": t("zone_trigger_missing_entity", idx=idx),
                 "location": f"trigger[{idx}]",
-                "recommendation": "Specify which entity to track in the zone",
+                "recommendation": t("specify_zone_entity"),
                 "fix_available": False,
             })
 
@@ -311,6 +343,7 @@ class AutomationAnalyzer:
     ) -> None:
         """Analyze a condition."""
         condition_type = condition.get("condition", "")
+        t = self._translator.t
         
         # Check for device_id in conditions (similar to triggers/actions)
         if "device_id" in condition:
@@ -320,9 +353,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "device_id_in_condition",
                 "severity": "high",
-                "message": f"Condition {idx} uses device_id which breaks when device is re-added",
+                "message": t("condition_uses_device_id", idx=idx),
                 "location": f"condition[{idx}]",
-                "recommendation": "Use state/numeric_state condition with entity_id instead of device condition",
+                "recommendation": t("use_entity_id_instead_device"),
                 "fix_available": True,
             })
         
@@ -334,9 +367,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "device_condition_platform",
                 "severity": "high",
-                "message": f"Condition {idx} uses 'device' condition type which is fragile",
+                "message": t("condition_uses_device_platform", idx=idx),
                 "location": f"condition[{idx}]",
-                "recommendation": "Use state/numeric_state condition type with entity_id instead",
+                "recommendation": t("use_state_platform"),
                 "fix_available": True,
             })
         
@@ -346,16 +379,23 @@ class AutomationAnalyzer:
             
             # Check for simple state checks
             if "is_state(" in template:
-                # Simple state check: {{ is_state('light.x', 'on') }}
-                if not any(op in template.lower() for op in [" and ", " or ", " not ", "=="]):
+                # Only flag purely simple is_state() checks:
+                # exclude templates with logical operators, other HA functions, or Jinja2 filters.
+                has_complex_logic = any(op in template.lower() for op in [" and ", " or ", " not "])
+                has_other_functions = any(f in template for f in [
+                    "is_state_attr(", "states(", "state_attr(", "expand(",
+                    "namespace(", "trigger.", "this."
+                ])
+                has_jinja_filter = " | " in template
+                if not has_complex_logic and not has_other_functions and not has_jinja_filter:
                     self.issues.append({
                         "entity_id": entity_id,
                         "alias": alias,
                         "type": "template_simple_state",
                         "severity": "high",
-                        "message": f"Condition {idx} uses template for simple state check",
+                        "message": t("template_simple_state", idx=idx),
                         "location": f"condition[{idx}]",
-                        "recommendation": "Use native 'state' condition instead of template",
+                        "recommendation": t("use_state_condition"),
                         "fix_available": True,
                     })
             
@@ -366,9 +406,9 @@ class AutomationAnalyzer:
                     "alias": alias,
                     "type": "template_numeric_comparison",
                     "severity": "high",
-                    "message": f"Condition {idx} uses template for numeric comparison",
+                    "message": t("template_numeric_comparison", idx=idx),
                     "location": f"condition[{idx}]",
-                    "recommendation": "Use 'numeric_state' condition for validation at load time",
+                    "recommendation": t("use_numeric_state_condition"),
                     "fix_available": False,
                 })
             
@@ -379,9 +419,9 @@ class AutomationAnalyzer:
                     "alias": alias,
                     "type": "template_time_check",
                     "severity": "medium",
-                    "message": f"Condition {idx} uses template for time check",
+                    "message": t("template_time_check", idx=idx),
                     "location": f"condition[{idx}]",
-                    "recommendation": "Use 'time' condition with after/before parameters",
+                    "recommendation": t("use_time_condition"),
                     "fix_available": False,
                 })
 
@@ -389,6 +429,8 @@ class AutomationAnalyzer:
         self, entity_id: str, alias: str, action: dict[str, Any], idx: int
     ) -> None:
         """Analyze an action."""
+        t = self._translator.t
+        
         # Check for device_id in actions - peut être dans action directement ou dans target
         if "device_id" in action:
             _LOGGER.debug("Found device_id in action %d of %s", idx, entity_id)
@@ -397,9 +439,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "device_id_in_action",
                 "severity": "high",
-                "message": f"Action {idx} uses device_id which breaks when device is re-added",
+                "message": t("action_uses_device_id", idx=idx),
                 "location": f"action[{idx}]",
-                "recommendation": "Use target with entity_id instead of device_id",
+                "recommendation": t("use_entity_id_in_target"),
                 "fix_available": True,
             })
         
@@ -412,9 +454,9 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "device_id_in_target",
                 "severity": "high",
-                "message": f"Action {idx} uses device_id in target which breaks when device is re-added",
+                "message": t("action_target_uses_device_id", idx=idx),
                 "location": f"action[{idx}].target",
-                "recommendation": "Use entity_id in target instead of device_id",
+                "recommendation": t("use_entity_id_in_target"),
                 "fix_available": True,
             })
         
@@ -427,34 +469,31 @@ class AutomationAnalyzer:
                     "alias": alias,
                     "type": "wait_template_vs_wait_for_trigger",
                     "severity": "medium",
-                    "message": f"Action {idx} uses wait_template for state check",
+                    "message": t("wait_template_state_check", idx=idx),
                     "location": f"action[{idx}]",
-                    "recommendation": "Use wait_for_trigger with state trigger (event-driven, not polling)",
+                    "recommendation": t("use_wait_for_trigger"),
                     "fix_available": False,
                 })
         
         # Check for deprecated services
         service = action.get("service", action.get("action", ""))
-        deprecated_services = {
-            "homeassistant.turn_on": "Use domain-specific services like light.turn_on",
-            "homeassistant.turn_off": "Use domain-specific services like light.turn_off",
-            "homeassistant.toggle": "Use domain-specific services like light.toggle",
-        }
         
-        if service in deprecated_services:
+        if service in ["homeassistant.turn_on", "homeassistant.turn_off", "homeassistant.toggle"]:
             self.issues.append({
                 "entity_id": entity_id,
                 "alias": alias,
                 "type": "deprecated_service",
                 "severity": "low",
-                "message": f"Action {idx} uses generic service '{service}'",
+                "message": t("generic_service", idx=idx, service=service),
                 "location": f"action[{idx}]",
-                "recommendation": deprecated_services[service],
+                "recommendation": t("use_domain_service", domain="light"),
                 "fix_available": False,
             })
 
     def _analyze_mode(self, entity_id: str, alias: str, config: dict[str, Any]) -> None:
         """Analyze automation mode."""
+        t = self._translator.t
+        
         mode = config.get("mode", "single")
         
         triggers = config.get("trigger", [])
@@ -467,9 +506,9 @@ class AutomationAnalyzer:
         
         # Check for motion/occupancy triggers with delays in single mode
         has_motion_trigger = False
-        for t in triggers:
-            if isinstance(t, dict):
-                entity_id_in_trigger = t.get("entity_id", "")
+        for tr in triggers:
+            if isinstance(tr, dict):
+                entity_id_in_trigger = tr.get("entity_id", "")
                 if isinstance(entity_id_in_trigger, str):
                     entity_lower = entity_id_in_trigger.lower()
                     if "motion" in entity_lower or "occupancy" in entity_lower:
@@ -490,14 +529,16 @@ class AutomationAnalyzer:
                 "alias": alias,
                 "type": "incorrect_mode_motion_single",
                 "severity": "high",
-                "message": "Motion automation uses 'single' mode with delays/waits",
+                "message": t("motion_single_mode"),
                 "location": "mode",
-                "recommendation": "Use 'restart' mode - re-triggers must reset the timer",
+                "recommendation": t("use_restart_mode"),
                 "fix_available": True,
             })
 
     async def _check_never_triggered(self) -> None:
         """Check for automations that have never been triggered."""
+        t = self._translator.t
+        
         for entity_id in list(self.hass.states.async_entity_ids("automation")):
             state = self.hass.states.get(entity_id)
             
@@ -511,9 +552,9 @@ class AutomationAnalyzer:
                         "alias": alias,
                         "type": "never_triggered",
                         "severity": "low",
-                        "message": "Automation has never been triggered since HA restart",
+                        "message": t("never_triggered"),
                         "location": "trigger",
-                        "recommendation": "Verify triggers are configured correctly or automation is needed",
+                        "recommendation": t("verify_triggers"),
                         "fix_available": False,
                     })
 

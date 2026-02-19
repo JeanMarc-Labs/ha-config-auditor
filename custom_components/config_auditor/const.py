@@ -1,8 +1,8 @@
-"""Constants for H.A.C.A - v1.0.0."""
+"""Constants for H.A.C.A - v1.1.0."""
 
 DOMAIN = "config_auditor"
 NAME = "H.A.C.A"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Configuration
 DEFAULT_SCAN_INTERVAL = 60
@@ -26,15 +26,17 @@ SERVICE_RESTORE_BACKUP = "restore_backup"
 SERVICE_PREVIEW_TEMPLATE = "preview_template"
 SERVICE_FIX_TEMPLATE = "fix_template"
 SERVICE_EXPLAIN_ISSUE = "explain_issue_ai"
+SERVICE_PURGE_GHOSTS = "purge_ghosts"
+SERVICE_FUZZY_SUGGESTIONS = "get_fuzzy_suggestions"
 
 # Module Status
-MODULE_1_AUTOMATION_SCANNER = True    # ✅ v1.0.0
-MODULE_2_HEALTH_MONITOR = True        # ✅ v1.0.0
-MODULE_3_PERFORMANCE_ANALYZER = True  # ✅ v1.0.0
-MODULE_4_COMPLIANCE_REPORT = True     # ✅ v1.0.0
-MODULE_5_REFACTORING_ASSISTANT = True # ✅ v1.0.0
-MODULE_6_AI_ASSIST = True             # ✅ v1.0.0
-MODULE_7_SECURITY_ANALYZER = True     # ✅ v1.0.0
+MODULE_1_AUTOMATION_SCANNER = True    # ✅ v1.1.0
+MODULE_2_HEALTH_MONITOR = True        # ✅ v1.1.0
+MODULE_3_PERFORMANCE_ANALYZER = True  # ✅ v1.1.0
+MODULE_4_COMPLIANCE_REPORT = True     # ✅ v1.1.0
+MODULE_5_REFACTORING_ASSISTANT = True # ✅ v1.1.0
+MODULE_6_AI_ASSIST = True             # ✅ v1.1.0
+MODULE_7_SECURITY_ANALYZER = True     # ✅ v1.1.0
 
 # Severity levels
 SEVERITY_HIGH = "high"
@@ -55,6 +57,8 @@ ISSUE_UNKNOWN_STATE = "entity_unknown_state"
 ISSUE_STALE = "entity_stale"
 ISSUE_DISABLED_REFERENCED = "disabled_but_referenced"
 ISSUE_ZOMBIE_ENTITY = "zombie_entity"
+ISSUE_GHOST_REGISTRY = "ghost_registry_entry"
+ISSUE_BROKEN_DEVICE = "broken_device_reference"
 ISSUE_ORPHANED_DEVICE = "orphaned_device_reference"
 
 # Issue types - Module 3
