@@ -1,8 +1,8 @@
-"""Constants for H.A.C.A - v1.1.0."""
+"""Constants for H.A.C.A - v1.1.1."""
 
 DOMAIN = "config_auditor"
 NAME = "H.A.C.A"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 # Configuration
 DEFAULT_SCAN_INTERVAL = 60

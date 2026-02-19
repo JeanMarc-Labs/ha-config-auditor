@@ -57,6 +57,9 @@ class EntityAnalyzer:
         # Analyze broken device references
         await self._analyze_device_integrity(automation_configs)
         
+        # Analyze unused input_booleans
+        await self._analyze_unused_input_booleans()
+        
         _LOGGER.info("Entity analysis complete: %d issues found", len(self.issues))
         
         return self.issues
@@ -331,6 +334,30 @@ class EntityAnalyzer:
                 
         return results
 
+    async def _analyze_unused_input_booleans(self) -> None:
+        """Detect input_boolean entities that are not referenced in any automation or script."""
+        t = self._translator.t
+        
+        # Get all input_boolean entities
+        all_entities = self.hass.states.async_all()
+        input_booleans = [e for e in all_entities if e.entity_id.startswith("input_boolean.")]
+        
+        for idx, entity in enumerate(input_booleans):
+            entity_id = entity.entity_id
+            
+            # Check if this input_boolean is referenced anywhere
+            if entity_id not in self._entity_references or len(self._entity_references[entity_id]) == 0:
+                self.issues.append({
+                    "entity_id": entity_id,
+                    "type": "unused_input_boolean",
+                    "severity": "low",
+                    "message": t("unused_input_boolean", entity_id=entity_id),
+                    "recommendation": t("remove_unused_helper"),
+                    "fix_available": False,
+                })
+            
+            if idx % 20 == 0: await asyncio.sleep(0)
+
     def get_issue_summary(self) -> dict[str, Any]:
         """Get a summary of entity issues."""
         summary = {
@@ -339,7 +366,8 @@ class EntityAnalyzer:
             "by_type": {},
             "zombie_entities": 0,
             "unavailable_entities": 0,
-            "stale_entities": 0
+            "stale_entities": 0,
+            "unused_helpers": 0
         }
         
         for issue in self.issues:
@@ -355,5 +383,7 @@ class EntityAnalyzer:
                 summary["unavailable_entities"] += 1
             elif issue_type == "stale_entity":
                 summary["stale_entities"] += 1
+            elif issue_type == "unused_input_boolean":
+                summary["unused_helpers"] += 1
         
         return summary

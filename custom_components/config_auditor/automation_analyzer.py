@@ -27,6 +27,7 @@ class AutomationAnalyzer:
         self.automation_issues: list[dict[str, Any]] = []
         self.script_issues: list[dict[str, Any]] = []
         self.scene_issues: list[dict[str, Any]] = []
+        self.blueprint_issues: list[dict[str, Any]] = []
         self._automation_configs: dict[str, dict[str, Any]] = {}
         self._script_configs: dict[str, dict[str, Any]] = {}
         self._scene_configs: dict[str, dict[str, Any]] = {}
@@ -66,19 +67,38 @@ class AutomationAnalyzer:
         # Check for never-triggered automations
         await self._check_never_triggered()
         
-        # Separate issues by entity_id prefix
+        # Check for duplicate automations
+        self._check_duplicate_automations()
+        
+        # Check for excessive delays
+        self._check_excessive_delays()
+        
+        # Check for malformed blueprints
+        self._check_blueprint_issues()
+        
+        # Separate issues by entity_id prefix and issue type
         self.automation_issues = []
         self.script_issues = []
         self.scene_issues = []
-        
+        self.blueprint_issues = []
+
+        BLUEPRINT_ISSUE_TYPES = {
+            "blueprint_missing_path",
+            "blueprint_no_inputs",
+            "blueprint_empty_input",
+        }
+
         for issue in self.issues:
             entity_id = issue.get("entity_id", "")
-            if entity_id.startswith("script."):
+            issue_type = issue.get("type", "")
+            if issue_type in BLUEPRINT_ISSUE_TYPES:
+                # Blueprint issues go to their own list regardless of entity_id
+                self.blueprint_issues.append(issue)
+            elif entity_id.startswith("script."):
                 self.script_issues.append(issue)
             elif entity_id.startswith("scene."):
                 self.scene_issues.append(issue)
             else:
-                # Everything else goes to automation issues
                 self.automation_issues.append(issue)
         
         _LOGGER.info(
@@ -277,8 +297,8 @@ class AutomationAnalyzer:
             if isinstance(condition, dict):
                 self._analyze_condition(entity_id, alias or entity_id, condition, idx)
         
-        # Analyze actions
-        actions = config.get("action", [])
+        # Analyze actions - support both 'action' (old) and 'actions' (new UI format)
+        actions = config.get("actions") or config.get("action", [])
         if not isinstance(actions, list):
             actions = [actions] if actions else []
         
@@ -496,11 +516,11 @@ class AutomationAnalyzer:
         
         mode = config.get("mode", "single")
         
-        triggers = config.get("trigger", [])
+        triggers = config.get("triggers") or config.get("trigger", [])
         if not isinstance(triggers, list):
             triggers = [triggers] if triggers else []
         
-        actions = config.get("action", [])
+        actions = config.get("actions") or config.get("action", [])
         if not isinstance(actions, list):
             actions = [actions] if actions else []
         
@@ -558,13 +578,216 @@ class AutomationAnalyzer:
                         "fix_available": False,
                     })
 
+    def _check_duplicate_automations(self) -> None:
+        """Check for duplicate automations with identical triggers and actions."""
+        t = self._translator.t
+        
+        # Create a signature for each automation based on triggers and actions
+        signatures: dict[str, list[str]] = {}
+        
+        for entity_id, config in self._automation_configs.items():
+            triggers = config.get("triggers") or config.get("trigger", [])
+            actions = config.get("action", [])
+            
+            # Normalize triggers and actions for comparison
+            trigger_sig = self._normalize_config(triggers)
+            action_sig = self._normalize_config(actions)
+            
+            # Create a combined signature
+            sig = f"{trigger_sig}|{action_sig}"
+            
+            if sig not in signatures:
+                signatures[sig] = []
+            signatures[sig].append(entity_id)
+        
+        # Find duplicates
+        for sig, entity_ids in signatures.items():
+            if len(entity_ids) > 1:
+                # Report each duplicate
+                for entity_id in entity_ids:
+                    alias = self._automation_configs[entity_id].get("alias", entity_id)
+                    other_ids = [e for e in entity_ids if e != entity_id]
+                    
+                    self.issues.append({
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "type": "duplicate_automation",
+                        "severity": "medium",
+                        "message": t("duplicate_automation", count=len(entity_ids) - 1),
+                        "location": "root",
+                        "recommendation": t("remove_duplicate", others=", ".join(other_ids[:2])),
+                        "fix_available": False,
+                    })
+
+    def _normalize_config(self, config: Any) -> str:
+        """Normalize a config section for comparison."""
+        import json
+        
+        if not config:
+            return ""
+        
+        if not isinstance(config, list):
+            config = [config]
+        
+        # Sort keys recursively for consistent comparison
+        def sort_keys(obj):
+            if isinstance(obj, dict):
+                return {k: sort_keys(v) for k, v in sorted(obj.items())}
+            elif isinstance(obj, list):
+                return [sort_keys(item) for item in obj]
+            return obj
+        
+        normalized = sort_keys(config)
+        return json.dumps(normalized, sort_keys=True, default=str)
+
+    def _check_excessive_delays(self) -> None:
+        """Check for excessive delays in automations (more than 30 minutes)."""
+        t = self._translator.t
+        MAX_DELAY_MINUTES = 30
+        
+        for entity_id, config in self._automation_configs.items():
+            alias = config.get("alias", entity_id)
+            actions = config.get("action", [])
+            
+            if not isinstance(actions, list):
+                actions = [actions] if actions else []
+            
+            for idx, action in enumerate(actions):
+                if isinstance(action, dict) and "delay" in action:
+                    delay = action["delay"]
+                    delay_minutes = self._parse_delay_to_minutes(delay)
+                    
+                    if delay_minutes and delay_minutes > MAX_DELAY_MINUTES:
+                        self.issues.append({
+                            "entity_id": entity_id,
+                            "alias": alias,
+                            "type": "excessive_delay",
+                            "severity": "medium",
+                            "message": t("excessive_delay", minutes=int(delay_minutes), idx=idx),
+                            "location": f"action[{idx}]",
+                            "recommendation": t("use_input_number_delay"),
+                            "fix_available": False,
+                        })
+
+    def _parse_delay_to_minutes(self, delay: Any) -> float | None:
+        """Parse a delay value to minutes."""
+        if delay is None:
+            return None
+        
+        # If it's a number, assume seconds
+        if isinstance(delay, (int, float)):
+            return delay / 60
+        
+        # If it's a string like "00:30:00" (HH:MM:SS)
+        if isinstance(delay, str):
+            parts = delay.split(":")
+            if len(parts) == 3:
+                try:
+                    hours, minutes, seconds = int(parts[0]), int(parts[1]), int(parts[2])
+                    return hours * 60 + minutes + seconds / 60
+                except ValueError:
+                    pass
+            elif len(parts) == 2:
+                try:
+                    minutes, seconds = int(parts[0]), int(parts[1])
+                    return minutes + seconds / 60
+                except ValueError:
+                    pass
+        
+        # If it's a dict with hours/minutes/seconds
+        if isinstance(delay, dict):
+            hours = delay.get("hours", 0) or 0
+            minutes = delay.get("minutes", 0) or 0
+            seconds = delay.get("seconds", 0) or 0
+            try:
+                return float(hours) * 60 + float(minutes) + float(seconds) / 60
+            except (ValueError, TypeError):
+                pass
+        
+        return None
+
+    def _check_blueprint_issues(self) -> None:
+        """Check for malformed or incomplete blueprint configurations."""
+        t = self._translator.t
+        config_dir = Path(self.hass.config.config_dir)
+
+        for entity_id, config in self._automation_configs.items():
+            alias = config.get("alias", entity_id)
+
+            # Check if automation uses a blueprint
+            if "use_blueprint" in config:
+                blueprint = config["use_blueprint"]
+                blueprint_path = blueprint.get("path", "") if isinstance(blueprint, dict) else ""
+
+                # Check for missing blueprint path
+                if not blueprint_path:
+                    self.issues.append({
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "type": "blueprint_missing_path",
+                        "severity": "high",
+                        "message": t("blueprint_missing_path"),
+                        "location": "use_blueprint",
+                        "recommendation": t("specify_blueprint_path"),
+                        "fix_available": False,
+                    })
+                    continue
+
+                # --- NEW: verify the blueprint file actually exists on disk ---
+                # Blueprints live in <config>/blueprints/automation/<path>
+                # The path stored in YAML may already include subdirectories.
+                blueprint_file = config_dir / "blueprints" / "automation" / blueprint_path
+                if not blueprint_file.exists():
+                    self.issues.append({
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "type": "blueprint_file_not_found",
+                        "severity": "high",
+                        "message": t("blueprint_file_not_found", path=blueprint_path),
+                        "location": "use_blueprint",
+                        "recommendation": t("reinstall_blueprint", path=blueprint_path),
+                        "fix_available": False,
+                    })
+                    continue
+                # ---------------------------------------------------------------
+
+                # Check for missing or empty inputs
+                inputs = blueprint.get("input", {}) if isinstance(blueprint, dict) else {}
+
+                if not inputs:
+                    self.issues.append({
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "type": "blueprint_no_inputs",
+                        "severity": "medium",
+                        "message": t("blueprint_no_inputs", path=blueprint_path),
+                        "location": "use_blueprint",
+                        "recommendation": t("configure_blueprint_inputs"),
+                        "fix_available": False,
+                    })
+                else:
+                    # Check for null or empty input values
+                    for input_key, input_value in inputs.items():
+                        if input_value is None or input_value == "":
+                            self.issues.append({
+                                "entity_id": entity_id,
+                                "alias": alias,
+                                "type": "blueprint_empty_input",
+                                "severity": "medium",
+                                "message": t("blueprint_empty_input", key=input_key),
+                                "location": f"use_blueprint.input.{input_key}",
+                                "recommendation": t("set_blueprint_input", key=input_key),
+                                "fix_available": False,
+                            })
+
     def get_issue_summary(self) -> dict[str, Any]:
         """Get a summary of issues."""
         summary = {
             "total": len(self.issues),
             "by_severity": {"high": 0, "medium": 0, "low": 0},
             "by_type": {},
-            "automations_analyzed": len(self._automation_configs)
+            "automations_analyzed": len(self._automation_configs),
+            "blueprint_issues": len(self.blueprint_issues),
         }
         
         for issue in self.issues:

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-02-19
+
+### Added
+- **Frontend Panel**: Added "Edit" button to each issue that opens the Home Assistant native editor directly (automations, scripts, scenes). This allows users to manually edit items without going through AI proposals.
+- **Translations (EN/FR)**: Added `edit_ha` key for the new Edit button.
+
 ## [1.1.0] - 2026-02-19
 
 ### Fixed
@@ -25,3 +31,7 @@ All notable changes to this project will be documented in this file.
 - **Refactoring Assistant**: Native UI to fix `device_id` and template issues.
 - **Bilingual Interface**: Supporting English and French.
 - **Cooperative Multitasking**: Optimized scan logic to prevent WebSocket timeouts.
+
+
+
+

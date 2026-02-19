@@ -47,6 +47,9 @@
       "scene_issues": {
         "name": "Problèmes de Scènes"
       },
+      "blueprint_issues": {
+        "name": "Problèmes de Blueprints"
+      },
       "performance_issues": {
         "name": "Problèmes de Performance"
       },
@@ -83,7 +86,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant Config Auditor",
-    "version": "V1.3.0",
+    "version": "V1.1.1",
     "buttons": {
       "scan_all": "Scan Complet",
       "automations": "Automatisations",
@@ -106,7 +109,9 @@
       "entities": "Entités",
       "entities_desc": "Entités indisponibles/zombies",
       "performance": "Performance",
-      "performance_desc": "Boucles et impact DB"
+      "performance_desc": "Boucles et impact DB",
+      "blueprints": "Blueprints",
+      "blueprints_desc": "Issues de blueprints"
     },
     "tabs": {
       "all": "Toutes",
@@ -116,6 +121,7 @@
       "entities": "Entités",
       "security": "Sécurité",
       "performance": "Performance",
+      "blueprints": "Blueprints",
       "backups": "Sauvegardes",
       "reports": "Rapports"
     },
@@ -127,13 +133,23 @@
       "scene_issues": "Issues de Scènes",
       "entity_issues": "Issues d'Entités",
       "performance_issues": "Issues de Performance",
+      "blueprint_issues": "Issues de Blueprints",
       "backup_management": "Gestion des Sauvegardes",
       "report_management": "Gestion des Rapports"
+    },
+    "filter": {
+      "all": "Toutes",
+      "high": "🔴 Haute",
+      "medium": "🟠 Moyenne",
+      "low": "🔵 Faible",
+      "label": "Filtrer :",
+      "export_csv": "Exporter CSV"
     },
     "actions": {
       "create_backup": "Créer une Sauvegarde",
       "fix": "Corriger",
       "ai_explain": "IA",
+      "edit_ha": "Éditer",
       "restore": "Restaurer",
       "view": "Voir",
       "download": "Télécharger",
@@ -145,6 +161,7 @@
     },
     "messages": {
       "no_issues": "Aucun problème détecté dans cette catégorie",
+      "no_issues_filtered": "Aucune issue ne correspond au filtre sélectionné",
       "no_backups": "Aucune sauvegarde disponible",
       "no_reports": "Aucun rapport généré",
       "loading": "Chargement...",
@@ -254,6 +271,7 @@
       "total_issues": "Total des Problèmes",
       "script_issues": "Problèmes de Scripts",
       "scene_issues": "Problèmes de Scènes",
+      "blueprint_issues": "Problèmes de Blueprints",
       "performance_issues": "Problèmes de Performance",
       "security_issues": "Problèmes de Sécurité",
       "high_severity": "Sévérité Élevée",
@@ -280,39 +298,7 @@
       "status_poor": "Insuffisant. Une action est requise.",
       "issue": "Problème",
       "fix": "Correction",
-      "page": "Page",
-      "trigger_uses_device_id": "Le déclencheur {idx} utilise device_id ce qui casse quand le device est réajouté",
-      "condition_uses_device_id": "La condition {idx} utilise device_id ce qui casse quand le device est réajouté",
-      "action_uses_device_id": "L'action {idx} utilise device_id ce qui casse quand le device est réajouté",
-      "action_target_uses_device_id": "L'action {idx} utilise device_id dans la cible ce qui casse quand le device est réajouté",
-      "trigger_uses_device_platform": "Le déclencheur {idx} utilise la plateforme 'device' qui est fragile",
-      "condition_uses_device_platform": "La condition {idx} utilise le type de condition 'device' qui est fragile",
-      "zone_trigger_missing_entity": "Déclencheur {idx} : déclencheur de zone sans entity_id",
-      "template_simple_state": "La condition {idx} utilise un template pour une vérification d'état simple",
-      "template_numeric_comparison": "La condition {idx} utilise un template pour une comparaison numérique",
-      "template_time_check": "La condition {idx} utilise un template pour une vérification d'heure",
-      "wait_template_state_check": "L'action {idx} utilise wait_template pour une vérification d'état",
-      "generic_service": "L'action {idx} utilise le service générique '{service}'",
-      "motion_single_mode": "L'automation de mouvement utilise le mode 'single' avec des délais/attentes",
-      "never_triggered": "L'automation n'a jamais été déclenchée depuis le redémarrage de HA",
-      "no_alias": "L'automation n'a pas d'alias/nom",
-      "no_description": "L'automation n'a pas de description",
-      "script_no_description": "Le script '{alias}' n'a pas de description",
-      "script_no_sequence": "Le script '{alias}' n'a pas de séquence d'actions",
-      "scene_no_entities": "La scène n'a pas d'entités définies",
-      "add_description": "Ajouter une description pour documenter le but de l'automation",
-      "add_alias": "Ajouter un alias pour rendre l'automation identifiable",
-      "use_entity_id_instead_device": "Utiliser entity_id au lieu de device_id pour la fiabilité",
-      "use_state_platform": "Utiliser la plateforme state/numeric_state avec entity_id à la place",
-      "use_state_condition": "Utiliser la condition 'state' native au lieu d'un template",
-      "use_numeric_state_condition": "Utiliser la condition 'numeric_state' pour la validation au chargement",
-      "use_time_condition": "Utiliser la condition 'time' avec les paramètres after/before",
-      "use_entity_id_in_target": "Utiliser entity_id dans la cible au lieu de device_id",
-      "use_wait_for_trigger": "Utiliser wait_for_trigger avec un déclencheur d'état (piloté par événement, pas par polling)",
-      "use_restart_mode": "Utiliser le mode 'restart' - les redéclenchements doivent réinitialiser le timer",
-      "verify_triggers": "Vérifier que les déclencheurs sont configurés correctement ou que l'automation est nécessaire",
-      "specify_zone_entity": "Spécifier quelle entité suivre dans la zone",
-      "use_domain_service": "Utiliser des services spécifiques au domaine comme {domain}.turn_on"
+      "page": "Page"
     }
   },
   "analyzer": {
@@ -373,6 +359,20 @@
     "hardcoded_secret": "Secret potentiel ou clé API codé en dur détecté",
     "sensitive_data_exposure": "Action {idx} : exposition potentielle de données sensibles dans la notification",
     "use_secret_yaml": "Utiliser !secret dans secrets.yaml au lieu de coder en dur les données sensibles",
-    "avoid_secrets_notifications": "Éviter d'envoyer des secrets ou mots de passe dans les messages de notification"
+    "avoid_secrets_notifications": "Éviter d'envoyer des secrets ou mots de passe dans les messages de notification",
+    "duplicate_automation": "L'automation a {count} doublon(s) avec des déclencheurs et actions identiques",
+    "remove_duplicate": "Envisagez de supprimer les doublons ou de les consolider : {others}",
+    "excessive_delay": "L'action {idx} a un délai excessif de {minutes} minutes (>30 min)",
+    "use_input_number_delay": "Envisagez d'utiliser un helper input_number pour rendre le délai configurable",
+    "blueprint_missing_path": "La référence au blueprint manque un chemin",
+    "specify_blueprint_path": "Spécifiez le chemin du blueprint dans use_blueprint.path",
+    "blueprint_file_not_found": "Fichier blueprint introuvable sur le disque : blueprints/automation/{path}",
+    "reinstall_blueprint": "Réinstallez ou restaurez le fichier blueprint : blueprints/automation/{path}",
+    "blueprint_no_inputs": "Le blueprint '{path}' n'a pas d'entrées configurées",
+    "configure_blueprint_inputs": "Configurez les entrées requises du blueprint dans use_blueprint.input",
+    "blueprint_empty_input": "L'entrée du blueprint '{key}' est vide ou nulle",
+    "set_blueprint_input": "Définissez une valeur pour l'entrée du blueprint '{key}'",
+    "unused_input_boolean": "L'input boolean '{entity_id}' n'est référencé dans aucune automation ou script",
+    "remove_unused_helper": "Envisagez de supprimer ce helper inutilisé pour nettoyer votre configuration"
   }
 }

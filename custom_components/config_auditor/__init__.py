@@ -145,14 +145,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         automation_only_issues = automation_analyzer.automation_issues
         script_issues = automation_analyzer.script_issues
         scene_issues = automation_analyzer.scene_issues
+        blueprint_issues = automation_analyzer.blueprint_issues
         
         health_score = calculate_health_score(
             automation_issues, entity_issues, performance_issues, security_issues
         )
         
         _LOGGER.info(
-            "Health Score Calculation: Automation Issues=%d, Script Issues=%d, Entity Issues=%d, Performance Issues=%d. Score=%d%%", 
-            len(automation_only_issues), len(script_issues), len(entity_issues), len(performance_issues), health_score
+            "Health Score Calculation: Automation Issues=%d, Script Issues=%d, Blueprint Issues=%d, Entity Issues=%d, Performance Issues=%d. Score=%d%%", 
+            len(automation_only_issues), len(script_issues), len(blueprint_issues), len(entity_issues), len(performance_issues), health_score
         )
         
         return {
@@ -160,13 +161,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "automation_issues": len(automation_only_issues),
             "script_issues": len(script_issues),
             "scene_issues": len(scene_issues),
+            "blueprint_issues": len(blueprint_issues),
             "entity_issues": len(entity_issues),
             "performance_issues": len(performance_issues),
             "security_issues": len(security_issues),
-            "total_issues": len(automation_only_issues) + len(script_issues) + len(scene_issues) + len(entity_issues) + len(performance_issues) + len(security_issues),
+            "total_issues": len(automation_only_issues) + len(script_issues) + len(scene_issues)
+                          + len(blueprint_issues) + len(entity_issues)
+                          + len(performance_issues) + len(security_issues),
             "automation_issue_list": automation_only_issues,
             "script_issue_list": script_issues,
             "scene_issue_list": scene_issues,
+            "blueprint_issue_list": blueprint_issues,
             "entity_issue_list": entity_issues,
             "performance_issue_list": performance_issues,
             "security_issue_list": security_issues,
@@ -455,24 +460,36 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         coordinator = data["coordinator"]
         
         async def _run_scan():
-            issues = await automation_analyzer.analyze_all()
+            await automation_analyzer.analyze_all()
             
-            # Mettre à jour le coordinator avec les nouvelles données
+            # Mettre à jour le coordinator avec les nouvelles données séparées
             current_data = coordinator.data or {}
             updated_data = {
                 **current_data,
-                "automation_issues": len(issues),
-                "automation_issue_list": issues,
+                "automation_issues": len(automation_analyzer.automation_issues),
+                "automation_issue_list": automation_analyzer.automation_issues,
+                "script_issues": len(automation_analyzer.script_issues),
+                "script_issue_list": automation_analyzer.script_issues,
+                "scene_issues": len(automation_analyzer.scene_issues),
+                "scene_issue_list": automation_analyzer.scene_issues,
+                "blueprint_issues": len(automation_analyzer.blueprint_issues),
+                "blueprint_issue_list": automation_analyzer.blueprint_issues,
             }
             
-            # Recalculer le health_score
+            # Recalculer le health_score avec les 4 catégories
             auto_issues = updated_data.get("automation_issue_list", [])
             entity_issues = updated_data.get("entity_issue_list", [])
             perf_issues = updated_data.get("performance_issue_list", [])
             sec_issues = updated_data.get("security_issue_list", [])
             
-            updated_data["health_score"] = calculate_health_score(auto_issues, entity_issues)
-            updated_data["total_issues"] = len(auto_issues) + len(entity_issues) + len(perf_issues) + len(sec_issues)
+            updated_data["health_score"] = calculate_health_score(auto_issues, entity_issues, perf_issues, sec_issues)
+            updated_data["total_issues"] = (
+                len(auto_issues)
+                + len(updated_data.get("script_issue_list", []))
+                + len(updated_data.get("scene_issue_list", []))
+                + len(updated_data.get("blueprint_issue_list", []))
+                + len(entity_issues) + len(perf_issues) + len(sec_issues)
+            )
             
             coordinator.async_set_updated_data(updated_data)
         
@@ -507,8 +524,14 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             perf_issues = updated_data.get("performance_issue_list", [])
             sec_issues = updated_data.get("security_issue_list", [])
             
-            updated_data["health_score"] = calculate_health_score(auto_issues, entity_issues)
-            updated_data["total_issues"] = len(auto_issues) + len(entity_issues) + len(perf_issues) + len(sec_issues)
+            updated_data["health_score"] = calculate_health_score(auto_issues, entity_issues, perf_issues, sec_issues)
+            updated_data["total_issues"] = (
+                len(updated_data.get("automation_issue_list", []))
+                + len(updated_data.get("script_issue_list", []))
+                + len(updated_data.get("scene_issue_list", []))
+                + len(updated_data.get("blueprint_issue_list", []))
+                + len(entity_issues) + len(perf_issues) + len(sec_issues)
+            )
             
             coordinator.async_set_updated_data(updated_data)
 

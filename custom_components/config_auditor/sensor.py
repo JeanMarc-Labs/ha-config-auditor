@@ -34,6 +34,7 @@ async def async_setup_entry(
         HACAAutomationIssuesSensor(coordinator, entry),
         HACAScriptIssuesSensor(coordinator, entry),
         HACASceneIssuesSensor(coordinator, entry),
+        HACABlueprintIssuesSensor(coordinator, entry),
         HACAEntityIssuesSensor(coordinator, entry),
         HACAPerformanceIssuesSensor(coordinator, entry),
         HACASecurityIssuesSensor(coordinator, entry),
@@ -208,6 +209,29 @@ class HACATotalIssuesSensor(HACASensorBase):
         """Return the state."""
         if self.coordinator.data:
             return self.coordinator.data.get("total_issues", 0)
+        return None
+
+
+class HACABlueprintIssuesSensor(HACASensorBase):
+    """Sensor for blueprint issues."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_blueprint_issues"
+        self._attr_translation_key = "blueprint_issues"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:file-document-outline"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("blueprint_issues", 0)
         return None
 
 

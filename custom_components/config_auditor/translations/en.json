@@ -32,58 +32,28 @@
   "title": "H.A.C.A",
   "entity": {
     "sensor": {
-      "health_score": {
-        "name": "Health Score"
-      },
-      "automation_issues": {
-        "name": "Automation Issues"
-      },
-      "script_issues": {
-        "name": "Script Issues"
-      },
-      "scene_issues": {
-        "name": "Scene Issues"
-      },
-      "entity_issues": {
-        "name": "Entity Issues"
-      },
-      "performance_issues": {
-        "name": "Performance Issues"
-      },
-      "security_issues": {
-        "name": "Security Issues"
-      },
-      "total_issues": {
-        "name": "Total Issues"
-      }
+      "health_score": { "name": "Health Score" },
+      "automation_issues": { "name": "Automation Issues" },
+      "script_issues": { "name": "Script Issues" },
+      "scene_issues": { "name": "Scene Issues" },
+      "blueprint_issues": { "name": "Blueprint Issues" },
+      "entity_issues": { "name": "Entity Issues" },
+      "performance_issues": { "name": "Performance Issues" },
+      "security_issues": { "name": "Security Issues" },
+      "total_issues": { "name": "Total Issues" }
     }
   },
   "services": {
-    "scan_all": {
-      "name": "Scan All",
-      "description": "Run a complete configuration audit"
-    },
-    "scan_automations": {
-      "name": "Scan Automations",
-      "description": "Scan automations for issues"
-    },
-    "scan_entities": {
-      "name": "Scan Entities",
-      "description": "Scan entities for issues"
-    },
-    "generate_report": {
-      "name": "Generate Report",
-      "description": "Generate a comprehensive audit report"
-    },
-    "fix_device_id": {
-      "name": "Fix Device ID",
-      "description": "Convert device_id to entity_id in an automation"
-    }
+    "scan_all": { "name": "Scan All", "description": "Run a complete configuration audit" },
+    "scan_automations": { "name": "Scan Automations", "description": "Scan automations for issues" },
+    "scan_entities": { "name": "Scan Entities", "description": "Scan entities for issues" },
+    "generate_report": { "name": "Generate Report", "description": "Generate a comprehensive audit report" },
+    "fix_device_id": { "name": "Fix Device ID", "description": "Convert device_id to entity_id in an automation" }
   },
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant Config Auditor",
-    "version": "V1.3.0",
+    "version": "V1.2.0",
     "buttons": {
       "scan_all": "Full Scan",
       "automations": "Automations",
@@ -106,7 +76,9 @@
       "entities": "Entities",
       "entities_desc": "Unavailable/zombie entities",
       "performance": "Performance",
-      "performance_desc": "Loops and DB impact"
+      "performance_desc": "Loops and DB impact",
+      "blueprints": "Blueprints",
+      "blueprints_desc": "Blueprint issues"
     },
     "tabs": {
       "all": "All",
@@ -116,6 +88,7 @@
       "entities": "Entities",
       "security": "Security",
       "performance": "Performance",
+      "blueprints": "Blueprints",
       "backups": "Backups",
       "reports": "Reports"
     },
@@ -127,8 +100,17 @@
       "scene_issues": "Scene Issues",
       "entity_issues": "Entity Issues",
       "performance_issues": "Performance Issues",
+      "blueprint_issues": "Blueprint Issues",
       "backup_management": "Backup Management",
       "report_management": "Report Management"
+    },
+    "filter": {
+      "all": "All",
+      "high": "🔴 High",
+      "medium": "🟠 Medium",
+      "low": "🔵 Low",
+      "label": "Filter:",
+      "export_csv": "Export CSV"
     },
     "actions": {
       "create_backup": "Create Backup",
@@ -145,6 +127,7 @@
     },
     "messages": {
       "no_issues": "No issues detected in this category",
+      "no_issues_filtered": "No issues match the selected filter",
       "no_backups": "No backup available",
       "no_reports": "No report generated",
       "loading": "Loading...",
@@ -183,7 +166,7 @@
       "config_modified": "Configuration modified",
       "reported_by": "Reported by H.A.C.A",
       "view_details": "View details",
-      "and_others": "and {count} other(s)",
+      "and_others": "...and {count} other(s)",
       "report_generated": "Report Generated",
       "report_generated_msg": "MD, JSON and PDF available in /config/.haca_reports/",
       "report_generated_full": "📄 **Reports Generated Successfully!**\n\n📁 **Location:** `/config/.haca_reports/`\n\n**Available formats:**\n• Markdown (.md)\n• JSON (.json)\n• PDF (.pdf)\n\n---\n*Created by H.A.C.A*",
@@ -254,6 +237,7 @@
       "total_issues": "Total Issues",
       "script_issues": "Script Issues",
       "scene_issues": "Scene Issues",
+      "blueprint_issues": "Blueprint Issues",
       "performance_issues": "Performance Issues",
       "security_issues": "Security Issues",
       "high_severity": "High Severity",
@@ -280,39 +264,7 @@
       "status_poor": "Poor. Action required.",
       "issue": "Issue",
       "fix": "Fix",
-      "page": "Page",
-      "trigger_uses_device_id": "Trigger {idx} uses device_id which breaks when device is re-added",
-      "condition_uses_device_id": "Condition {idx} uses device_id which breaks when device is re-added",
-      "action_uses_device_id": "Action {idx} uses device_id which breaks when device is re-added",
-      "action_target_uses_device_id": "Action {idx} uses device_id in target which breaks when device is re-added",
-      "trigger_uses_device_platform": "Trigger {idx} uses 'device' platform which is fragile",
-      "condition_uses_device_platform": "Condition {idx} uses 'device' condition type which is fragile",
-      "zone_trigger_missing_entity": "Trigger {idx}: zone trigger missing entity_id",
-      "template_simple_state": "Condition {idx} uses template for simple state check",
-      "template_numeric_comparison": "Condition {idx} uses template for numeric comparison",
-      "template_time_check": "Condition {idx} uses template for time check",
-      "wait_template_state_check": "Action {idx} uses wait_template for state check",
-      "generic_service": "Action {idx} uses generic service '{service}'",
-      "motion_single_mode": "Motion automation uses 'single' mode with delays/waits",
-      "never_triggered": "Automation has never been triggered since HA restart",
-      "no_alias": "Automation has no alias/name",
-      "no_description": "Automation has no description",
-      "script_no_description": "Script '{alias}' has no description",
-      "script_no_sequence": "Script '{alias}' has no sequence of actions",
-      "scene_no_entities": "Scene has no entities defined",
-      "add_description": "Add a description to document automation purpose",
-      "add_alias": "Add an alias to make automation identifiable",
-      "use_entity_id_instead_device": "Use entity_id instead of device_id for reliability",
-      "use_state_platform": "Use state/numeric_state platform with entity_id instead",
-      "use_state_condition": "Use native 'state' condition instead of template",
-      "use_numeric_state_condition": "Use 'numeric_state' condition for validation at load time",
-      "use_time_condition": "Use 'time' condition with after/before parameters",
-      "use_entity_id_in_target": "Use entity_id in target instead of device_id",
-      "use_wait_for_trigger": "Use wait_for_trigger with state trigger (event-driven, not polling)",
-      "use_restart_mode": "Use 'restart' mode - re-triggers must reset the timer",
-      "verify_triggers": "Verify triggers are configured correctly or automation is needed",
-      "specify_zone_entity": "Specify which entity to track in the zone",
-      "use_domain_service": "Use domain-specific services like {domain}.turn_on"
+      "page": "Page"
     }
   },
   "analyzer": {
@@ -373,6 +325,20 @@
     "hardcoded_secret": "Potential hardcoded secret or API key detected",
     "sensitive_data_exposure": "Action {idx}: Potential exposure of sensitive data in notification",
     "use_secret_yaml": "Use !secret in secrets.yaml instead of hardcoding sensitive data",
-    "avoid_secrets_notifications": "Avoid sending secrets or passwords in notification messages"
+    "avoid_secrets_notifications": "Avoid sending secrets or passwords in notification messages",
+    "duplicate_automation": "Automation has {count} duplicate(s) with identical triggers and actions",
+    "remove_duplicate": "Consider removing duplicates or consolidating: {others}",
+    "excessive_delay": "Action {idx} has an excessive delay of {minutes} minutes (>30 min)",
+    "use_input_number_delay": "Consider using an input_number helper to make the delay configurable",
+    "blueprint_missing_path": "Blueprint reference is missing a path",
+    "specify_blueprint_path": "Specify the blueprint path in use_blueprint.path",
+    "blueprint_file_not_found": "Blueprint file not found on disk: blueprints/automation/{path}",
+    "reinstall_blueprint": "Reinstall or restore the blueprint file at blueprints/automation/{path}",
+    "blueprint_no_inputs": "Blueprint '{path}' has no configured inputs",
+    "configure_blueprint_inputs": "Configure the required blueprint inputs in use_blueprint.input",
+    "blueprint_empty_input": "Blueprint input '{key}' is empty or null",
+    "set_blueprint_input": "Set a value for blueprint input '{key}'",
+    "unused_input_boolean": "Input boolean '{entity_id}' is not referenced in any automation or script",
+    "remove_unused_helper": "Consider removing this unused helper to clean up your configuration"
   }
 }

@@ -7,7 +7,7 @@ class HacaPanel extends HTMLElement {
     this._defaultTranslations = {
       title: "H.A.C.A",
       subtitle: "Home Assistant Config Auditor",
-      version: "V1.1.0",
+      version: "V1.1.1",
       buttons: {
         scan_all: "Full Scan",
         automations: "Automations",
@@ -30,7 +30,9 @@ class HacaPanel extends HTMLElement {
         entities: "Entities",
         entities_desc: "Unavailable/zombie entities",
         performance: "Performance",
-        performance_desc: "Loops and DB impact"
+        performance_desc: "Loops and DB impact",
+        blueprints: "Blueprints",
+        blueprints_desc: "Blueprint issues"
       },
       tabs: {
         all: "All",
@@ -40,6 +42,7 @@ class HacaPanel extends HTMLElement {
         entities: "Entities",
         security: "Security",
         performance: "Performance",
+        blueprints: "Blueprints",
         backups: "Backups",
         reports: "Reports"
       },
@@ -51,6 +54,7 @@ class HacaPanel extends HTMLElement {
         scene_issues: "Scene Issues",
         entity_issues: "Entity Issues",
         performance_issues: "Performance Issues",
+        blueprint_issues: "Blueprint Issues",
         backup_management: "Backup Management",
         report_management: "Report Management"
       },
@@ -58,6 +62,7 @@ class HacaPanel extends HTMLElement {
         create_backup: "Create Backup",
         fix: "Fix",
         ai_explain: "AI",
+        edit_ha: "Edit",
         restore: "Restore",
         view: "View",
         download: "Download",
@@ -81,7 +86,8 @@ class HacaPanel extends HTMLElement {
         data_refreshed: "Data refreshed",
         ai_analyzing: "AI is analyzing your problem...",
         ai_generating: "AI is generating a description...",
-        yaml_updating: "Updating YAML file..."
+        yaml_updating: "Updating YAML file...",
+        no_issues_filtered: "No issues match the selected filter"
       },
       modals: {
         correction_proposal: "Correction Proposal",
@@ -153,7 +159,15 @@ class HacaPanel extends HTMLElement {
         replace_entity: "Replace with a valid entity_id",
         save_reload: "Save and reload the automation"
       },
-      seconds: "This may take a few seconds"
+      seconds: "This may take a few seconds",
+      filter: {
+        all: "All",
+        high: "\ud83d\udd34 High",
+        medium: "\ud83d\udfe0 Medium",
+        low: "\ud83d\udd35 Low",
+        label: "Filter:",
+        export_csv: "Export CSV"
+      }
     };
   }
 
@@ -253,240 +267,326 @@ class HacaPanel extends HTMLElement {
       <style>
         :host {
           display: block;
-          padding: 24px;
+          padding: 16px;
           background: var(--primary-background-color);
           color: var(--primary-text-color);
           font-family: 'Roboto', 'Outfit', sans-serif;
+          box-sizing: border-box;
         }
+        *, *::before, *::after { box-sizing: inherit; }
         .container { max-width: 1400px; margin: 0 auto; animation: fadeIn 0.5s ease-out; }
-        
+
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+          to   { opacity: 1; transform: translateY(0); }
         }
 
+        /* ── HEADER ───────────────────────────────── */
         .header {
           background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color, #03a9f4) 100%);
           color: white;
-          padding: 32px;
+          padding: 24px;
           border-radius: 16px;
-          margin-bottom: 24px;
+          margin-bottom: 20px;
           box-shadow: 0 8px 32px rgba(0,0,0,0.15);
           display: flex;
           justify-content: space-between;
           align-items: center;
           flex-wrap: wrap;
-          gap: 20px;
+          gap: 16px;
         }
-        
-        .header-title { display: flex; align-items: center; gap: 16px; }
-        .header-title ha-icon { --mdc-icon-size: 48px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
-        .header h1 { margin: 0; font-size: 32px; font-weight: 500; letter-spacing: -0.5px; }
-        
-        .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-        
+        .header-title { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; }
+        .header-title ha-icon { --mdc-icon-size: 42px; flex-shrink: 0; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 500; letter-spacing: -0.5px; }
+        .header-sub { font-size: 13px; opacity: 0.8; font-weight: 400; }
+        .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        /* ── BUTTONS ──────────────────────────────── */
         button {
-          background: rgba(255, 255, 255, 0.15);
+          background: rgba(255,255,255,0.15);
           color: white;
-          border: 1px solid rgba(255, 255, 255, 0.3);
-          padding: 10px 20px;
+          border: 1px solid rgba(255,255,255,0.3);
+          padding: 10px 18px;
           border-radius: 12px;
           cursor: pointer;
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 500;
           display: flex;
           align-items: center;
           gap: 8px;
           backdrop-filter: blur(8px);
           transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          white-space: nowrap;
         }
-        
-        button:hover {
-          background: rgba(255, 255, 255, 0.25);
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-        
+        button:hover { background: rgba(255,255,255,0.25); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         button:active { transform: translateY(0); }
         button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-        
         button#scan-all { background: white; color: var(--primary-color); font-weight: 700; border: none; }
         button#scan-all:hover { background: rgba(255,255,255,0.9); }
-        
-        /* Button Loader */
+
         .btn-loader {
-          width: 16px;
-          height: 16px;
-          border: 2px solid transparent;
-          border-top-color: currentColor;
-          border-radius: 50%;
-          animation: btn-spin 0.8s linear infinite;
-          display: inline-block;
+          width: 14px; height: 14px;
+          border: 2px solid transparent; border-top-color: currentColor;
+          border-radius: 50%; animation: btn-spin 0.8s linear infinite; display: inline-block;
         }
-        
-        @keyframes btn-spin {
-          to { transform: rotate(360deg); }
-        }
-        
+        @keyframes btn-spin { to { transform: rotate(360deg); } }
         button.scanning { pointer-events: none; }
         button.scanning ha-icon { display: none; }
-        
+
+        /* ── STAT CARDS ───────────────────────────── */
         .stats {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-          gap: 20px;
-          margin-bottom: 32px;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 16px;
+          margin-bottom: 28px;
         }
-        
         .stat-card {
           background: var(--card-background-color);
-          padding: 24px;
+          padding: 20px;
           border-radius: 16px;
           box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.05));
           border: 1px solid var(--divider-color);
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
+          display: flex; flex-direction: column; gap: 8px;
           transition: transform 0.3s ease;
         }
-        
-        .stat-card:hover { transform: translateY(-4px); }
-        
+        .stat-card.blueprint { border-left: 5px solid var(--info-color, #26c6da); }
+        .stat-card:hover { transform: translateY(-3px); }
         .stat-header { display: flex; justify-content: space-between; align-items: center; }
-        .stat-label { color: var(--secondary-text-color); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-label { color: var(--secondary-text-color); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
         .stat-icon { color: var(--primary-color); opacity: 0.8; }
-        .stat-value { font-size: 42px; font-weight: 700; color: var(--primary-text-color); margin-top: 4px; }
-        
-        .tabs-container { 
-          margin-bottom: 24px; 
-          position: sticky; 
-          top: 0; 
-          z-index: 10; 
+        .stat-value { font-size: 38px; font-weight: 700; color: var(--primary-text-color); margin-top: 2px; }
+        .stat-desc { font-size: 12px; color: var(--secondary-text-color); }
+
+        /* ── TABS ─────────────────────────────────── */
+        .tabs-container {
+          margin-bottom: 20px;
+          position: sticky; top: 0; z-index: 10;
           background: var(--primary-background-color);
-          padding: 10px 0;
+          padding: 8px 0;
         }
-        
-        .tabs { 
-          display: flex; 
-          gap: 8px; 
-          background: var(--secondary-background-color); 
-          padding: 6px; 
-          border-radius: 14px; 
-          overflow-x: auto;
-          scrollbar-width: none;
+        .tabs {
+          display: flex; gap: 6px;
+          background: var(--secondary-background-color);
+          padding: 5px; border-radius: 14px;
+          overflow-x: auto; scrollbar-width: none;
+          -webkit-overflow-scrolling: touch;
         }
-        
         .tabs::-webkit-scrollbar { display: none; }
-        
-        .tabs .tab { 
-          flex: 1; 
-          padding: 12px 20px; 
-          background: transparent; 
-          cursor: pointer; 
-          border-radius: 10px; 
-          border: none;
+        .tabs .tab {
+          flex-shrink: 0;
+          padding: 10px 14px;
+          background: transparent; cursor: pointer;
+          border-radius: 10px; border: none;
           color: var(--secondary-text-color);
-          font-weight: 600;
-          white-space: nowrap;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          transition: all 0.2s ease;
+          font-weight: 600; white-space: nowrap;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+          transition: all 0.2s ease; font-size: 13px;
         }
-        
-        .tabs .tab ha-icon { --mdc-icon-size: 20px; }
+        .tabs .tab ha-icon { --mdc-icon-size: 18px; flex-shrink: 0; }
+        .tab-label { display: inline; }
         .tabs .tab:hover { color: var(--primary-text-color); background: rgba(0,0,0,0.05); }
         .tabs .tab.active { background: var(--card-background-color); color: var(--primary-color); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-        
+
+        /* ── SECTION CARD ─────────────────────────── */
         .tab-content { display: none; animation: fadeIn 0.3s ease-out; }
         .tab-content.active { display: block; }
-        
         .section-card {
           background: var(--card-background-color);
-          padding: 0;
-          border-radius: 16px;
+          padding: 0; border-radius: 16px;
           box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.05));
-          border: 1px solid var(--divider-color);
-          overflow: hidden;
+          border: 1px solid var(--divider-color); overflow: hidden;
         }
-        
         .section-header {
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--divider-color);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          background: var(--secondary-background-color);
+          padding: 18px 22px; border-bottom: 1px solid var(--divider-color);
+          display: flex; justify-content: space-between; align-items: center;
+          background: var(--secondary-background-color); flex-wrap: wrap; gap: 10px;
         }
-        
-        .section-header h2 { margin: 0; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 12px; }
-        
-        .issue-list { padding: 8px 24px 24px 24px; }
-        
+        .section-header h2 { margin: 0; font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+        .section-header-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        /* ── ISSUE ITEMS ──────────────────────────── */
+        .issue-list { padding: 8px 20px 20px; }
         .issue-item {
-          padding: 20px;
-          margin: 16px 0;
+          padding: 18px;
+          margin: 14px 0;
           background: var(--card-background-color);
           border: 1px solid var(--divider-color);
           border-left: 6px solid var(--primary-color);
           border-radius: 12px;
           transition: all 0.2s ease;
         }
-        
-        .issue-item:hover { transform: scale(1.01); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .issue-item.high { border-left-color: var(--error-color, #ef5350); background: rgba(239, 83, 80, 0.02); }
-        .issue-item.medium { border-left-color: var(--warning-color, #ffa726); background: rgba(255, 167, 38, 0.02); }
-        .issue-item.low { border-left-color: var(--info-color, #26c6da); background: rgba(38, 198, 218, 0.02); }
-        
-        .issue-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-        .issue-title { font-size: 16px; font-weight: 600; color: var(--primary-text-color); margin-bottom: 4px; }
-        .issue-entity { font-size: 12px; color: var(--secondary-text-color); font-family: 'SFMono-Regular', Consolas, monospace; background: var(--secondary-background-color); padding: 2px 6px; border-radius: 4px; }
-        .issue-message { margin: 12px 0; line-height: 1.5; color: var(--primary-text-color); opacity: 0.9; }
-        
+        .issue-item:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        .issue-item.high   { border-left-color: var(--error-color, #ef5350); background: rgba(239,83,80,0.02); }
+        .issue-item.medium { border-left-color: var(--warning-color, #ffa726); background: rgba(255,167,38,0.02); }
+        .issue-item.low    { border-left-color: var(--info-color, #26c6da); background: rgba(38,198,218,0.02); }
+
+        /* Issue layout: info left, buttons right — stacks on mobile */
+        .issue-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+        .issue-info { flex: 1; min-width: 0; }
+        .issue-btns { display: flex; gap: 8px; flex-shrink: 0; align-items: flex-start; }
+        .issue-header-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+        .issue-title { font-size: 15px; font-weight: 600; color: var(--primary-text-color); word-break: break-word; }
+        .issue-entity {
+          font-size: 12px; color: var(--secondary-text-color);
+          font-family: 'SFMono-Regular', Consolas, monospace;
+          background: var(--secondary-background-color);
+          padding: 2px 6px; border-radius: 4px;
+          display: inline-block; max-width: 100%;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .issue-message { margin: 10px 0 0; line-height: 1.5; color: var(--primary-text-color); opacity: 0.9; font-size: 14px; }
+        .issue-reco {
+          margin-top: 10px; font-size: 13px; color: var(--secondary-text-color);
+          display: flex; align-items: flex-start; gap: 8px;
+          background: rgba(0,0,0,0.03); padding: 8px 12px; border-radius: 8px;
+        }
+
         .fix-btn {
-          background: var(--primary-color);
-          color: white;
-          padding: 8px 16px;
-          font-size: 13px;
-          font-weight: 600;
+          background: var(--primary-color); color: white;
+          padding: 8px 14px; font-size: 12px; font-weight: 600;
           border-radius: 10px;
-          box-shadow: 0 4px 10px rgba(var(--rgb-primary-color), 0.3);
-          border: none;
+          box-shadow: 0 4px 10px rgba(var(--rgb-primary-color),0.3); border: none;
         }
-        
-        .fix-btn:hover {
-          background: var(--accent-color, #03a9f4);
-          color: white !important;
-          opacity: 0.9;
-        }
-        
-        .empty-state { text-align: center; padding: 60px; color: var(--secondary-text-color); }
-        .empty-state ha-icon { --mdc-icon-size: 64px; opacity: 0.3; margin-bottom: 16px; }
-        
-        .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
-        .data-table th { padding: 16px; text-align: left; font-size: 13px; text-transform: uppercase; color: var(--secondary-text-color); font-weight: 700; border-bottom: 2px solid var(--divider-color); }
-        .data-table td { padding: 16px; border-bottom: 1px solid var(--divider-color); vertical-align: middle; }
+        .fix-btn:hover { background: var(--accent-color, #03a9f4); color: white !important; opacity: 0.9; }
+
+        /* ── EMPTY STATE ──────────────────────────── */
+        .empty-state { text-align: center; padding: 52px 20px; color: var(--secondary-text-color); }
+        .empty-state ha-icon { --mdc-icon-size: 60px; opacity: 0.3; margin-bottom: 14px; display: block; }
+
+        /* ── TABLES ───────────────────────────────── */
+        .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .data-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 480px; }
+        .data-table th { padding: 14px 16px; text-align: left; font-size: 12px; text-transform: uppercase; color: var(--secondary-text-color); font-weight: 700; border-bottom: 2px solid var(--divider-color); white-space: nowrap; }
+        .data-table td { padding: 14px 16px; border-bottom: 1px solid var(--divider-color); vertical-align: middle; }
         .data-table tr:last-child td { border-bottom: none; }
-        
+
+        /* ── MOBILE CARD LIST (backup/report rows) ── */
+        .mobile-cards { display: none; }
+        .m-card {
+          border: 1px solid var(--divider-color);
+          border-radius: 12px; padding: 14px; margin: 10px 16px;
+          background: var(--secondary-background-color);
+        }
+        .m-card-title { font-weight: 600; font-size: 14px; word-break: break-all; display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }
+        .m-card-meta { font-size: 12px; color: var(--secondary-text-color); margin-bottom: 10px; }
+        .m-card-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+        .m-card-btns button { flex: 1; min-width: 100px; justify-content: center; }
+        /* Format pills in report cards */
+        .fmt-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .fmt-pill { border: 1px solid var(--divider-color); border-radius: 10px; padding: 8px 10px; background: var(--card-background-color); }
+        .fmt-pill-label { font-size: 10px; font-weight: 800; color: var(--primary-color); text-transform: uppercase; display: block; margin-bottom: 5px; }
+        .fmt-pill-btns { display: flex; gap: 5px; }
+        .fmt-pill-btns button { padding: 5px; background: var(--secondary-background-color) !important; border: 1px solid var(--divider-color) !important; border-radius: 7px !important; }
+
+        /* ── FILTER BAR ───────────────────────────── */
+        .filter-bar {
+          display: flex; align-items: center; gap: 10px;
+          padding: 12px 22px; border-bottom: 1px solid var(--divider-color);
+          background: var(--secondary-background-color); flex-wrap: wrap;
+        }
+        .filter-label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--secondary-text-color); letter-spacing: 0.5px; }
+        .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+        .filter-chip {
+          padding: 5px 14px; border-radius: 20px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--secondary-text-color);
+          font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s ease;
+        }
+        .filter-chip:hover { border-color: var(--primary-color); color: var(--primary-color); transform: none; box-shadow: none; }
+        .filter-chip.active-all    { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+        .filter-chip.active-high   { background: var(--error-color, #ef5350); color: white; border-color: var(--error-color, #ef5350); }
+        .filter-chip.active-medium { background: var(--warning-color, #ffa726); color: white; border-color: var(--warning-color, #ffa726); }
+        .filter-chip.active-low    { background: var(--info-color, #26c6da); color: white; border-color: var(--info-color, #26c6da); }
+        .export-csv-btn {
+          margin-left: auto; padding: 5px 14px; border-radius: 20px;
+          border: 1px solid var(--divider-color); background: var(--card-background-color);
+          color: var(--secondary-text-color); font-size: 12px; font-weight: 600; cursor: pointer;
+          display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;
+        }
+        .export-csv-btn:hover { border-color: var(--success-color, #4caf50); color: var(--success-color, #4caf50); transform: none; box-shadow: none; }
+
+        /* ── MODAL ────────────────────────────────── */
         .haca-modal-card { border-radius: 20px !important; overflow: hidden !important; border: 1px solid rgba(255,255,255,0.1); }
 
-        /* Loader Animation */
+        /* ── LOADER ───────────────────────────────── */
         .loader {
-          width: 48px;
-          height: 48px;
-          border: 5px solid #FFF;
+          width: 48px; height: 48px;
+          border: 5px solid rgba(0,0,0,0.08);
           border-bottom-color: var(--primary-color);
-          border-radius: 50%;
-          display: inline-block;
+          border-radius: 50%; display: inline-block;
           box-sizing: border-box;
-          animation: rotation 1s linear infinite;
-          margin: 20px auto;
+          animation: rotation 1s linear infinite; margin: 20px auto;
+        }
+        @keyframes rotation { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+
+        /* ═══════════════════════════════════════════
+           TABLET  ≤ 900px  — hide tab text
+           ═══════════════════════════════════════════ */
+        @media (max-width: 900px) {
+          .tab-label { display: none; }
+          .tabs .tab { gap: 0; padding: 10px; }
         }
 
-        @keyframes rotation {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
+        /* ═══════════════════════════════════════════
+           MOBILE  ≤ 600px
+           ═══════════════════════════════════════════ */
+        @media (max-width: 600px) {
+          :host { padding: 10px; }
+
+          /* Header */
+          .header { padding: 14px 16px; border-radius: 12px; gap: 12px; }
+          .header-title ha-icon { --mdc-icon-size: 30px; }
+          .header h1 { font-size: 20px; }
+          .header-sub { display: none; }
+          .actions { width: 100%; }
+          .actions button { flex: 1; justify-content: center; }
+
+          /* Stats: 2-col grid */
+          .stats { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+          .stat-card { padding: 12px; gap: 4px; }
+          .stat-value { font-size: 28px; }
+          .stat-label { font-size: 10px; }
+          .stat-desc { display: none; }
+
+          /* Tabs: icon-only */
+          .tab-label { display: none; }
+          .tabs .tab { gap: 0; padding: 10px 8px; }
+          .tabs .tab ha-icon { --mdc-icon-size: 20px; }
+          .tabs { gap: 2px; }
+          .tabs-container { padding: 6px 0; }
+
+          /* Issues */
+          .issue-list { padding: 6px 10px 16px; }
+          .issue-item { padding: 12px; margin: 10px 0; }
+          .issue-main { flex-direction: column; gap: 10px; }
+          .issue-btns { width: 100%; }
+          .issue-btns button { flex: 1; justify-content: center; }
+          .issue-title { font-size: 14px; }
+          .issue-message { font-size: 13px; }
+
+          /* Section headers */
+          .section-header { padding: 12px 14px; }
+          .section-header h2 { font-size: 14px; }
+          .section-header-btns { width: 100%; }
+          .section-header-btns button { flex: 1; justify-content: center; }
+
+          /* Filter bar */
+          .filter-bar { padding: 8px 12px; gap: 8px; }
+          .export-csv-btn { margin-left: 0; width: 100%; justify-content: center; }
+
+          /* Tables → card view */
+          .table-wrap { display: none; }
+          .mobile-cards { display: block; }
+
+          /* Modals: bottom-sheet style */
+          .haca-modal {
+            align-items: flex-end !important;
+          }
+          .haca-modal > div {
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: 95vh !important;
+            border-radius: 16px 16px 0 0 !important;
+          }
         }
       </style>
       
@@ -496,7 +596,7 @@ class HacaPanel extends HTMLElement {
             <ha-icon icon="mdi:shield-check-outline"></ha-icon>
             <div>
                 <h1>${this.t('title')}</h1>
-                <div style="font-size: 14px; opacity: 0.8; font-weight: 400;">${this.t('subtitle')} - ${this.t('version')}</div>
+                <div class="header-sub">${this.t('subtitle')} - ${this.t('version')}</div>
             </div>
           </div>
           <div class="actions">
@@ -511,7 +611,7 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:heart-pulse" class="stat-icon"></ha-icon>
             </div>
             <div class="stat-value" id="health-score">--</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.health_score_desc')}</div>
+            <div class="stat-desc">${this.t('stats.health_score_desc')}</div>
           </div>
           <div class="stat-card" style="border-left: 5px solid var(--error-color, #ef5350);">
             <div class="stat-header">
@@ -519,7 +619,7 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:shield-lock" style="color: var(--error-color, #ef5350);"></ha-icon>
             </div>
             <div class="stat-value" id="security-count">0</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.security_desc')}</div>
+            <div class="stat-desc">${this.t('stats.security_desc')}</div>
           </div>
           <div class="stat-card">
             <div class="stat-header">
@@ -527,7 +627,7 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:robot-confused" class="stat-icon"></ha-icon>
             </div>
             <div class="stat-value" id="auto-count">0</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.automations_desc')}</div>
+            <div class="stat-desc">${this.t('stats.automations_desc')}</div>
           </div>
           <div class="stat-card">
             <div class="stat-header">
@@ -535,7 +635,7 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:script-text" class="stat-icon"></ha-icon>
             </div>
             <div class="stat-value" id="script-count">0</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.scripts_desc')}</div>
+            <div class="stat-desc">${this.t('stats.scripts_desc')}</div>
           </div>
           <div class="stat-card">
             <div class="stat-header">
@@ -543,7 +643,7 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:palette" class="stat-icon"></ha-icon>
             </div>
             <div class="stat-value" id="scene-count">0</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.scenes_desc')}</div>
+            <div class="stat-desc">${this.t('stats.scenes_desc')}</div>
           </div>
           <div class="stat-card">
             <div class="stat-header">
@@ -551,7 +651,7 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:lightning-bolt" class="stat-icon"></ha-icon>
             </div>
             <div class="stat-value" id="entity-count">0</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.entities_desc')}</div>
+            <div class="stat-desc">${this.t('stats.entities_desc')}</div>
           </div>
           <div class="stat-card">
             <div class="stat-header">
@@ -559,21 +659,30 @@ class HacaPanel extends HTMLElement {
                 <ha-icon icon="mdi:speedometer-slow" class="stat-icon"></ha-icon>
             </div>
             <div class="stat-value" id="perf-count">0</div>
-            <div style="font-size: 12px; color: var(--secondary-text-color);">${this.t('stats.performance_desc')}</div>
+            <div class="stat-desc">${this.t('stats.performance_desc')}</div>
+          </div>
+          <div class="stat-card blueprint">
+            <div class="stat-header">
+                <span class="stat-label">${this.t('stats.blueprints')}</span>
+                <ha-icon icon="mdi:file-document-outline" style="color: var(--info-color, #26c6da);"></ha-icon>
+            </div>
+            <div class="stat-value" id="blueprint-count">0</div>
+            <div class="stat-desc">${this.t('stats.blueprints_desc')}</div>
           </div>
         </div>
         
         <div class="tabs-container">
           <div class="tabs">
-            <button class="tab active" data-tab="all"><ha-icon icon="mdi:view-list"></ha-icon> ${this.t('tabs.all')}</button>
-            <button class="tab" data-tab="automations"><ha-icon icon="mdi:robot"></ha-icon> ${this.t('tabs.automations')}</button>
-            <button class="tab" data-tab="scripts"><ha-icon icon="mdi:script-text"></ha-icon> ${this.t('tabs.scripts')}</button>
-            <button class="tab" data-tab="scenes"><ha-icon icon="mdi:palette"></ha-icon> ${this.t('tabs.scenes')}</button>
-            <button class="tab" data-tab="entities"><ha-icon icon="mdi:lightning-bolt"></ha-icon> ${this.t('tabs.entities')}</button>
-            <button class="tab" data-tab="security"><ha-icon icon="mdi:shield-lock"></ha-icon> ${this.t('tabs.security')}</button>
-            <button class="tab" data-tab="performance"><ha-icon icon="mdi:gauge"></ha-icon> ${this.t('tabs.performance')}</button>
-            <button class="tab" data-tab="backups"><ha-icon icon="mdi:history"></ha-icon> ${this.t('tabs.backups')}</button>
-            <button class="tab" data-tab="reports"><ha-icon icon="mdi:file-chart"></ha-icon> ${this.t('tabs.reports')}</button>
+            <button class="tab active" data-tab="all"><ha-icon icon="mdi:view-list"></ha-icon> <span class="tab-label">${this.t('tabs.all')}</span></button>
+            <button class="tab" data-tab="automations"><ha-icon icon="mdi:robot"></ha-icon> <span class="tab-label">${this.t('tabs.automations')}</span></button>
+            <button class="tab" data-tab="scripts"><ha-icon icon="mdi:script-text"></ha-icon> <span class="tab-label">${this.t('tabs.scripts')}</span></button>
+            <button class="tab" data-tab="scenes"><ha-icon icon="mdi:palette"></ha-icon> <span class="tab-label">${this.t('tabs.scenes')}</span></button>
+            <button class="tab" data-tab="entities"><ha-icon icon="mdi:lightning-bolt"></ha-icon> <span class="tab-label">${this.t('tabs.entities')}</span></button>
+            <button class="tab" data-tab="security"><ha-icon icon="mdi:shield-lock"></ha-icon> <span class="tab-label">${this.t('tabs.security')}</span></button>
+            <button class="tab" data-tab="performance"><ha-icon icon="mdi:gauge"></ha-icon> <span class="tab-label">${this.t('tabs.performance')}</span></button>
+            <button class="tab" data-tab="blueprints"><ha-icon icon="mdi:file-document-outline"></ha-icon> <span class="tab-label">${this.t('tabs.blueprints')}</span></button>
+            <button class="tab" data-tab="backups"><ha-icon icon="mdi:history"></ha-icon> <span class="tab-label">${this.t('tabs.backups')}</span></button>
+            <button class="tab" data-tab="reports"><ha-icon icon="mdi:file-chart"></ha-icon> <span class="tab-label">${this.t('tabs.reports')}</span></button>
           </div>
         </div>
         
@@ -582,55 +691,150 @@ class HacaPanel extends HTMLElement {
             <div class="section-header">
                 <h2><ha-icon icon="mdi:alert-circle-outline"></ha-icon> ${this.t('sections.all_issues')}</h2>
             </div>
-            <div id="issues-all" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-all">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-all">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-all">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-all">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-all">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-all"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-all" class="issue-list"></div>
           </div>
           
           <div id="tab-security" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:shield-lock"></ha-icon> ${this.t('sections.security_issues')}</h2>
             </div>
-            <div id="issues-security" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-security">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-security">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-security">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-security">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-security">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-security"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-security" class="issue-list"></div>
           </div>
           
           <div id="tab-automations" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:robot"></ha-icon> ${this.t('sections.automation_issues')}</h2>
             </div>
-            <div id="issues-automations" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-automations">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-automations">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-automations">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-automations">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-automations">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-automations"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-automations" class="issue-list"></div>
           </div>
           
           <div id="tab-scripts" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:script-text"></ha-icon> ${this.t('sections.script_issues')}</h2>
             </div>
-            <div id="issues-scripts" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-scripts">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-scripts">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-scripts">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-scripts">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-scripts">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-scripts"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-scripts" class="issue-list"></div>
           </div>
           
           <div id="tab-scenes" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:palette"></ha-icon> ${this.t('sections.scene_issues')}</h2>
             </div>
-            <div id="issues-scenes" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-scenes">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-scenes">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-scenes">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-scenes">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-scenes">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-scenes"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-scenes" class="issue-list"></div>
           </div>
           
           <div id="tab-entities" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:lightning-bolt"></ha-icon> ${this.t('sections.entity_issues')}</h2>
             </div>
-            <div id="issues-entities" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-entities">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-entities">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-entities">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-entities">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-entities">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-entities"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-entities" class="issue-list"></div>
           </div>
           
           <div id="tab-performance" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:gauge"></ha-icon> ${this.t('sections.performance_issues')}</h2>
             </div>
-            <div id="issues-performance" class="issue-list"></div>
+            
+          <div class="filter-bar" id="filter-bar-issues-performance">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-performance">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-performance">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-performance">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-performance">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-performance"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-performance" class="issue-list"></div>
+          </div>
+          
+          <div id="tab-blueprints" class="tab-content">
+            <div class="section-header">
+                <h2><ha-icon icon="mdi:file-document-outline"></ha-icon> ${this.t('sections.blueprint_issues')}</h2>
+            </div>
+            
+          <div class="filter-bar" id="filter-bar-issues-blueprints">
+            <span class="filter-label">${this.t('filter.label')}</span>
+            <div class="filter-chips">
+              <button class="filter-chip active-all" data-filter="all" data-target="issues-blueprints">${this.t('filter.all')}</button>
+              <button class="filter-chip" data-filter="high" data-target="issues-blueprints">${this.t('filter.high')}</button>
+              <button class="filter-chip" data-filter="medium" data-target="issues-blueprints">${this.t('filter.medium')}</button>
+              <button class="filter-chip" data-filter="low" data-target="issues-blueprints">${this.t('filter.low')}</button>
+            </div>
+            <button class="export-csv-btn" data-target="issues-blueprints"><ha-icon icon="mdi:file-delimited-outline" style="--mdc-icon-size:16px;"></ha-icon> ${this.t('filter.export_csv')}</button>
+          </div>
+          <div id="issues-blueprints" class="issue-list"></div>
           </div>
           
           <div id="tab-backups" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:history"></ha-icon> ${this.t('sections.backup_management')}</h2>
-                <button id="create-backup" style="background: var(--primary-color);"><ha-icon icon="mdi:plus"></ha-icon> ${this.t('actions.create_backup')}</button>
+                <div class="section-header-btns"><button id="create-backup" style="background: var(--primary-color);"><ha-icon icon="mdi:plus"></ha-icon> ${this.t('actions.create_backup')}</button></div>
             </div>
             <div id="backups-list" style="padding: 0;">${this.t('messages.loading')}</div>
           </div>
@@ -638,7 +842,7 @@ class HacaPanel extends HTMLElement {
           <div id="tab-reports" class="tab-content">
             <div class="section-header">
                 <h2><ha-icon icon="mdi:file-chart"></ha-icon> ${this.t('sections.report_management')}</h2>
-                <div style="display: flex; gap: 12px;">
+                <div class="section-header-btns">
                   <button id="create-report" style="background: var(--success-color, #4caf50); color: white;"><ha-icon icon="mdi:file-document-plus"></ha-icon> ${this.t('buttons.report')}</button>
                   <button id="refresh-reports" style="background: var(--primary-color); color: white;"><ha-icon icon="mdi:refresh"></ha-icon> ${this.t('buttons.refresh')}</button>
                 </div>
@@ -676,6 +880,37 @@ class HacaPanel extends HTMLElement {
 
     // Subscribe to new issues event from backend
     this._subscribeToNewIssues();
+
+    // Severity filter chips
+    this.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        const filter = btn.dataset.filter;
+        const targetId = btn.dataset.target;
+        // Update active chip style in this filter bar
+        const bar = this.querySelector(`#filter-bar-${targetId}`);
+        if (bar) {
+          bar.querySelectorAll('.filter-chip').forEach(c => {
+            c.className = 'filter-chip'; // reset
+          });
+          btn.classList.add(`active-${filter}`);
+        }
+        // Re-render with filter
+        const container = this.querySelector(`#${targetId}`);
+        const allIssues = container?._allIssues || [];
+        this.renderIssues(allIssues, targetId, filter);
+      });
+    });
+
+    // CSV export buttons
+    this.querySelectorAll('.export-csv-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const targetId = e.currentTarget.dataset.target;
+        const container = this.querySelector(`#${targetId}`);
+        const issues = container?._allIssues || [];
+        this.exportCSV(issues, targetId);
+      });
+    });
   }
 
   _subscribeToNewIssues() {
@@ -780,40 +1015,59 @@ class HacaPanel extends HTMLElement {
     }
 
     container.innerHTML = `
+      <div class="table-wrap">
         <table class="data-table">
-            <thead>
-                <tr>
-                    <th>${this.t('tables.name')}</th>
-                    <th>${this.t('tables.date')}</th>
-                    <th>${this.t('tables.size')}</th>
-                    <th>${this.t('tables.action')}</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${backups.map(b => `
-                    <tr>
-                        <td style="font-weight: 500;">
-                            <div style="display:flex; align-items:center; gap:10px;">
-                                <ha-icon icon="mdi:zip-box-outline" style="color:var(--secondary-text-color)"></ha-icon>
-                                ${this.escapeHtml(b.name)}
-                            </div>
-                        </td>
-                        <td>${new Date(b.created).toLocaleString()}</td>
-                        <td><span style="background: var(--secondary-background-color); padding: 4px 8px; border-radius: 6px; font-size: 12px;">${Math.round(b.size / 1024)} KB</span></td>
-                        <td>
-                            <div style="display: flex; gap: 8px;">
-                                <button class="restore-btn" data-path="${b.path}" style="background: var(--warning-color, #ff9800); color: black;">
-                                    <ha-icon icon="mdi:backup-restore"></ha-icon> ${this.t('actions.restore')}
-                                </button>
-                                <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" title="${this.t('actions.delete')}" style="background: var(--error-color, #ef5350); color: white;">
-                                    <ha-icon icon="mdi:delete-outline"></ha-icon>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                `).join('')}
-            </tbody>
+          <thead><tr>
+            <th>${this.t('tables.name')}</th>
+            <th>${this.t('tables.date')}</th>
+            <th>${this.t('tables.size')}</th>
+            <th>${this.t('tables.action')}</th>
+          </tr></thead>
+          <tbody>
+            ${backups.map(b => `
+              <tr>
+                <td style="font-weight:500;">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <ha-icon icon="mdi:zip-box-outline" style="color:var(--secondary-text-color);flex-shrink:0;"></ha-icon>
+                    <span style="word-break:break-all;">${this.escapeHtml(b.name)}</span>
+                  </div>
+                </td>
+                <td style="white-space:nowrap;">${new Date(b.created).toLocaleString()}</td>
+                <td><span style="background:var(--secondary-background-color);padding:4px 8px;border-radius:6px;font-size:12px;white-space:nowrap;">${Math.round(b.size / 1024)} KB</span></td>
+                <td>
+                  <div style="display:flex;gap:8px;">
+                    <button class="restore-btn" data-path="${b.path}" style="background:var(--warning-color,#ff9800);color:black;">
+                      <ha-icon icon="mdi:backup-restore"></ha-icon> ${this.t('actions.restore')}
+                    </button>
+                    <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" style="background:var(--error-color,#ef5350);color:white;">
+                      <ha-icon icon="mdi:delete-outline"></ha-icon>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
         </table>
+      </div>
+      <div class="mobile-cards">
+        ${backups.map(b => `
+          <div class="m-card">
+            <div class="m-card-title">
+              <ha-icon icon="mdi:zip-box-outline" style="color:var(--secondary-text-color);flex-shrink:0;margin-top:1px;"></ha-icon>
+              ${this.escapeHtml(b.name)}
+            </div>
+            <div class="m-card-meta">📅 ${new Date(b.created).toLocaleString()} · ${Math.round(b.size / 1024)} KB</div>
+            <div class="m-card-btns">
+              <button class="restore-btn" data-path="${b.path}" style="background:var(--warning-color,#ff9800);color:black;">
+                <ha-icon icon="mdi:backup-restore"></ha-icon> ${this.t('actions.restore')}
+              </button>
+              <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" style="background:var(--error-color,#ef5350);color:white;">
+                <ha-icon icon="mdi:delete-outline"></ha-icon> ${this.t('actions.delete')}
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
     `;
 
     container.querySelectorAll('.restore-btn').forEach(btn => {
@@ -928,6 +1182,7 @@ class HacaPanel extends HTMLElement {
     safeSetText('entity-count', data.entity_issues || 0);
     safeSetText('perf-count', data.performance_issues || 0);
     safeSetText('security-count', data.security_issues || 0);
+    safeSetText('blueprint-count', data.blueprint_issues || 0);
 
     const autoIssues = data.automation_issue_list || [];
     const scriptIssues = data.script_issue_list || [];
@@ -935,9 +1190,10 @@ class HacaPanel extends HTMLElement {
     const entityIssues = data.entity_issue_list || [];
     const perfIssues = data.performance_issue_list || [];
     const securityIssues = data.security_issue_list || [];
-    const allIssues = [...autoIssues, ...scriptIssues, ...sceneIssues, ...entityIssues, ...perfIssues, ...securityIssues];
+    const blueprintIssues = data.blueprint_issue_list || [];
+    const allIssues = [...autoIssues, ...scriptIssues, ...sceneIssues, ...entityIssues, ...perfIssues, ...securityIssues, ...blueprintIssues];
 
-    console.log('[HACA] Automations:', autoIssues.length, 'Scripts:', scriptIssues.length, 'Scenes:', sceneIssues.length, 'Entities:', entityIssues.length, 'Performance:', perfIssues.length, 'Security:', securityIssues.length);
+    console.log('[HACA] Automations:', autoIssues.length, 'Scripts:', scriptIssues.length, 'Scenes:', sceneIssues.length, 'Entities:', entityIssues.length, 'Performance:', perfIssues.length, 'Security:', securityIssues.length, 'Blueprints:', blueprintIssues.length);
 
     // Afficher dans chaque section
     this.renderIssues(allIssues, 'issues-all');
@@ -947,47 +1203,94 @@ class HacaPanel extends HTMLElement {
     this.renderIssues(entityIssues, 'issues-entities');
     this.renderIssues(perfIssues, 'issues-performance');
     this.renderIssues(securityIssues, 'issues-security');
+    this.renderIssues(blueprintIssues, 'issues-blueprints');
   }
 
-  renderIssues(issues, containerId) {
+  // Helper method to get Home Assistant edit URL for an entity
+  getHAEditUrl(entityId) {
+    if (!entityId) return null;
+
+    const entityIdParts = entityId.split('.');
+    const entityType = entityIdParts[0];
+
+    // Get the item ID from state attributes
+    const state = this.hass?.states?.[entityId];
+    const itemId = state?.attributes?.id;
+
+    // Map entity types to their edit URLs
+    if (entityType === 'automation' && itemId) {
+      return `/config/automation/edit/${itemId}`;
+    } else if (entityType === 'script' && itemId) {
+      return `/config/script/edit/${itemId}`;
+    } else if (entityType === 'scene' && itemId) {
+      return `/config/scene/edit/${itemId}`;
+    } else if (entityType === 'automation') {
+      // Fallback: try to use entity_id without the prefix
+      return `/config/automation/edit/${entityIdParts[1]}`;
+    } else if (entityType === 'script') {
+      return `/config/script/edit/${entityIdParts[1]}`;
+    } else if (entityType === 'scene') {
+      return `/config/scene/edit/${entityIdParts[1]}`;
+    }
+
+    return null;
+  }
+
+  renderIssues(issues, containerId, severityFilter) {
     const container = this.querySelector(`#${containerId}`);
     if (!container) return;
 
-    if (issues.length === 0) {
+    // Store full list on container for filtering/export
+    if (!severityFilter) {
+      container._allIssues = issues;
+    }
+
+    const filtered = severityFilter && severityFilter !== 'all'
+      ? issues.filter(i => i.severity === severityFilter)
+      : issues;
+
+    if (filtered.length === 0) {
+      const msg = (severityFilter && severityFilter !== 'all')
+        ? this.t('messages.no_issues_filtered')
+        : this.t('messages.no_issues');
       container.innerHTML = `
         <div class="empty-state">
             <ha-icon icon="mdi:check-decagram-outline"></ha-icon>
-            <p>${this.t('messages.no_issues')}</p>
+            <p>${msg}</p>
         </div>`;
       return;
     }
 
-    container.innerHTML = issues.map(i => {
+    container.innerHTML = filtered.map(i => {
       const isFixable = ['device_id_in_trigger', 'device_id_in_action', 'device_id_in_target', 'device_trigger_platform', 'device_id_in_condition', 'device_condition_platform', 'incorrect_mode_motion_single', 'template_simple_state', 'no_description', 'no_alias', 'broken_device_reference'].includes(i.type) || i.fix_available;
       const icon = i.severity === 'high' ? 'mdi:alert-decagram' : (i.severity === 'medium' ? 'mdi:alert' : 'mdi:information');
       const isSecurity = i.type.includes('security') || i.type.includes('secret') || i.type === 'sensitive_data_exposure';
 
+      // Get edit URL for Home Assistant
+      const editUrl = this.getHAEditUrl(i.entity_id);
+
       return `
       <div class="issue-item ${i.severity}" style="${isSecurity ? 'border-left-color: var(--error-color, #ef5350);' : ''}">
         <div class="issue-main">
-            <div style="flex: 1;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                    <ha-icon icon="${isSecurity ? 'mdi:shield-alert' : icon}" style="--mdc-icon-size: 18px; ${isSecurity ? 'color: var(--error-color, #ef5350);' : ''}"></ha-icon>
+            <div class="issue-info">
+                <div class="issue-header-row">
+                    <ha-icon icon="${isSecurity ? 'mdi:shield-alert' : icon}" style="--mdc-icon-size: 17px; flex-shrink:0; ${isSecurity ? 'color: var(--error-color, #ef5350);' : ''}"></ha-icon>
                     <div class="issue-title">${this.escapeHtml(i.alias || i.entity_id || '')}</div>
                 </div>
                 <div class="issue-entity">${this.escapeHtml(i.entity_id || '')}</div>
             </div>
-            <div style="display: flex; gap: 8px;">
-                <button class="explain-btn" data-issue='${JSON.stringify(i).replace(/'/g, "&apos;")}' style="background: var(--accent-color, #03a9f4); color: white;">
+            <div class="issue-btns">
+                ${editUrl ? `<a href="${editUrl}" target="_blank" style="text-decoration: none;"><button class="edit-ha-btn" style="background: var(--secondary-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);"><ha-icon icon="mdi:pencil"></ha-icon> ${this.t('actions.edit_ha')}</button></a>` : ''}
+                <button class="explain-btn" data-issue='${JSON.stringify(i).replace(/'/g, "'")}' style="background: var(--accent-color, #03a9f4); color: white;">
                     <ha-icon icon="mdi:robot"></ha-icon> IA
                 </button>
-                ${isFixable ? `<button class="fix-btn" data-issue='${JSON.stringify(i).replace(/'/g, "&apos;")}'><ha-icon icon="mdi:magic-staff"></ha-icon> ${this.t('actions.fix')}</button>` : ''}
+                ${isFixable ? `<button class="fix-btn" data-issue='${JSON.stringify(i).replace(/'/g, "'")}'><ha-icon icon="mdi:magic-staff"></ha-icon> ${this.t('actions.fix')}</button>` : ''}
             </div>
         </div>
         <div class="issue-message">${this.escapeHtml(i.message || '')}</div>
         ${i.recommendation ? `
-            <div style="font-size: 13px; color: var(--secondary-text-color); margin-top: 12px; display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.03); padding: 8px 12px; border-radius: 8px;">
-                <ha-icon icon="mdi:lightbulb-outline" style="--mdc-icon-size: 16px;"></ha-icon>
+            <div class="issue-reco">
+                <ha-icon icon="mdi:lightbulb-outline" style="--mdc-icon-size: 16px; flex-shrink:0; margin-top:1px;"></ha-icon>
                 <span>${this.escapeHtml(i.recommendation)}</span>
             </div>
         ` : ''}
@@ -1219,20 +1522,23 @@ class HacaPanel extends HTMLElement {
 
     const modal = document.createElement('div');
     modal.className = 'haca-modal';
+    const _isMobile = window.innerWidth <= 600;
     modal.style.cssText = `
         position: fixed; top: 0; left: 0; right: 0; bottom: 0;
         background: rgba(0,0,0,0.8); z-index: 9999;
-        display: flex; justify-content: center; align-items: center;
+        display: flex; justify-content: center; align-items: ${_isMobile ? 'flex-end' : 'center'};
       `;
 
     const card = document.createElement('div');
     card.className = 'haca-modal-card';
-    card.style.cssText = `
-        background: var(--card-background-color); width: 90%; max-width: 1000px;
-        max-height: 90vh; overflow: auto; border-radius: 12px; padding: 0;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5); display: flex; flex-direction: column;
-        position: relative;
-      `;
+    const _mobile = window.innerWidth <= 600;
+    card.style.cssText = _mobile
+      ? `background: var(--card-background-color); width: 100%; max-width: 100%;
+         max-height: 95vh; overflow: auto; border-radius: 16px 16px 0 0; padding: 0;
+         box-shadow: 0 -4px 24px rgba(0,0,0,0.3); display: flex; flex-direction: column; position: relative;`
+      : `background: var(--card-background-color); width: 92%; max-width: 1000px;
+         max-height: 90vh; overflow: auto; border-radius: 16px; padding: 0;
+         box-shadow: 0 4px 20px rgba(0,0,0,0.5); display: flex; flex-direction: column; position: relative;`;
 
     // Add close button absolutely positioned in top right of modal card
     const closeBtn = document.createElement('button');
@@ -1240,10 +1546,10 @@ class HacaPanel extends HTMLElement {
     closeBtn.innerHTML = '<ha-icon icon="mdi:close"></ha-icon>';
     closeBtn.style.cssText = `
         position: absolute;
-        top: 12px;
-        right: 12px;
-        width: 40px;
-        height: 40px;
+        top: 14px;
+        right: 9px;
+        width: 20px;
+        height: 20px;
         border-radius: 50%;
         border: none;
         background: var(--secondary-background-color);
@@ -1255,6 +1561,7 @@ class HacaPanel extends HTMLElement {
         transition: all 0.2s ease;
         box-shadow: 0 2px 8px rgba(0,0,0,0.2);
         z-index: 100;
+        flex-shrink: 0;
       `;
 
     // Function to close modal
@@ -1420,7 +1727,7 @@ class HacaPanel extends HTMLElement {
                 </div>
             </div>
             
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px;">
                 <div>
                     <h3 style="margin-top:0; color: var(--error-color); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px;">
                         <ha-icon icon="mdi:minus-box-outline"></ha-icon> ${this.t('modals.before')}
@@ -1846,59 +2153,88 @@ class HacaPanel extends HTMLElement {
 
     try {
       container.innerHTML = `
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>${this.t('tables.audit_date')}</th>
-                    <th>${this.t('tables.available_formats')}</th>
-                    <th style="width: 80px;">${this.t('tables.action')}</th>
-                </tr>
-            </thead>
+        <!-- Desktop table -->
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>${this.t('tables.audit_date')}</th>
+              <th>${this.t('tables.available_formats')}</th>
+              <th style="width:80px;">${this.t('tables.action')}</th>
+            </tr></thead>
             <tbody>
-                ${reports.map(s => {
-        if (!s || !s.formats) {
-          return '';
-        }
-        return `
-                    <tr>
-                        <td>
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <div style="background: var(--primary-color); color: white; width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(var(--rgb-primary-color), 0.2);">
-                                    <ha-icon icon="mdi:calendar-check"></ha-icon>
-                                </div>
-                                <div>
-                                    <div style="font-weight: 600; font-size: 15px;">${new Date(s.created).toLocaleString()}</div>
-                                    <div style="font-size: 11px; color: var(--secondary-text-color); font-family: monospace;">ID: ${s.session_id}</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap;">
-                                ${Object.entries(s.formats).map(([ext, info]) => `
-                                    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px; border: 1px solid var(--divider-color); border-radius: 12px; min-width: 80px; background: var(--secondary-background-color); transition: all 0.2s ease; flex-shrink: 0;">
-                                        <span style="font-size: 11px; font-weight: 800; color: var(--primary-color);">${ext.toUpperCase()}</span>
-                                        <div style="display: flex; gap: 6px;">
-                                            <button class="view-report-btn" data-name="${info.name}" title="${this.t('actions.view')}" style="padding: 6px; background: white; color: var(--primary-color); border: 1px solid var(--divider-color); border-radius: 8px; cursor: pointer;">
-                                                <ha-icon icon="mdi:eye-outline" style="--mdc-icon-size: 18px;"></ha-icon>
-                                            </button>
-                                            <button class="dl-report-btn" data-name="${info.name}" title="${this.t('actions.download')}" style="padding: 6px; background: white; color: var(--success-color, #4caf50); border: 1px solid var(--divider-color); border-radius: 8px; cursor: pointer;">
-                                                <ha-icon icon="mdi:download-outline" style="--mdc-icon-size: 18px;"></ha-icon>
-                                            </button>
-                                        </div>
-                                        <span style="font-size: 10px; color: var(--secondary-text-color); font-weight: 500;">${Math.round(info.size / 1024)} KB</span>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </td>
-                        <td>
-                            <button class="delete-report-btn" data-session="${s.session_id}" title="${this.t('actions.delete')}" style="padding: 8px; background: var(--error-color, #ef5350); color: white; border: none; border-radius: 8px; cursor: pointer;">
-                                <ha-icon icon="mdi:delete-outline" style="--mdc-icon-size: 20px;"></ha-icon>
+              ${reports.filter(s => s && s.formats).map(s => `
+                <tr>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                      <div style="background:var(--primary-color);color:white;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <ha-icon icon="mdi:calendar-check"></ha-icon>
+                      </div>
+                      <div>
+                        <div style="font-weight:600;font-size:14px;white-space:nowrap;">${new Date(s.created).toLocaleString()}</div>
+                        <div style="font-size:11px;color:var(--secondary-text-color);font-family:monospace;">ID: ${s.session_id}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                      ${Object.entries(s.formats).map(([ext, info]) => `
+                        <div style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px;border:1px solid var(--divider-color);border-radius:10px;background:var(--secondary-background-color);flex-shrink:0;">
+                          <span style="font-size:10px;font-weight:800;color:var(--primary-color);">${ext.toUpperCase()}</span>
+                          <div style="display:flex;gap:5px;">
+                            <button class="view-report-btn" data-name="${info.name}" title="${this.t('actions.view')}" style="padding:5px;background:white;color:var(--primary-color);border:1px solid var(--divider-color);border-radius:7px;">
+                              <ha-icon icon="mdi:eye-outline" style="--mdc-icon-size:16px;"></ha-icon>
                             </button>
-                        </td>
-                    </tr>
-                `}).join('')}
+                            <button class="dl-report-btn" data-name="${info.name}" title="${this.t('actions.download')}" style="padding:5px;background:white;color:var(--success-color,#4caf50);border:1px solid var(--divider-color);border-radius:7px;">
+                              <ha-icon icon="mdi:download-outline" style="--mdc-icon-size:16px;"></ha-icon>
+                            </button>
+                          </div>
+                          <span style="font-size:10px;color:var(--secondary-text-color);">${Math.round(info.size / 1024)} KB</span>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </td>
+                  <td>
+                    <button class="delete-report-btn" data-session="${s.session_id}" style="padding:8px;background:var(--error-color,#ef5350);color:white;border:none;border-radius:8px;">
+                      <ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:18px;"></ha-icon>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
             </tbody>
-        </table>
+          </table>
+        </div>
+        <!-- Mobile cards -->
+        <div class="mobile-cards">
+          ${reports.filter(s => s && s.formats).map(s => `
+            <div class="m-card">
+              <div class="m-card-title">
+                <ha-icon icon="mdi:calendar-check" style="color:var(--primary-color);flex-shrink:0;margin-top:1px;"></ha-icon>
+                ${new Date(s.created).toLocaleString()}
+              </div>
+              <div class="m-card-meta">ID: ${s.session_id}</div>
+              <div class="fmt-pills">
+                ${Object.entries(s.formats).map(([ext, info]) => `
+                  <div class="fmt-pill">
+                    <span class="fmt-pill-label">${ext.toUpperCase()} · ${Math.round(info.size / 1024)} KB</span>
+                    <div class="fmt-pill-btns">
+                      <button class="view-report-btn" data-name="${info.name}" style="color:var(--primary-color);">
+                        <ha-icon icon="mdi:eye-outline" style="--mdc-icon-size:16px;"></ha-icon>
+                      </button>
+                      <button class="dl-report-btn" data-name="${info.name}" style="color:var(--success-color,#4caf50);">
+                        <ha-icon icon="mdi:download-outline" style="--mdc-icon-size:16px;"></ha-icon>
+                      </button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+              <div class="m-card-btns">
+                <button class="delete-report-btn" data-session="${s.session_id}" style="background:var(--error-color,#ef5350);color:white;">
+                  <ha-icon icon="mdi:delete-outline"></ha-icon> ${this.t('actions.delete')}
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
       `;
 
       container.querySelectorAll('.view-report-btn').forEach(btn => {
@@ -1926,14 +2262,14 @@ class HacaPanel extends HTMLElement {
       card.style.maxHeight = '95vh';
 
       card._updateContent(`
-          <div style="padding: 20px 60px 20px 24px; border-bottom: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center; background: var(--secondary-background-color);">
-              <h2 style="margin:0; font-size: 18px; display: flex; align-items: center; gap: 12px;">
-                <ha-icon icon="mdi:file-pdf-box" style="color: var(--error-color);"></ha-icon>
-                ${name}
+          <div style="padding: 16px 70px 16px 20px; border-bottom: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center; background: var(--secondary-background-color); gap: 12px; flex-wrap: wrap;">
+              <h2 style="margin:0; font-size: 16px; display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;">
+                <ha-icon icon="mdi:file-pdf-box" style="color: var(--error-color); flex-shrink: 0;"></ha-icon>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
               </h2>
-              <div style="display: flex; gap: 12px;">
+              <div style="display: flex; gap: 8px; flex-shrink: 0;">
                 <a href="/haca_reports/${name}" target="_blank" style="text-decoration: none;">
-                  <button style="background: var(--primary-color); color: white;">
+                  <button style="background: var(--primary-color); color: white; padding: 8px 12px; font-size: 12px;">
                     <ha-icon icon="mdi:fullscreen"></ha-icon> ${this.t('actions.fullscreen')}
                   </button>
                 </a>
@@ -1962,7 +2298,7 @@ class HacaPanel extends HTMLElement {
             <div style="padding: 16px 60px 16px 16px; border-bottom: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center;">
                 <h2 style="margin:0">${name}</h2>
             </div>
-            <div style="padding: 16px; flex: 1; overflow: auto; background: var(--secondary-background-color); font-family: monospace; white-space: pre-wrap; font-size: 13px;">
+            <div style="padding: 16px; flex: 1; max-height: 60vh; overflow-y: auto; background: var(--secondary-background-color); font-family: monospace; white-space: pre-wrap; font-size: 13px;">
                 ${data.type === 'json' ? JSON.stringify(data.content, null, 2) : data.content}
             </div>
         `);
@@ -2022,6 +2358,35 @@ class HacaPanel extends HTMLElement {
         'haca_error'
       );
     }
+  }
+
+  exportCSV(issues, containerId) {
+    if (!issues || issues.length === 0) {
+      this.showHANotification(
+        this.t('notifications.error'),
+        'No issues to export',
+        'haca_csv_empty'
+      );
+      return;
+    }
+    const headers = ['entity_id', 'alias', 'type', 'severity', 'message', 'location', 'recommendation'];
+    const rows = [headers];
+    issues.forEach(i => {
+      rows.push(headers.map(h => {
+        const val = String(i[h] || '');
+        return '"' + val.replace(/"/g, '""') + '"';
+      }));
+    });
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `haca-${containerId}-${date}.csv`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 200);
   }
 }
 

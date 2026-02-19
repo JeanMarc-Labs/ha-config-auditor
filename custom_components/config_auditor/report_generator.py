@@ -1,4 +1,4 @@
-"""Report generator for H.A.C.A v1.1.0 - Module 4."""
+"""Report generator for H.A.C.A v1.1.1 - Module 4."""
 from __future__ import annotations
 
 from datetime import datetime

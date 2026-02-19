@@ -2,6 +2,12 @@
 
 Tous les changements notables apportés à ce projet seront documentés dans ce fichier.
 
+## [1.1.1] - 2026-02-19
+
+### Ajouté
+- **Panneau Frontend** : Ajout d'un bouton "Éditer" sur chaque issue qui ouvre l'éditeur natif de Home Assistant directement (automations, scripts, scènes). Cela permet aux utilisateurs de modifier manuellement les éléments sans passer par les propositions de l'IA.
+- **Traductions (FR/EN)** : Ajout de la clé `edit_ha` pour le nouveau bouton Éditer.
+
 ## [1.1.0] - 2026-02-19
 
 ### Corrections

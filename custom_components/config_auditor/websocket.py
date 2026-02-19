@@ -33,6 +33,12 @@ def async_register_websocket_handlers(hass: HomeAssistant) -> None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "haca/get_data",
+        vol.Optional("limit", default=200): int,
+        vol.Optional("offset", default=0): int,
+        vol.Optional("category"): vol.In([
+            "automation", "script", "scene", "blueprint",
+            "entity", "performance", "security"
+        ]),
     }
 )
 @websocket_api.async_response
@@ -41,7 +47,7 @@ async def handle_get_data(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Handle get data request."""
+    """Handle get data request with optional pagination."""
     try:
         # Get coordinator data
         entries = hass.config_entries.async_entries(DOMAIN)
@@ -57,24 +63,75 @@ async def handle_get_data(
             return
 
         coordinator = data["coordinator"]
-        
+        cdata = coordinator.data or {}
+
+        limit  = msg.get("limit", 200)
+        offset = msg.get("offset", 0)
+        category = msg.get("category")
+
+        def _paginate(lst: list) -> list:
+            return lst[offset: offset + limit]
+
+        # If a category filter is requested, only return that list
+        category_map = {
+            "automation":  "automation_issue_list",
+            "script":      "script_issue_list",
+            "scene":       "scene_issue_list",
+            "blueprint":   "blueprint_issue_list",
+            "entity":      "entity_issue_list",
+            "performance": "performance_issue_list",
+            "security":    "security_issue_list",
+        }
+
+        def _get_list(key: str) -> list:
+            lst = cdata.get(key, [])
+            if category and category_map.get(category) == key:
+                return _paginate(lst)
+            if not category:
+                return _paginate(lst)
+            return lst if category_map.get(category) != key else []
+
+        auto_list  = cdata.get("automation_issue_list", [])
+        script_list = cdata.get("script_issue_list", [])
+        scene_list  = cdata.get("scene_issue_list", [])
+        bp_list     = cdata.get("blueprint_issue_list", [])
+        ent_list    = cdata.get("entity_issue_list", [])
+        perf_list   = cdata.get("performance_issue_list", [])
+        sec_list    = cdata.get("security_issue_list", [])
+
         connection.send_result(
             msg["id"],
             {
-                "health_score": coordinator.data.get("health_score", 0),
-                "automation_issues": coordinator.data.get("automation_issues", 0),
-                "script_issues": coordinator.data.get("script_issues", 0),
-                "scene_issues": coordinator.data.get("scene_issues", 0),
-                "entity_issues": coordinator.data.get("entity_issues", 0),
-                "performance_issues": coordinator.data.get("performance_issues", 0),
-                "security_issues": coordinator.data.get("security_issues", 0),
-                "total_issues": coordinator.data.get("total_issues", 0),
-                "automation_issue_list": coordinator.data.get("automation_issue_list", []),
-                "script_issue_list": coordinator.data.get("script_issue_list", []),
-                "scene_issue_list": coordinator.data.get("scene_issue_list", []),
-                "entity_issue_list": coordinator.data.get("entity_issue_list", []),
-                "performance_issue_list": coordinator.data.get("performance_issue_list", []),
-                "security_issue_list": coordinator.data.get("security_issue_list", []),
+                "health_score":         cdata.get("health_score", 0),
+                "automation_issues":    cdata.get("automation_issues", 0),
+                "script_issues":        cdata.get("script_issues", 0),
+                "scene_issues":         cdata.get("scene_issues", 0),
+                "blueprint_issues":     cdata.get("blueprint_issues", 0),
+                "entity_issues":        cdata.get("entity_issues", 0),
+                "performance_issues":   cdata.get("performance_issues", 0),
+                "security_issues":      cdata.get("security_issues", 0),
+                "total_issues":         cdata.get("total_issues", 0),
+                # Paginated lists
+                "automation_issue_list":    _paginate(auto_list)   if not category or category == "automation"  else auto_list,
+                "script_issue_list":        _paginate(script_list) if not category or category == "script"      else script_list,
+                "scene_issue_list":         _paginate(scene_list)  if not category or category == "scene"       else scene_list,
+                "blueprint_issue_list":     _paginate(bp_list)     if not category or category == "blueprint"   else bp_list,
+                "entity_issue_list":        _paginate(ent_list)    if not category or category == "entity"      else ent_list,
+                "performance_issue_list":   _paginate(perf_list)   if not category or category == "performance" else perf_list,
+                "security_issue_list":      _paginate(sec_list)    if not category or category == "security"    else sec_list,
+                # Pagination metadata
+                "pagination": {
+                    "limit":  limit,
+                    "offset": offset,
+                    "category": category,
+                    "total_automation":  len(auto_list),
+                    "total_script":      len(script_list),
+                    "total_scene":       len(scene_list),
+                    "total_blueprint":   len(bp_list),
+                    "total_entity":      len(ent_list),
+                    "total_performance": len(perf_list),
+                    "total_security":    len(sec_list),
+                },
             },
         )
     except Exception as e:
