@@ -242,7 +242,14 @@
       "size": "Taille",
       "action": "Action",
       "audit_date": "Date de l'Audit",
-      "available_formats": "Formats Disponibles"
+      "available_formats": "Formats Disponibles",
+      "scene": "Scène",
+      "entities_controlled": "Entités contrôlées",
+      "device": "Appareil",
+      "states": "États",
+      "triggers": "Déclencheurs",
+      "actions_recursive": "Actions",
+      "full_view": "Vue complète"
     },
     "backup": {
       "loading": "Chargement...",
@@ -266,7 +273,19 @@
       "generating": "L'IA génère une description...",
       "searching": "Recherche d'une phrase pertinente pour votre configuration",
       "no_explanation": "Désolé, l'IA n'a pas pu générer d'explication. Vérifiez si vous avez configuré OpenAI/Gemini dans Home Assistant.",
-      "failed_suggestion": "Échec de la génération de suggestion"
+      "failed_suggestion": "Échec de la génération de suggestion",
+      "complexity_loading": "🤖 Analyse de complexité en cours…",
+      "preview_warning": "⚠️ Prévisualisation uniquement — aucune modification n'est appliquée tant que vous ne cliquez pas sur Appliquer",
+      "no_proposal": "Aucune proposition de refactoring générée (automation trop simple ou IA non disponible).",
+      "apply_refactoring": "Appliquer le refactoring",
+      "applying": "Application…",
+      "applied_title": "Refactoring appliqué",
+      "applied_desc": "Les scripts ont été extraits et l'automation simplifiée.",
+      "applied_backup": "Un backup a été créé avant la modification.",
+      "retry": "Réessayer",
+      "analysis_tab": "Analyse",
+      "triggers_count": "{n} déclencheurs",
+      "conditions_count": "{n} conditions"
     },
     "fix": {
       "applying": "Application en cours...",
@@ -369,7 +388,11 @@
       "duplicate_jaccard": "🔁 Similarité Jaccard : {pct}%",
       "duplicate_exact": "🔴 Doublon exact",
       "segment_issues": "Issues",
-      "segment_batteries": "Batteries"
+      "segment_batteries": "Batteries",
+      "ghost_chip": "👻 Fantômes",
+      "ghost_chip_title": "Automations fantômes — actives mais jamais déclenchées",
+      "triggers_col": "Déclencheurs",
+      "actions_col": "Actions (récursif)"
     },
     "zombie": {
       "searching": "Recherche de suggestions…",
@@ -411,7 +434,52 @@
       "wasted_mb": "~{mb} Mo gaspillés",
       "db_clean": "Base propre",
       "db_unavailable_short": "Recorder indisponible",
-      "db_clean_rescanning": "Base propre (rescan en cours…)"
+      "db_clean_rescanning": "Base propre (rescan en cours…)",
+      "select_all": "Tout sélectionner",
+      "purge_success": "✅ {count} entité(s) purgée(s) de la base Recorder.",
+      "purge_estimated": "Total estimé : ~{mb} MB sur {count} entité(s)"
+    },
+    "graph": {
+      "title": "Graphe de Dépendances",
+      "legend_scene": "Scène",
+      "legend_entity": "Entité",
+      "legend_device": "Appareil",
+      "no_issues": "✅ Aucune issue détectée",
+      "view_state": "Voir l'état",
+      "type_scene": "Scène",
+      "type_entity": "Entité",
+      "type_device": "Appareil"
+    },
+    "optimizer": {
+      "loading": "✨ Optimisation en cours…",
+      "loading_sub": "Analyse · Découpage · Modernisation · Blueprints",
+      "tab_split": "Découpage",
+      "patterns_detected": "Patterns détectés",
+      "preview_warning": "⚠️ Prévisualisation — aucune modification avant \"Appliquer\"",
+      "label_original": "◀ Original",
+      "label_optimized": "▶ Optimisé",
+      "blueprint_match": "🧩 Blueprint correspondant identifié",
+      "modal_title": "Optimiseur IA — {alias}",
+      "applied_title": "Optimisation appliquée !",
+      "applied_desc": "{result}",
+      "retry": "Réessayer"
+    },
+    "complexity": {
+      "god_automation": "🚨 God Automation",
+      "complex": "⚠️ Complexe",
+      "medium": "🔶 Moyen",
+      "simple": "✅ Simple"
+    },
+    "misc": {
+      "chat_greeting": "Bonjour ! Je peux vous aider à analyser vos automations, expliquer des erreurs de configuration, ou suggérer des améliorations. Comment puis-je vous aider ?",
+      "history_sparkline": "Historique…",
+      "ai_context": "Contexte HACA: {total} issues trouvées ({automations} automations, {scripts} scripts). "
+    },
+    "config": {
+      "reset_confirm": "Réinitialiser tous les paramètres aux valeurs par défaut ?",
+      "resetting": "Réinitialisation…",
+      "saved_success": "✅ Configuration enregistrée avec succès.",
+      "saved_restart": "Configuration enregistrée. Redémarrez HA pour appliquer le changement de monitoring événementiel."
     }
   },
   "analyzer": {

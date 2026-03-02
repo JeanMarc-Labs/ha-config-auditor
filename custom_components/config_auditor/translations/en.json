@@ -241,7 +241,14 @@
       "size": "Size",
       "action": "Action",
       "audit_date": "Audit Date",
-      "available_formats": "Available Formats"
+      "available_formats": "Available Formats",
+      "scene": "Scene",
+      "entities_controlled": "Controlled entities",
+      "device": "Device",
+      "states": "States",
+      "triggers": "Triggers",
+      "actions_recursive": "Actions",
+      "full_view": "Full view"
     },
     "backup": {
       "loading": "Loading...",
@@ -265,7 +272,19 @@
       "generating": "AI is generating a description...",
       "searching": "Searching for a relevant phrase for your configuration",
       "no_explanation": "Sorry, the AI could not generate an explanation. Check if you have configured OpenAI/Gemini in Home Assistant.",
-      "failed_suggestion": "Failed to generate suggestion"
+      "failed_suggestion": "Failed to generate suggestion",
+      "complexity_loading": "🤖 Analyzing complexity…",
+      "preview_warning": "⚠️ Preview only — no changes applied until you click Apply",
+      "no_proposal": "No refactoring proposal generated (automation too simple or AI unavailable).",
+      "apply_refactoring": "Apply refactoring",
+      "applying": "Applying…",
+      "applied_title": "Refactoring applied",
+      "applied_desc": "Scripts have been extracted and the automation simplified.",
+      "applied_backup": "A backup was created before the change.",
+      "retry": "Retry",
+      "analysis_tab": "Analysis",
+      "triggers_count": "{n} triggers",
+      "conditions_count": "{n} conditions"
     },
     "fix": {
       "applying": "Applying fix...",
@@ -368,7 +387,11 @@
       "duplicate_jaccard": "🔁 Jaccard similarity: {pct}%",
       "duplicate_exact": "🔴 Exact duplicate",
       "segment_issues": "Issues",
-      "segment_batteries": "Batteries"
+      "segment_batteries": "Batteries",
+      "ghost_chip": "👻 Ghosts",
+      "ghost_chip_title": "Ghost automations — active but never triggered",
+      "triggers_col": "Triggers",
+      "actions_col": "Actions (recursive)"
     },
     "zombie": {
       "searching": "Searching for suggestions…",
@@ -410,7 +433,52 @@
       "wasted_mb": "~{mb} MB wasted",
       "db_clean": "Clean database",
       "db_unavailable_short": "Recorder unavailable",
-      "db_clean_rescanning": "Clean database (rescanning…)"
+      "db_clean_rescanning": "Clean database (rescanning…)",
+      "select_all": "Select all",
+      "purge_success": "✅ {count} entity/entities purged from Recorder.",
+      "purge_estimated": "Estimated total: ~{mb} MB on {count} entity/entities"
+    },
+    "graph": {
+      "title": "Dependency Graph",
+      "legend_scene": "Scene",
+      "legend_entity": "Entity",
+      "legend_device": "Device",
+      "no_issues": "✅ No issues detected",
+      "view_state": "View state",
+      "type_scene": "Scene",
+      "type_entity": "Entity",
+      "type_device": "Device"
+    },
+    "optimizer": {
+      "loading": "✨ Optimizing…",
+      "loading_sub": "Analysis · Splitting · Modernization · Blueprints",
+      "tab_split": "Splitting",
+      "patterns_detected": "Detected patterns",
+      "preview_warning": "⚠️ Preview — no changes before \"Apply\"",
+      "label_original": "◀ Original",
+      "label_optimized": "▶ Optimized",
+      "blueprint_match": "🧩 Matching blueprint identified",
+      "modal_title": "AI Optimizer — {alias}",
+      "applied_title": "Optimization applied!",
+      "applied_desc": "{result}",
+      "retry": "Retry"
+    },
+    "complexity": {
+      "god_automation": "🚨 God Automation",
+      "complex": "⚠️ Complex",
+      "medium": "🔶 Medium",
+      "simple": "✅ Simple"
+    },
+    "misc": {
+      "chat_greeting": "Hello! I can help you analyze your automations, explain configuration errors, or suggest improvements. How can I help you?",
+      "history_sparkline": "History…",
+      "ai_context": "HACA context: {total} issues found ({automations} automations, {scripts} scripts). "
+    },
+    "config": {
+      "reset_confirm": "Reset all settings to default values?",
+      "resetting": "Resetting…",
+      "saved_success": "✅ Configuration saved successfully.",
+      "saved_restart": "Configuration saved. Restart HA to apply event monitoring change."
     }
   },
   "analyzer": {
