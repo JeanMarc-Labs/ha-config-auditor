@@ -1,0 +1,522 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Assistant Config Auditor",
+        "description": "Configure H.A.C.A to monitor and audit your Home Assistant configuration.",
+        "data": {
+          "scan_interval": "Scan interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Scan interval must be between 5 and 1440 minutes"
+    },
+    "abort": {
+      "already_configured": "H.A.C.A is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "H.A.C.A Options",
+        "description": "Configure H.A.C.A behavior",
+        "data": {
+          "scan_interval": "Scan interval (minutes)",
+          "auto_fix_enabled": "Enable automatic fixes",
+          "backup_enabled": "Enable automatic backups",
+          "startup_delay_seconds": "Startup scan delay (seconds)",
+          "event_monitoring_enabled": "Continuous monitoring (auto-scan on events)",
+          "event_debounce_seconds": "Event monitoring debounce delay (seconds)"
+        }
+      }
+    }
+  },
+  "title": "H.A.C.A",
+  "entity": {
+    "sensor": {
+      "health_score": {
+        "name": "Health Score"
+      },
+      "automation_issues": {
+        "name": "Automation Issues"
+      },
+      "script_issues": {
+        "name": "Script Issues"
+      },
+      "scene_issues": {
+        "name": "Scene Issues"
+      },
+      "blueprint_issues": {
+        "name": "Blueprint Issues"
+      },
+      "entity_issues": {
+        "name": "Entity Issues"
+      },
+      "performance_issues": {
+        "name": "Performance Issues"
+      },
+      "security_issues": {
+        "name": "Security Issues"
+      },
+      "total_issues": {
+        "name": "Total Issues"
+      },
+      "dashboard_issues": {
+        "name": "Dashboard Issues"
+      }
+    }
+  },
+  "services": {
+    "scan_all": {
+      "name": "Scan All",
+      "description": "Run a complete configuration audit"
+    },
+    "scan_automations": {
+      "name": "Scan Automations",
+      "description": "Scan automations for issues"
+    },
+    "scan_entities": {
+      "name": "Scan Entities",
+      "description": "Scan entities for issues"
+    },
+    "generate_report": {
+      "name": "Generate Report",
+      "description": "Generate a comprehensive audit report"
+    },
+    "fix_device_id": {
+      "name": "Fix Device ID",
+      "description": "Convert device_id to entity_id in an automation"
+    }
+  },
+  "panel": {
+    "title": "H.A.C.A",
+    "subtitle": "Home Assistant Config Auditor",
+    "version": "V1.0.2",
+    "buttons": {
+      "scan_all": "Full Scan",
+      "automations": "Automations",
+      "entities": "Entities",
+      "security": "Security",
+      "report": "Report",
+      "refresh": "Refresh"
+    },
+    "stats": {
+      "health_score": "Health Score",
+      "health_score_desc": "Global health score",
+      "security": "Security",
+      "security_desc": "Secrets and vulnerabilities",
+      "automations": "Automations",
+      "automations_desc": "Automation issues",
+      "scripts": "Scripts",
+      "scripts_desc": "Script issues",
+      "scenes": "Scenes",
+      "scenes_desc": "Scene issues",
+      "entities": "Entities",
+      "entities_desc": "Unavailable/zombie entities",
+      "performance": "Performance",
+      "performance_desc": "Loops and DB impact",
+      "blueprints": "Blueprints",
+      "blueprints_desc": "Blueprint issues",
+      "repairs_pushed": "Sent to Repairs",
+      "repairs_pushed_desc": "High/medium issues visible in HA Repairs dashboard",
+      "dashboards": "Dashboards",
+      "dashboards_desc": "Missing entities",
+      "recorder_orphans": "DB Orphans",
+      "recorder_orphans_desc": "Wasted space"
+    },
+    "tabs": {
+      "all": "All",
+      "automations": "Automations",
+      "scripts": "Scripts",
+      "scenes": "Scenes",
+      "entities": "Entities",
+      "security": "Security",
+      "performance": "Performance",
+      "blueprints": "Blueprints",
+      "backups": "Backups",
+      "reports": "Reports",
+      "repairs": "Repairs",
+      "dashboards": "Dashboards",
+      "history": "History",
+      "issues": "Issues",
+      "recorder": "DB Orphans",
+      "tools": "Tools",
+      "batteries": "Batteries"
+    },
+    "sections": {
+      "all_issues": "All Issues",
+      "security_issues": "Security Issues",
+      "automation_issues": "Automation Issues",
+      "script_issues": "Script Issues",
+      "scene_issues": "Scene Issues",
+      "entity_issues": "Entity Issues",
+      "performance_issues": "Performance Issues",
+      "blueprint_issues": "Blueprint Issues",
+      "backup_management": "Backup Management",
+      "report_management": "Report Management",
+      "dashboard_issues": "Dashboard Issues",
+      "recorder_orphans": "Orphaned Recorder Entities",
+      "history": "Audit History"
+    },
+    "filter": {
+      "all": "All",
+      "high": "🔴 High",
+      "medium": "🟠 Medium",
+      "low": "🔵 Low",
+      "label": "Filter:",
+      "export_csv": "Export CSV"
+    },
+    "actions": {
+      "create_backup": "Create Backup",
+      "fix": "Fix",
+      "ai_explain": "AI",
+      "restore": "Restore",
+      "view": "View",
+      "download": "Download",
+      "fullscreen": "Full Screen",
+      "close": "Close",
+      "cancel": "Cancel",
+      "apply": "Apply",
+      "delete": "Delete",
+      "purge_all_orphans": "Purge all orphans"
+    },
+    "messages": {
+      "no_issues": "No issues detected in this category",
+      "no_issues_filtered": "No issues match the selected filter",
+      "no_backups": "No backup available",
+      "no_reports": "No report generated",
+      "loading": "Loading...",
+      "scan_in_progress": "Scan in progress...",
+      "backup_created": "Backup created",
+      "backup_restored": "Backup restored. Restart Home Assistant.",
+      "confirm_backup": "Create a new backup?",
+      "confirm_restore": "Do you really want to restore this backup?\n⚠️ A backup of the current state will be created before restoration.",
+      "reports_generated": "Reports generated (MD, JSON, PDF) in /config/.haca_reports/",
+      "data_refreshed": "Data refreshed",
+      "ai_analyzing": "AI is analyzing your problem...",
+      "ai_generating": "AI is generating a description...",
+      "yaml_updating": "Updating YAML file...",
+      "repairs_synced": "Issues synced to HA Repairs dashboard"
+    },
+    "modals": {
+      "correction_proposal": "Correction Proposal",
+      "before": "Before (Current)",
+      "after": "After (Proposal)",
+      "changes_identified": "Changes identified",
+      "apply_correction": "Apply Correction",
+      "correction_applied": "Correction Applied!",
+      "ai_analysis": "AI Assist Analysis",
+      "suggest_description": "Suggest a description",
+      "ai_proposition": "AI proposition:",
+      "edit_text": "You can edit this text before applying.",
+      "broken_device_ref": "Broken device reference",
+      "cannot_auto_fix": "This issue cannot be fixed automatically",
+      "how_to_fix": "How to fix manually:",
+      "open_editor": "Open Editor",
+      "automation": "Automation",
+      "problem": "Problem",
+      "unknown_device_id": "unknown device_id"
+    },
+    "notifications": {
+      "new_issue": "New issue detected",
+      "new_issues": "new issues detected",
+      "config_modified": "Configuration modified",
+      "reported_by": "Reported by H.A.C.A",
+      "view_details": "View details",
+      "and_others": "...and {count} other(s)",
+      "report_generated": "Report Generated",
+      "report_generated_msg": "MD, JSON and PDF available in /config/.haca_reports/",
+      "report_generated_full": "📄 **Reports Generated Successfully!**\n\n📁 **Location:** `/config/.haca_reports/`\n\n**Available formats:**\n• Markdown (.md)\n• JSON (.json)\n• PDF (.pdf)\n\n---\n*Created by H.A.C.A*",
+      "error": "Error",
+      "backup_created_success": "Backup created successfully",
+      "backup_restored_success": "Backup restored. Restart Home Assistant.",
+      "backup_deleted": "🗑️ Backup Deleted",
+      "report_deleted": "🗑️ Report Deleted",
+      "files_deleted": "file(s) deleted"
+    },
+    "tables": {
+      "name": "Name",
+      "date": "Date",
+      "size": "Size",
+      "action": "Action",
+      "audit_date": "Audit Date",
+      "available_formats": "Available Formats"
+    },
+    "backup": {
+      "loading": "Loading...",
+      "error_loading": "Error loading backups",
+      "confirm_create": "Create a new backup?",
+      "confirm_delete": "Delete this backup?",
+      "confirm_restore": "Do you really want to restore this backup?\n⚠️ A backup of the current state will be created before restoration.",
+      "restore_warning": "Replace with valid entity_id",
+      "save_reload": "Save and reload the automation",
+      "backup_created": "Backup created"
+    },
+    "reports": {
+      "loading": "Loading...",
+      "loading_report": "Loading report...",
+      "loading_proposal": "Loading proposal...",
+      "error_loading": "Error loading reports",
+      "error_display": "Error displaying reports"
+    },
+    "ai": {
+      "analyzing": "AI is analyzing your problem...",
+      "generating": "AI is generating a description...",
+      "searching": "Searching for a relevant phrase for your configuration",
+      "no_explanation": "Sorry, the AI could not generate an explanation. Check if you have configured OpenAI/Gemini in Home Assistant.",
+      "failed_suggestion": "Failed to generate suggestion"
+    },
+    "fix": {
+      "applying": "Applying fix...",
+      "success": "Fix Applied Successfully!",
+      "error_call": "Service call error",
+      "error_unknown": "Unknown error",
+      "cannot_find_automation": "Cannot find automation ID"
+    },
+    "instructions": {
+      "open_yaml_editor": "Open the automation in the YAML editor",
+      "find_device_ref": "Find the device_id reference",
+      "replace_entity": "Replace with a valid entity_id",
+      "save_reload": "Save and reload the automation"
+    },
+    "seconds": "This may take a few seconds",
+    "report": {
+      "confirm_delete": "Delete this report and all its files?",
+      "title": "H.A.C.A Configuration Report",
+      "generated": "Generated",
+      "health_score": "Health Score",
+      "executive_summary": "Executive Summary",
+      "metric": "Metric",
+      "value": "Value",
+      "overall_status": "Overall Status",
+      "automation_issues": "Automation Issues",
+      "entity_issues": "Entity Issues",
+      "total_issues": "Total Issues",
+      "script_issues": "Script Issues",
+      "scene_issues": "Scene Issues",
+      "blueprint_issues": "Blueprint Issues",
+      "performance_issues": "Performance Issues",
+      "security_issues": "Security Issues",
+      "high_severity": "High Severity",
+      "medium_severity": "Medium Severity",
+      "low_severity": "Low Severity",
+      "low_severity_issues_found": "low severity issues found",
+      "no_automation_issues": "No automation issues detected!",
+      "zombie_entities": "Zombie Entities",
+      "unavailable": "Unavailable",
+      "ghost_entities": "Ghost Entities",
+      "broken_device_references": "Broken Device References",
+      "references_nonexistent_device": "References non-existent device",
+      "no_entity_issues": "No entity issues detected!",
+      "recommendations": "Recommendations",
+      "critical_remove_zombie": "Critical: Remove zombie entity references",
+      "high_priority_device": "High Priority: Resolve device integration issues",
+      "ghost_cleanup": "Ghost Cleanup: Purge orphaned entity registry entries",
+      "general_weekly_scan": "General: Run weekly scans to track progress",
+      "great_job": "Great job! Continue monitoring weekly.",
+      "report_generated_by": "Report generated by H.A.C.A",
+      "status_excellent": "Excellent! Your configuration follows best practices.",
+      "status_good": "Good. Minor improvements possible.",
+      "status_fair": "Fair. Several improvements recommended.",
+      "status_poor": "Poor. Action required.",
+      "issue": "Issue",
+      "fix": "Fix",
+      "page": "Page"
+    },
+    "complex_automation": "Complex automation (score {score}): {triggers} triggers, {conditions} conditions, {actions} actions, {templates} templates",
+    "god_automation": "🚨 God Automation (score {score}): {triggers} triggers, {conditions} conditions, {actions} actions, {templates} templates — should be split",
+    "complex_automation_recommendation": "Extract some actions into reusable scripts to reduce complexity",
+    "god_automation_recommendation": "This automation is too complex. Split it into several specialized automations or scripts",
+    "battery": {
+      "none_detected": "No battery detected",
+      "run_scan": "Run a scan to detect batteries",
+      "no_category": "No battery in this category",
+      "stat_critical": "Critical",
+      "stat_low": "Low",
+      "stat_watch": "Watch",
+      "stat_ok": "OK",
+      "stat_total": "Total",
+      "status_critical": "🔴 Critical",
+      "status_low": "🟡 Low",
+      "status_watch": "🔵 Watch",
+      "status_ok": "✅ OK",
+      "all_ok_mini": "✅ All batteries OK",
+      "alerts_summary_one": "1 battery needs attention",
+      "alerts_summary_other": "{count} batteries need attention",
+      "all_ok_summary": "{count} batteries — all OK ✅",
+      "filter_all": "All batteries",
+      "filter_alert": "Alerts only",
+      "filter_critical": "🔴 Critical (<5%)",
+      "filter_low": "🟡 Low (5–15%)",
+      "filter_watch": "🔵 Watch (15–25%)",
+      "filter_ok": "✅ OK (≥25%)"
+    },
+    "issues": {
+      "open_dashboard": "Open dashboard",
+      "optimize": "Optimize",
+      "complexity_score_title": "Complexity score {score}/100 — optimizable",
+      "in_automations": "In:",
+      "complexity_triggers": "triggers",
+      "complexity_conditions": "conditions",
+      "complexity_actions": "actions",
+      "complexity_templates": "templates",
+      "ghost_last_triggered": "Last triggered: {days} day(s) ago",
+      "ghost_never_triggered": "🔴 Never triggered",
+      "ghost_unavailable_one": "⚠️ 1 unavailable trigger",
+      "ghost_unavailable_other": "⚠️ {count} unavailable triggers",
+      "duplicate_jaccard": "🔁 Jaccard similarity: {pct}%",
+      "duplicate_exact": "🔴 Exact duplicate",
+      "segment_issues": "Issues",
+      "segment_batteries": "Batteries"
+    },
+    "zombie": {
+      "searching": "Searching for suggestions…",
+      "similar_detected": "Similar entities detected",
+      "entity_not_found": "Entity not found",
+      "referenced_in": "Referenced in {count} automation(s):",
+      "replace_with": "Replace with (leave empty to remove the reference):",
+      "auto_backup_info": "An automatic backup will be created before any modification.",
+      "fix_this": "Fix this automation",
+      "fix_all": "Fix all ({count})",
+      "edit_manual": "Edit manually",
+      "applying": "Applying…",
+      "fix_success_title": "✅ Fix applied",
+      "fix_success_msg": "Reference to {entity} fixed in {count} automation(s).",
+      "unknown_automation": "Unknown",
+      "errors_partial_title": "⚠️ Partial errors"
+    },
+    "filter_type": {
+      "all": "All types",
+      "automation": "Automations",
+      "script": "Scripts",
+      "scene": "Scenes",
+      "entity": "Entities",
+      "blueprint": "Blueprints",
+      "device": "Devices"
+    },
+    "recorder": {
+      "unavailable_badge": "Unavailable",
+      "no_orphans": "No orphans detected — clean database.",
+      "no_orphans_rescanning": "✅ No orphans detected — clean database (rescanning…)",
+      "db_unavailable": "Recorder unavailable or not configured.",
+      "purge_in_progress": "⏳ Purge in progress…",
+      "no_entity_selected": "No entity selected.",
+      "purge_confirm_title": "⚠️ Purge from Recorder",
+      "purge_confirm_body": "Historical data for <strong>{count} entity/entities</strong> will be permanently deleted. <strong>This action is irreversible.</strong>",
+      "purge_button": "🗑 Purge {count} entity/entities",
+      "purge_error_conn": "❌ Error: HA connection unavailable",
+      "purge_error": "❌ Purge error: {error}",
+      "wasted_mb": "~{mb} MB wasted",
+      "db_clean": "Clean database",
+      "db_unavailable_short": "Recorder unavailable",
+      "db_clean_rescanning": "Clean database (rescanning…)"
+    }
+  },
+  "analyzer": {
+    "trigger_uses_device_id": "Trigger {idx} uses device_id which breaks when device is re-added",
+    "condition_uses_device_id": "Condition {idx} uses device_id which breaks when device is re-added",
+    "action_uses_device_id": "Action {idx} uses device_id which breaks when device is re-added",
+    "action_target_uses_device_id": "Action {idx} uses device_id in target which breaks when device is re-added",
+    "trigger_uses_device_platform": "Trigger {idx} uses 'device' platform which is fragile",
+    "condition_uses_device_platform": "Condition {idx} uses 'device' condition type which is fragile",
+    "zone_trigger_missing_entity": "Trigger {idx}: zone trigger missing entity_id",
+    "template_simple_state": "Condition {idx} uses template for simple state check",
+    "template_numeric_comparison": "Condition {idx} uses template for numeric comparison",
+    "template_time_check": "Condition {idx} uses template for time check",
+    "wait_template_state_check": "Action {idx} uses wait_template for state check",
+    "generic_service": "Action {idx} uses generic service '{service}'",
+    "motion_single_mode": "Motion automation uses 'single' mode with delays/waits",
+    "never_triggered": "Automation has never been triggered since HA restart",
+    "no_alias": "Automation has no alias/name",
+    "no_description": "Automation has no description",
+    "script_no_description": "Script '{alias}' has no description",
+    "script_no_sequence": "Script '{alias}' has no sequence of actions",
+    "scene_no_entities": "Scene has no entities defined",
+    "add_description": "Add a description to document automation purpose",
+    "add_alias": "Add an alias to make automation identifiable",
+    "use_entity_id_instead_device": "Use entity_id instead of device_id for reliability",
+    "use_state_platform": "Use state/numeric_state platform with entity_id instead",
+    "use_state_condition": "Use native 'state' condition instead of template",
+    "use_numeric_state_condition": "Use 'numeric_state' condition for validation at load time",
+    "use_time_condition": "Use 'time' condition with after/before parameters",
+    "use_entity_id_in_target": "Use entity_id in target instead of device_id",
+    "use_wait_for_trigger": "Use wait_for_trigger with state trigger (event-driven, not polling)",
+    "use_restart_mode": "Use 'restart' mode - re-triggers must reset the timer",
+    "verify_triggers": "Verify triggers are configured correctly or automation is needed",
+    "specify_zone_entity": "Specify which entity to track in the zone",
+    "use_domain_service": "Use domain-specific services like {domain}.turn_on",
+    "entity_unknown_state": "Entity has unknown state",
+    "entity_not_updated": "Entity hasn't updated in {days} days",
+    "entity_referenced_not_exist": "Referenced by {count} automation(s) but doesn't exist",
+    "entity_unavailable_referenced": "Unavailable but referenced by {count} automation(s)",
+    "entity_disabled_referenced": "Disabled but referenced by {count} automation(s)",
+    "orphaned_registry_entry": "Orphaned registry entry: integration '{platform}' is missing or disabled",
+    "broken_device_reference": "Automation references non-existent device_id: {device_id}",
+    "remove_or_recreate": "Remove references or recreate entity",
+    "enable_or_remove_refs": "Enable entity or remove references",
+    "remove_orphaned": "Remove this orphaned entity from your registry",
+    "use_entity_id_or_update": "Use entity_id or update to a valid device",
+    "verify_entity_updates": "Verify entity is receiving updates",
+    "entity_may_be_broken": "Entity may be broken or no longer in use",
+    "triggered_recently_loop": "Triggered very recently ({delta}s ago), possible loop",
+    "complex_automation": "Automation has {count} actions, which is complex",
+    "parallel_mode_resources": "Parallel mode with max={max_runs} can consume resources",
+    "triggers_modifies_same": "Automation triggers on and modifies the same entities: {entities}",
+    "missing_state_class": "Power/Energy sensor missing state_class, impacting long-term stats",
+    "expensive_template_no_domain": "Template uses 'states | selectattr' without domain filter — re-evaluates on every state change",
+    "add_domain_filter": "Add a domain filter (e.g. 'states.sensor | selectattr(...)') to limit evaluation scope",
+    "expensive_template_states_all": "Template lists all entity states — extremely expensive, re-evaluates on every state change",
+    "filter_by_domain": "Filter states by domain (e.g. 'states.light | list') to reduce template evaluation cost",
+    "hardcoded_secret": "Potential hardcoded secret or API key detected",
+    "sensitive_data_exposure": "Action {idx}: Potential exposure of sensitive data in notification",
+    "use_secret_yaml": "Use !secret in secrets.yaml instead of hardcoding sensitive data",
+    "avoid_secrets_notifications": "Avoid sending secrets or passwords in notification messages",
+    "duplicate_automation": "Automation has {count} duplicate(s) with identical triggers and actions",
+    "remove_duplicate": "Consider removing duplicates or consolidating: {others}",
+    "excessive_delay": "Action {idx} has an excessive delay of {minutes} minutes (>30 min)",
+    "use_input_number_delay": "Consider using an input_number helper to make the delay configurable",
+    "blueprint_missing_path": "Blueprint reference is missing a path",
+    "specify_blueprint_path": "Specify the blueprint path in use_blueprint.path",
+    "blueprint_file_not_found": "Blueprint file not found on disk: blueprints/automation/{path}",
+    "reinstall_blueprint": "Reinstall or restore the blueprint file at blueprints/automation/{path}",
+    "blueprint_no_inputs": "Blueprint '{path}' has no configured inputs",
+    "configure_blueprint_inputs": "Configure the required blueprint inputs in use_blueprint.input",
+    "blueprint_empty_input": "Blueprint input '{key}' is empty or null",
+    "set_blueprint_input": "Set a value for blueprint input '{key}'",
+    "unused_input_boolean": "Input boolean '{entity_id}' is not referenced in any automation or script",
+    "remove_unused_helper": "Consider removing this unused helper to clean up your configuration",
+    "unknown_service": "Action {idx} calls service \"{service}\" which is not registered in Home Assistant",
+    "use_existing_service": "Verify that the integration providing \"{service}\" is installed and loaded. Check for typos.",
+    "unknown_area_reference": "Action {idx} targets area_id \"{area_id}\" which no longer exists in your Areas registry",
+    "check_area_name": "Go to Settings → Areas & Zones to check if \"{area_id}\" was renamed or deleted, then update this automation.",
+    "unknown_floor_reference": "Action {idx} targets floor_id \"{floor_id}\" which no longer exists in your Floors registry",
+    "check_floor_name": "Go to Settings → Areas & Zones → Floors to check if \"{floor_id}\" was renamed or deleted.",
+    "unknown_label_reference": "Action {idx} targets label_id \"{label_id}\" which no longer exists in your Labels registry",
+    "check_label_name": "Go to Settings → Labels to check if \"{label_id}\" was renamed or deleted.",
+    "ghost_automation": "Ghost automation: active but not triggered in {days} days",
+    "ghost_unavailable_triggers": "Ghost automation: trigger entities are unavailable ({entities})",
+    "fix_unavailable_triggers": "Check or replace the unavailable trigger entities — likely root cause",
+    "verify_triggers_restrictive": "Check if triggers are too restrictive, or if the automation is still needed",
+    "probable_duplicate_automation": "Probable duplicate at {pct}% similarity with \"{other}\" (Jaccard of triggers/actions)",
+    "review_probable_duplicate": "Compare with \"{other}\" and merge or remove the duplicate",
+    "battery_critical_title": "🔴 Critical Battery — {name}",
+    "battery_critical_message": "## 🔴 Critical Battery Level\n\n**Device:** {name}\n**Level:** **{level:.0f}%** — immediate attention required\n**Entity:** `{entity_id}`\n\nPlease replace or charge this device's battery **immediately** to avoid loss of functionality.\n\n---\n*H.A.C.A — Home Assistant Config Auditor*",
+    "battery_low_title": "🟡 Low Battery — {name}",
+    "battery_low_message": "## 🟡 Low Battery Level\n\n**Device:** {name}\n**Level:** **{level:.0f}%** — charge soon\n**Entity:** `{entity_id}`\n\nPlan to charge or replace this battery in the coming days.\n\n---\n*H.A.C.A — Home Assistant Config Auditor*",
+    "battery_warning_title": "🔵 Battery Monitor — {name}",
+    "battery_warning_message": "## 🔵 Battery Level to Monitor\n\n**Device:** {name}\n**Level:** **{level:.0f}%** — keep an eye on it\n**Entity:** `{entity_id}`\n\nNo immediate action required, but monitor this device.\n\n---\n*H.A.C.A — Home Assistant Config Auditor*",
+    "regression_title": "⚠️ H.A.C.A — Health Score Regression",
+    "regression_message": "## ⚠️ Health Score Regression Detected\n\nYour H.A.C.A Health Score has **dropped by {drop} points** over the last {window_days} days.\n\n| Date | Score |\n|------|-------|\n| {ref_date} | **{ref_score}%** |\n| Today | **{cur_score}%** |\n\nOpen the **H.A.C.A panel → History** tab to identify the new issues and restore your configuration quality.\n\n---\n*H.A.C.A — Home Assistant Config Auditor*"
+  },
+  "stats": {
+    "dashboards": "Dashboards",
+    "dashboards_desc": "Missing entities"
+  },
+  "tabs": {
+    "dashboards": "Dashboards"
+  },
+  "sections": {
+    "dashboard_issues": "Dashboard Issues"
+  }
+}

@@ -1,0 +1,6 @@
+.clinerules
+CODEOWNERS
+memory-bank/
+__pycache__/
+.agent/
+.vscode/
