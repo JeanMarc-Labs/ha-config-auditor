@@ -326,8 +326,8 @@
         .attr('stroke', d => d.id === node.id ? 'var(--primary-color)' : (d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)'));
     }
 
-    const typeLabels = { automation:'Automation', script:'Script', scene:'Scène',
-                         entity:'Entité', blueprint:'Blueprint', device:'Appareil' };
+    const typeLabels = { automation:'Automation', script:'Script', scene: this.t('graph.type_scene'),
+                         entity: this.t('graph.type_entity'), blueprint:'Blueprint', device: this.t('graph.type_device') };
     title.textContent = node.label;
 
     const editUrl = this.getHAEditUrl(node.id);
@@ -355,7 +355,7 @@
           ${node.issue_count} issue${node.issue_count > 1 ? 's' : ''}
         </div>
         ${issueRows}
-      ` : '<div style="font-size:13px;color:#66bb6a;margin-bottom:12px;">✅ Aucune issue détectée</div>'}
+      ` : `<div style="font-size:13px;color:#66bb6a;margin-bottom:12px;">${this.t('graph.no_issues')}</div>`}
 
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
         ${editUrl ? `<a href="${editUrl}" target="_blank" style="text-decoration:none;">
@@ -365,7 +365,7 @@
         </a>` : ''}
         ${node.type === 'entity' ? `<a href="${haStateUrl}" target="_blank" style="text-decoration:none;">
           <button style="width:100%;background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px;">
-            <ha-icon icon="mdi:eye" style="--mdc-icon-size:14px;"></ha-icon> Voir l'état
+            <ha-icon icon="mdi:eye" style="--mdc-icon-size:14px;"></ha-icon> ${this.t('graph.view_state')}
           </button>
         </a>` : ''}
       </div>`;

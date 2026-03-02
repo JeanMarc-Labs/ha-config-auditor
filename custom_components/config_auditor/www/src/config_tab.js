@@ -108,7 +108,7 @@ var ISSUE_TYPES_BY_CATEGORY = [
 // ─── Rendering ────────────────────────────────────────────────────────────
 
 function renderConfigTab(options, lang) {
-  lang = lang || 'fr';
+  lang = lang || 'en';
   var t = function (fr, en) { return lang === 'fr' ? fr : en; };
   var excludedTypes = new Set(options.excluded_issue_types || []);
 

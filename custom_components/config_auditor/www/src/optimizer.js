@@ -10,10 +10,10 @@
     const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px;">
         <div class="loader"></div>
-        <div style="font-size:18px;font-weight:600;">✨ Optimisation en cours…</div>
+        <div style="font-size:18px;font-weight:600;">${this.t('optimizer.loading')}</div>
         <div style="font-size:13px;color:var(--secondary-text-color);">
           ${this.escapeHtml(alias)}<br>
-          <span style="font-size:11px;opacity:0.7;">Analyse · Découpage · Modernisation · Blueprints</span>
+          <span style="font-size:11px;opacity:0.7;">${this.t('optimizer.loading_sub')}</span>
         </div>
       </div>
     `);
@@ -56,7 +56,7 @@
 
     const tabs = [
       { id: 'optim-tab-analysis',   icon: 'mdi:magnify',       label: 'Diagnostic',     show: true },
-      { id: 'optim-tab-split',      icon: 'mdi:scissors-cutting', label: 'Découpage',   show: hasSplit },
+      { id: 'optim-tab-split',      icon: 'mdi:scissors-cutting', label: this.t('optimizer.tab_split'),   show: hasSplit },
       { id: 'optim-tab-modern',     icon: 'mdi:code-braces',   label: 'Modernisation',  show: hasMod },
       { id: 'optim-tab-blueprint',  icon: 'mdi:puzzle',        label: 'Blueprint',      show: hasBlueprint },
     ].filter(t => t.show);
@@ -74,10 +74,10 @@
 
     // ── Score badge ────────────────────────────────────────────────────
     const [scoreColor, levelLabel] =
-      score >= 50 ? ['#ef5350', '🚨 God Automation'] :
-      score >= 30 ? ['#ffa726', '⚠️ Complexe']       :
-      score >= 15 ? ['#ffd54f', '🔶 Moyen']           :
-                    ['#66bb6a', '✅ Simple'];
+      score >= 50 ? ['#ef5350', this.t('complexity.god_automation')] :
+      score >= 30 ? ['#ffa726', this.t('complexity.complex')]       :
+      score >= 15 ? ['#ffd54f', this.t('complexity.medium')]           :
+                    ['#66bb6a', this.t('complexity.simple')];
 
     // ── Patterns pills ─────────────────────────────────────────────────
     const patternPills = patterns.map(p =>
@@ -91,7 +91,7 @@
         ${patterns.length ? `
         <div style="margin-bottom:16px;">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;
-               color:var(--secondary-text-color);margin-bottom:8px;">Patterns détectés</div>
+               color:var(--secondary-text-color);margin-bottom:8px;">${this.t('optimizer.patterns_detected')}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">${patternPills}</div>
         </div>` : ''}
         <div style="background:var(--secondary-background-color);padding:18px;border-radius:12px;
@@ -116,14 +116,14 @@
         <div style="padding:8px 16px;background:rgba(var(--rgb-primary-color,33,150,243),0.06);
              font-size:12px;color:var(--secondary-text-color);border-bottom:1px solid var(--divider-color);
              flex-shrink:0;">
-          ⚠️ Prévisualisation — aucune modification avant "Appliquer"
+          ${this.t('optimizer.preview_warning')}
           ${isMulti ? ' · YAML contient plusieurs automations séparées par ---' : ''}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;flex:1;overflow:hidden;">
           <div style="overflow:auto;border-right:1px solid var(--divider-color);">
             <div style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;
                  color:#ef5350;background:rgba(239,83,80,0.05);border-bottom:1px solid var(--divider-color);">
-              ◀ Original
+              ${this.t('optimizer.label_original')}
             </div>
             <pre style="margin:0;padding:14px;font-size:11px;line-height:1.5;overflow:auto;
                  max-height:380px;background:var(--secondary-background-color);">${this.escapeHtml(data.original_yaml || '')}</pre>
@@ -131,7 +131,7 @@
           <div style="overflow:auto;">
             <div style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;
                  color:#66bb6a;background:rgba(102,187,106,0.05);border-bottom:1px solid var(--divider-color);">
-              ▶ Optimisé
+              ${this.t('optimizer.label_optimized')}
             </div>
             <pre style="margin:0;padding:14px;font-size:11px;line-height:1.5;overflow:auto;
                  max-height:380px;outline:1px solid rgba(102,187,106,0.4);outline-offset:-1px;">${this.escapeHtml(yamlText || '')}</pre>
@@ -164,7 +164,7 @@
       <div id="optim-tab-blueprint" class="optim-panel" style="display:none;padding:20px;overflow-y:auto;flex:1;">
         <div style="background:rgba(232,168,56,0.1);border:1px solid #e8a838;border-radius:12px;padding:16px;margin-bottom:16px;">
           <div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px;">
-            🧩 Blueprint correspondant identifié
+            ${this.t('optimizer.blueprint_match')}
           </div>
           ${bp.path ? `<div style="font-family:monospace;font-size:12px;background:var(--secondary-background-color);
               padding:6px 10px;border-radius:6px;margin-bottom:8px;">${this.escapeHtml(bp.path)}</div>` : ''}
@@ -199,7 +199,7 @@
             <div style="display:flex;align-items:center;gap:10px;">
               <ha-icon icon="mdi:auto-fix" style="--mdc-icon-size:28px;color:#7b68ee;"></ha-icon>
               <div>
-                <div style="font-size:16px;font-weight:700;">Optimiseur IA — ${this.escapeHtml(alias)}</div>
+                <div style="font-size:16px;font-weight:700;">${this.t('optimizer.modal_title', {alias: this.escapeHtml(alias)})}</div>
                 <div style="font-size:11px;color:var(--secondary-text-color);">${this.escapeHtml(entityId)}</div>
               </div>
             </div>
@@ -254,7 +254,7 @@
         if (!yamlText || !eid) return;
 
         btn.disabled = true;
-        btn.innerHTML = '<span class="btn-loader"></span> Application…';
+        btn.innerHTML = `<span class="btn-loader"></span> ${this.t('ai.applying')}`;
 
         try {
           const res = await this.hass.callWS({
@@ -270,9 +270,9 @@
               <div style="padding:48px 32px;text-align:center;">
                 <div style="font-size:56px;margin-bottom:20px;
                      filter:drop-shadow(0 4px 12px rgba(123,104,238,0.5));">✅</div>
-                <h2 style="margin-bottom:12px;">Optimisation appliquée !</h2>
+                <h2 style="margin-bottom:12px;">${this.t('optimizer.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.7;margin-bottom:8px;">
-                  ${r.message || r.count + ' automation(s) écrite(s)'}
+                  ${r.message || this.t('optimizer.applied_desc', {result: r.count + ' automation(s) written'})}
                 </p>
                 ${r.backup_path ? `
                 <div style="background:var(--secondary-background-color);padding:10px;border-radius:10px;
@@ -292,12 +292,12 @@
             setTimeout(() => this.scanAutomations(), 1200);
           } else {
             btn.disabled = false;
-            btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
+            btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('optimizer.retry')}`;
             this.showHANotithis._showNotification(this.t('misc.ai_error') + (r.error || this.t('fix.error_unknown')), '', 'haca_error');
           }
         } catch(err) {
           btn.disabled = false;
-          btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
+          btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('optimizer.retry')}`;
           this.showHANotithis._showNotification(this.t('misc.ai_error') + err.message, '', 'haca_error');
         }
       });

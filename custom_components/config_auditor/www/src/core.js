@@ -316,8 +316,42 @@
           errors_partial: "{ok} OK, {errors} error(s)",
           no_similar_entity: "No similar entity found automatically.",
           no_ai_model: "No AI model available. Configure an AI integration in Home Assistant.",
-          ai_error: "Error: "
-        }
+          ai_error: "Error: ",
+          chat_greeting: "Hello! I can help you analyze your automations, explain configuration errors, or suggest improvements. How can I help you?",
+          history_sparkline: "History…",
+          ai_context: "HACA context: {total} issues found ({automations} automations, {scripts} scripts). ",
+        },
+        graph: {
+          title: "Dependency Graph",
+          legend_scene: "Scene", legend_entity: "Entity", legend_device: "Device",
+          no_issues: "✅ No issues detected", view_state: "View state",
+          type_scene: "Scene", type_entity: "Entity", type_device: "Device",
+        },
+        tables: {
+          scene: "Scene", entities_controlled: "Controlled entities",
+          device: "Device", states: "States", triggers: "Triggers",
+          actions_recursive: "Actions", full_view: "Full view",
+        },
+        complexity: {
+          god_automation: "🚨 God Automation", complex: "⚠️ Complex",
+          medium: "🔶 Medium", simple: "✅ Simple",
+        },
+        optimizer: {
+          loading: "✨ Optimizing…",
+          loading_sub: "Analysis · Splitting · Modernization · Blueprints",
+          tab_split: "Splitting", patterns_detected: "Detected patterns",
+          preview_warning: "⚠️ Preview — no changes before \"Apply\"",
+          label_original: "◀ Original", label_optimized: "▶ Optimized",
+          blueprint_match: "🧩 Matching blueprint identified",
+          modal_title: "AI Optimizer — {alias}", applied_title: "Optimization applied!",
+          retry: "Retry",
+        },
+        config: {
+          reset_confirm: "Reset all settings to default values?",
+          resetting: "Resetting…",
+          saved_success: "✅ Configuration saved successfully.",
+          saved_restart: "Configuration saved. Restart HA to apply event monitoring change.",
+        },
       };
     }
 
@@ -459,11 +493,20 @@
 
       try {
         // 1. Traductions : depuis le cache module si disponible, sinon charger
+        // Langue du profil utilisateur HA (this._hass.language) — priorité sur la langue système
+        const userLanguage = this._hass.language || 'en';
+
+        // Invalider le cache si la langue a changé depuis la dernière session
+        if (_HC.translations && _HC.language && _HC.language !== userLanguage) {
+          _HC.translations = null;
+          _HC.language = null;
+        }
+
         if (_HC.translations) {
           this._translations = _HC.translations;
-          this._language = _HC.language || 'en';
+          this._language = _HC.language || userLanguage;
         } else {
-          await this.loadTranslations();
+          await this.loadTranslations(userLanguage);
           _HC.translations = this._translations;
           _HC.language = this._language;
         }
@@ -577,13 +620,16 @@
       }
     }
 
-    async loadTranslations() {
+    async loadTranslations(language) {
       if (!this._hass) return;
       try {
-        const result = await this._hass.callWS({ type: 'haca/get_translations' });
+        // On passe la langue du profil utilisateur au backend pour éviter
+        // d'utiliser hass.config.language (langue système, pas celle de l'utilisateur)
+        const lang = language || this._hass.language || 'en';
+        const result = await this._hass.callWS({ type: 'haca/get_translations', language: lang });
         if (result && result.translations) {
           this._translations = result.translations;
-          this._language = result.language || 'en';
+          this._language = result.language || lang;
         }
       } catch (error) {
         console.warn('[HACA] Could not load translations, using defaults:', error);
@@ -1125,7 +1171,7 @@
                     </linearGradient>
                   </defs>
                   <text x="50%" y="50%" text-anchor="middle" fill="var(--secondary-text-color)"
-                    font-size="10" dominant-baseline="middle">Historique…</text>
+                    font-size="10" dominant-baseline="middle">${this.t('misc.history_sparkline')}</text>
                 </svg>
               </div>
             </div>
@@ -1324,8 +1370,8 @@
                   <button class="filter-chip" data-filter="high" data-target="issues-automations">${this.t('filter.high')}</button>
                   <button class="filter-chip" data-filter="medium" data-target="issues-automations">${this.t('filter.medium')}</button>
                   <button class="filter-chip" data-filter="low" data-target="issues-automations">${this.t('filter.low')}</button>
-                  <button class="filter-chip" data-filter="ghost" data-target="issues-automations" title="Automations fantômes — actives mais jamais déclenchées">
-                    👻 Fantômes
+                  <button class="filter-chip" data-filter="ghost" data-target="issues-automations" title="${this.t('issues.ghost_chip_title')}">
+                    ${this.t('issues.ghost_chip')}
                   </button>
                   <button class="filter-chip" data-filter="duplicate" data-target="issues-automations" title="Doublons exacts et probables">
                     🔁 Doublons
@@ -1345,9 +1391,9 @@
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
                       <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;cursor:pointer;" data-sort="alias">Automation ↕</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;cursor:pointer;" data-sort="score">Score ↕</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Déclencheurs">🔀</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="${this.t('tables.triggers')}">🔀</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Conditions">🔍</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Actions (récursif)">▶</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="${this.t('tables.actions_recursive')}">▶</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Templates">📝</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Niveau</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;"></th>
@@ -1394,7 +1440,7 @@
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
                       <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">Script</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Score</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Actions (récursif)">▶ Actions</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="${this.t('tables.actions_recursive')}">▶ ${this.t('tables.actions_recursive')}</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Templates">📝 Templates</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Niveau</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;"></th>
@@ -1439,8 +1485,8 @@
                 <div style="padding:0 20px 16px;overflow-x:auto;">
                   <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:300px;">
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
-                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">Scène</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Entités contrôlées</th>
+                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.scene')}</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.entities_controlled')}</th>
                     </tr></thead>
                     <tbody id="scene-stats-tbody">
                       <tr><td colspan="2" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_stats')}</td></tr>
@@ -1483,13 +1529,13 @@
                     Batteries détectées — vue rapide
                   </span>
                   <button id="goto-batteries-tab" style="background:var(--secondary-background-color);color:var(--primary-color);border:1px solid var(--primary-color);font-size:12px;padding:4px 12px;border-radius:8px;cursor:pointer;">
-                    <ha-icon icon="mdi:open-in-new" style="--mdc-icon-size:14px;"></ha-icon> Vue complète
+                    <ha-icon icon="mdi:open-in-new" style="--mdc-icon-size:14px;"></ha-icon> ${this.t('tables.full_view')}
                   </button>
                 </div>
                 <div style="padding:0 20px 16px;overflow-x:auto;">
                   <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:320px;">
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
-                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">Appareil</th>
+                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.device')}</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Niveau</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Statut</th>
                     </tr></thead>
@@ -1698,17 +1744,17 @@
             <!-- Toolbar -->
             <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--divider-color);flex-shrink:0;flex-wrap:wrap;background:var(--secondary-background-color);">
               <ha-icon icon="mdi:graph" style="color:var(--primary-color);"></ha-icon>
-              <strong style="font-size:14px;">Graphe de Dépendances</strong>
+              <strong style="font-size:14px;">${this.t('graph.title')}</strong>
               <div style="flex:1;"></div>
 
               <!-- Legend -->
               <div id="graph-legend" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;">
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#7b68ee;display:inline-block;"></span>Automation</span>
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#20b2aa;display:inline-block;"></span>Script</span>
-                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ffa500;display:inline-block;"></span>Scène</span>
-                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#6dbf6d;display:inline-block;"></span>Entité</span>
+                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ffa500;display:inline-block;"></span>${this.t('graph.legend_scene')}</span>
+                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#6dbf6d;display:inline-block;"></span>${this.t('graph.legend_entity')}</span>
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#e8a838;display:inline-block;"></span>Blueprint</span>
-                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#a0a0b0;display:inline-block;"></span>Appareil</span>
+                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#a0a0b0;display:inline-block;"></span>${this.t('graph.legend_device')}</span>
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ef5350;display:inline-block;border:2px solid #b71c1c;"></span>Issue</span>
               </div>
 
@@ -1825,7 +1871,7 @@
               <div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;">
                 <div style="background:var(--secondary-background-color);border-radius:12px;padding:12px 16px;max-width:85%;align-self:flex-start;">
                   <div style="font-size:11px;color:var(--secondary-text-color);margin-bottom:4px;">${this.t('misc.ai_assistant')}</div>
-                  <div>Bonjour ! Je peux vous aider à analyser vos automations, expliquer des erreurs de configuration, ou suggérer des améliorations. Comment puis-je vous aider ?</div>
+                  <div>${this.t('misc.chat_greeting')}</div>
                 </div>
               </div>
               <div style="padding:12px 20px;border-top:1px solid var(--divider-color);flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
@@ -2263,7 +2309,7 @@
       // Build context from last scan results
       const stats = this._lastStats || {};
       const ctx = stats.total_issues != null
-        ? `Contexte HACA: ${stats.total_issues} issues trouvées (${stats.automations_count || 0} automations, ${stats.scripts_count || 0} scripts). `
+        ? this.t('misc.ai_context', {total: stats.total_issues, automations: stats.automations_count || 0, scripts: stats.scripts_count || 0})
         : '';
 
       // Show typing indicator
@@ -2306,7 +2352,7 @@
             const wsResult = await this._hass.callWS({
               type: 'conversation/process',
               text: ctx + text,
-              language: this._hass.language || 'fr',
+              language: this._hass.language || this._language || 'en',
               conversation_id: this._chatConvId || null,
             });
             this._chatConvId = wsResult.conversation_id;
@@ -2357,7 +2403,7 @@
       try {
         const result = await this._hass.callWS({ type: 'haca/get_options' });
         const options = result.options || {};
-        const lang = this._language || 'fr';
+        const lang = this._language || 'en';
 
         el.innerHTML = renderConfigTab(options, lang);
         this._attachConfigListeners(el, options);
@@ -2369,7 +2415,7 @@
     }
 
     _attachConfigListeners(el, options) {
-      const lang = this._language || 'fr';
+      const lang = this._language || 'en';
       const t = (fr, en) => lang === 'fr' ? fr : en;
 
       // Compteurs initiaux
@@ -2420,12 +2466,12 @@
       // Bouton Réinitialiser
       el.querySelector('#cfg-reset-btn')?.addEventListener('click', () => {
         if (confirm(t(
-          'Réinitialiser tous les paramètres aux valeurs par défaut ?',
+          this.t('config.reset_confirm'),
           'Reset all settings to default values?'
         ))) {
           el.innerHTML = `<div style="padding:40px;text-align:center;color:var(--secondary-text-color);">
           <ha-icon icon="mdi:loading" style="--mdc-icon-size:32px;animation:haca-spin 1s linear infinite;"></ha-icon>
-          <div style="margin-top:12px;">${t('Réinitialisation…', 'Resetting…')}</div>
+          <div style="margin-top:12px;">${this.t('config.resetting')}</div>
         </div>`;
           this.saveConfig(DEFAULT_OPTIONS).then(() => this.loadConfigTab());
         }
@@ -2446,7 +2492,7 @@
     }
 
     async _doSaveConfig(el) {
-      const lang = this._language || 'fr';
+      const lang = this._language || 'en';
       const t = (fr, en) => lang === 'fr' ? fr : en;
       const statusEl = el.querySelector('#cfg-save-status');
       const saveBtn = el.querySelector('#cfg-save-btn');
@@ -2469,10 +2515,9 @@
           statusEl.className = 'cfg-save-status success';
           statusEl.textContent = monitoringChanged
             ? '✅ ' + t(
-              'Configuration enregistrée. Redémarrez HA pour appliquer le changement de monitoring événementiel.',
-              'Configuration saved. Restart HA to apply event monitoring change.'
+              this.t('config.saved_restart'), this.t('config.saved_restart')
             )
-            : '✅ ' + t('Configuration enregistrée avec succès.', 'Configuration saved successfully.');
+            : this.t('config.saved_success');
           statusEl.style.display = 'block';
           this._lastSavedOptions = options;
           setTimeout(() => { statusEl.style.display = 'none'; }, monitoringChanged ? 6000 : 3500);
@@ -2702,10 +2747,10 @@
         <thead>
           <tr style="border-bottom:2px solid var(--divider-color);text-align:left;">
             <th style="padding:8px 12px;width:32px;">
-              <input type="checkbox" id="recorder-select-all" title="Tout sélectionner">
+              <input type="checkbox" id="recorder-select-all" title="${this.t('recorder.select_all')}">
             </th>
             <th style="padding:8px 12px;">Entity ID</th>
-            <th style="padding:8px 12px;text-align:right;">États</th>
+            <th style="padding:8px 12px;text-align:right;">${this.t('tables.states')}</th>
             <th style="padding:8px 12px;text-align:right;">Stats</th>
             <th style="padding:8px 12px;text-align:right;">Taille est.</th>
             <th style="padding:8px 12px;text-align:center;">Action</th>
@@ -2737,7 +2782,7 @@
       </table>
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <span style="font-size:12px;color:var(--secondary-text-color);">
-          Total estimé : <strong style="color:#ff7043;">~${mb} MB</strong> sur ${count} entité(s)
+          ${this.t('recorder.purge_estimated', {mb, count})}
         </span>
         <button id="recorder-purge-selected-btn" style="background:#ff7043;color:#fff;font-size:12px;padding:6px 14px;">
           <ha-icon icon="mdi:delete-sweep-outline" style="--mdc-icon-size:15px;"></ha-icon> ${this.t('misc.purge_selection')}
@@ -2866,7 +2911,7 @@
           this._removeOrphansFromUI(entityIds);
           // No automatic rescan — the DB WAL checkpoint needs time to propagate.
           // The UI is updated optimistically via _removeOrphansFromUI already.
-          this._showToast(`✅ ${entityIds.length} entité(s) purgée(s) de la base Recorder.`, 'success');
+          this._showToast(this.t('recorder.purge_success', {count: entityIds.length}), 'success');
         } catch (err) {
           console.error('[HACA Purge] callWS error:', err);
           modal.remove();
