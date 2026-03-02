@@ -45,7 +45,7 @@ Au fil du temps, une installation Home Assistant accumule des automatisations ob
 2. URL : `https://github.com/JeanMarc-Labs/ha-config-auditor` · Catégorie : **Intégration**
 3. Recherchez **H.A.C.A** → **Télécharger**
 4. Redémarrez Home Assistant (redémarrage complet obligatoire)
-5. **Paramètres → Appareils & Services → + Ajouter une intégration** → cherchez **H.A.C.A**
+5. **Paramètres → Appareils & Services → + Ajouter une intégration** → cherchez **config_auditor**
 
 > ✅ Le panel H.A.C.A apparaît dans la sidebar. Toute la configuration se fait depuis ce panel.
 
