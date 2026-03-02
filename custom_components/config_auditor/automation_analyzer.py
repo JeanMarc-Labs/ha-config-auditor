@@ -1333,7 +1333,7 @@ class AutomationAnalyzer:
 
                 # Check for missing or empty inputs
                 inputs = blueprint.get("input", {}) if isinstance(blueprint, dict) else {}
-
+                _LOGGER.info("Blueprints: %s", inputs)
                 if not inputs:
                     self.issues.append({
                         "entity_id": entity_id,

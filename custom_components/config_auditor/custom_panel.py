@@ -28,7 +28,13 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     le panel frontend à chaque setup via update=True.
     """
     from .const import VERSION as _VERSION
-    cache_bust = _VERSION.replace(".", "_")
+    # Utiliser le hash du bundle JS comme cache_bust pour forcer le rechargement
+    # du navigateur à chaque build (évite le cache navigateur avec l'ancien JS)
+    hash_file = Path(__file__).parent / "www" / "haca-panel.hash"
+    if hash_file.exists():
+        cache_bust = hash_file.read_text().strip()
+    else:
+        cache_bust = _VERSION.replace(".", "_")
 
     try:
         integration_dir = Path(__file__).parent

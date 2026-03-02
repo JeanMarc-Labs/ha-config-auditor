@@ -707,6 +707,7 @@ async def handle_delete_history(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "haca/get_translations",
+        vol.Optional("language"): str,
     }
 )
 @websocket_api.async_response
@@ -717,8 +718,9 @@ async def handle_get_translations(
 ) -> None:
     """Handle get translations request for the panel."""
     try:
-        # Get the current language from Home Assistant
-        language = hass.config.language
+        # Priorité : langue envoyée par le frontend (profil utilisateur HA)
+        # Fallback : langue système HA (hass.config.language)
+        language = msg.get("language") or hass.config.language
         
         # Build path to translations file
         integration_path = Path(__file__).parent
