@@ -32,3 +32,5 @@ echo "// HACA-BUILD: $HASH  $(date -u +%Y-%m-%dT%H:%M:%SZ)" | cat - "$TMP" > "$O
 rm "$TMP"
 
 echo "✅ haca-panel.js built — hash: $HASH  ($(wc -l < "$OUT") lines)"
+# Write hash to file so custom_panel.py can use it for proper cache-busting
+echo "$HASH" > "$SCRIPT_DIR/haca-panel.hash"

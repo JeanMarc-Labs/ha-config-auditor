@@ -1,4 +1,4 @@
-// HACA-BUILD: a4832d0c  2026-03-02T09:53:14Z
+// HACA-BUILD: a83d91d5  2026-03-02T15:26:09Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -110,7 +110,7 @@ var ISSUE_TYPES_BY_CATEGORY = [
 // ─── Rendering ────────────────────────────────────────────────────────────
 
 function renderConfigTab(options, lang) {
-  lang = lang || 'fr';
+  lang = lang || 'en';
   var t = function (fr, en) { return lang === 'fr' ? fr : en; };
   var excludedTypes = new Set(options.excluded_issue_types || []);
 
@@ -685,8 +685,42 @@ function _updateTypeCounts(el) {
           errors_partial: "{ok} OK, {errors} error(s)",
           no_similar_entity: "No similar entity found automatically.",
           no_ai_model: "No AI model available. Configure an AI integration in Home Assistant.",
-          ai_error: "Error: "
-        }
+          ai_error: "Error: ",
+          chat_greeting: "Hello! I can help you analyze your automations, explain configuration errors, or suggest improvements. How can I help you?",
+          history_sparkline: "History…",
+          ai_context: "HACA context: {total} issues found ({automations} automations, {scripts} scripts). ",
+        },
+        graph: {
+          title: "Dependency Graph",
+          legend_scene: "Scene", legend_entity: "Entity", legend_device: "Device",
+          no_issues: "✅ No issues detected", view_state: "View state",
+          type_scene: "Scene", type_entity: "Entity", type_device: "Device",
+        },
+        tables: {
+          scene: "Scene", entities_controlled: "Controlled entities",
+          device: "Device", states: "States", triggers: "Triggers",
+          actions_recursive: "Actions", full_view: "Full view",
+        },
+        complexity: {
+          god_automation: "🚨 God Automation", complex: "⚠️ Complex",
+          medium: "🔶 Medium", simple: "✅ Simple",
+        },
+        optimizer: {
+          loading: "✨ Optimizing…",
+          loading_sub: "Analysis · Splitting · Modernization · Blueprints",
+          tab_split: "Splitting", patterns_detected: "Detected patterns",
+          preview_warning: "⚠️ Preview — no changes before \"Apply\"",
+          label_original: "◀ Original", label_optimized: "▶ Optimized",
+          blueprint_match: "🧩 Matching blueprint identified",
+          modal_title: "AI Optimizer — {alias}", applied_title: "Optimization applied!",
+          retry: "Retry",
+        },
+        config: {
+          reset_confirm: "Reset all settings to default values?",
+          resetting: "Resetting…",
+          saved_success: "✅ Configuration saved successfully.",
+          saved_restart: "Configuration saved. Restart HA to apply event monitoring change.",
+        },
       };
     }
 
@@ -828,11 +862,20 @@ function _updateTypeCounts(el) {
 
       try {
         // 1. Traductions : depuis le cache module si disponible, sinon charger
+        // Langue du profil utilisateur HA (this._hass.language) — priorité sur la langue système
+        const userLanguage = this._hass.language || 'en';
+
+        // Invalider le cache si la langue a changé depuis la dernière session
+        if (_HC.translations && _HC.language && _HC.language !== userLanguage) {
+          _HC.translations = null;
+          _HC.language = null;
+        }
+
         if (_HC.translations) {
           this._translations = _HC.translations;
-          this._language = _HC.language || 'en';
+          this._language = _HC.language || userLanguage;
         } else {
-          await this.loadTranslations();
+          await this.loadTranslations(userLanguage);
           _HC.translations = this._translations;
           _HC.language = this._language;
         }
@@ -946,13 +989,16 @@ function _updateTypeCounts(el) {
       }
     }
 
-    async loadTranslations() {
+    async loadTranslations(language) {
       if (!this._hass) return;
       try {
-        const result = await this._hass.callWS({ type: 'haca/get_translations' });
+        // On passe la langue du profil utilisateur au backend pour éviter
+        // d'utiliser hass.config.language (langue système, pas celle de l'utilisateur)
+        const lang = language || this._hass.language || 'en';
+        const result = await this._hass.callWS({ type: 'haca/get_translations', language: lang });
         if (result && result.translations) {
           this._translations = result.translations;
-          this._language = result.language || 'en';
+          this._language = result.language || lang;
         }
       } catch (error) {
         console.warn('[HACA] Could not load translations, using defaults:', error);
@@ -1494,7 +1540,7 @@ function _updateTypeCounts(el) {
                     </linearGradient>
                   </defs>
                   <text x="50%" y="50%" text-anchor="middle" fill="var(--secondary-text-color)"
-                    font-size="10" dominant-baseline="middle">Historique…</text>
+                    font-size="10" dominant-baseline="middle">${this.t('misc.history_sparkline')}</text>
                 </svg>
               </div>
             </div>
@@ -1693,8 +1739,8 @@ function _updateTypeCounts(el) {
                   <button class="filter-chip" data-filter="high" data-target="issues-automations">${this.t('filter.high')}</button>
                   <button class="filter-chip" data-filter="medium" data-target="issues-automations">${this.t('filter.medium')}</button>
                   <button class="filter-chip" data-filter="low" data-target="issues-automations">${this.t('filter.low')}</button>
-                  <button class="filter-chip" data-filter="ghost" data-target="issues-automations" title="Automations fantômes — actives mais jamais déclenchées">
-                    👻 Fantômes
+                  <button class="filter-chip" data-filter="ghost" data-target="issues-automations" title="${this.t('issues.ghost_chip_title')}">
+                    ${this.t('issues.ghost_chip')}
                   </button>
                   <button class="filter-chip" data-filter="duplicate" data-target="issues-automations" title="Doublons exacts et probables">
                     🔁 Doublons
@@ -1714,9 +1760,9 @@ function _updateTypeCounts(el) {
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
                       <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;cursor:pointer;" data-sort="alias">Automation ↕</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;cursor:pointer;" data-sort="score">Score ↕</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Déclencheurs">🔀</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="${this.t('tables.triggers')}">🔀</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Conditions">🔍</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Actions (récursif)">▶</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="${this.t('tables.actions_recursive')}">▶</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Templates">📝</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Niveau</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;"></th>
@@ -1763,7 +1809,7 @@ function _updateTypeCounts(el) {
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
                       <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">Script</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Score</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Actions (récursif)">▶ Actions</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="${this.t('tables.actions_recursive')}">▶ ${this.t('tables.actions_recursive')}</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;" title="Templates">📝 Templates</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Niveau</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;"></th>
@@ -1808,8 +1854,8 @@ function _updateTypeCounts(el) {
                 <div style="padding:0 20px 16px;overflow-x:auto;">
                   <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:300px;">
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
-                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">Scène</th>
-                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Entités contrôlées</th>
+                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.scene')}</th>
+                      <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.entities_controlled')}</th>
                     </tr></thead>
                     <tbody id="scene-stats-tbody">
                       <tr><td colspan="2" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_stats')}</td></tr>
@@ -1852,13 +1898,13 @@ function _updateTypeCounts(el) {
                     Batteries détectées — vue rapide
                   </span>
                   <button id="goto-batteries-tab" style="background:var(--secondary-background-color);color:var(--primary-color);border:1px solid var(--primary-color);font-size:12px;padding:4px 12px;border-radius:8px;cursor:pointer;">
-                    <ha-icon icon="mdi:open-in-new" style="--mdc-icon-size:14px;"></ha-icon> Vue complète
+                    <ha-icon icon="mdi:open-in-new" style="--mdc-icon-size:14px;"></ha-icon> ${this.t('tables.full_view')}
                   </button>
                 </div>
                 <div style="padding:0 20px 16px;overflow-x:auto;">
                   <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:320px;">
                     <thead><tr style="border-bottom:2px solid var(--divider-color);">
-                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">Appareil</th>
+                      <th style="padding:6px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.device')}</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Niveau</th>
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;">Statut</th>
                     </tr></thead>
@@ -2067,17 +2113,17 @@ function _updateTypeCounts(el) {
             <!-- Toolbar -->
             <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--divider-color);flex-shrink:0;flex-wrap:wrap;background:var(--secondary-background-color);">
               <ha-icon icon="mdi:graph" style="color:var(--primary-color);"></ha-icon>
-              <strong style="font-size:14px;">Graphe de Dépendances</strong>
+              <strong style="font-size:14px;">${this.t('graph.title')}</strong>
               <div style="flex:1;"></div>
 
               <!-- Legend -->
               <div id="graph-legend" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;">
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#7b68ee;display:inline-block;"></span>Automation</span>
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#20b2aa;display:inline-block;"></span>Script</span>
-                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ffa500;display:inline-block;"></span>Scène</span>
-                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#6dbf6d;display:inline-block;"></span>Entité</span>
+                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ffa500;display:inline-block;"></span>${this.t('graph.legend_scene')}</span>
+                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#6dbf6d;display:inline-block;"></span>${this.t('graph.legend_entity')}</span>
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#e8a838;display:inline-block;"></span>Blueprint</span>
-                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#a0a0b0;display:inline-block;"></span>Appareil</span>
+                <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#a0a0b0;display:inline-block;"></span>${this.t('graph.legend_device')}</span>
                 <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ef5350;display:inline-block;border:2px solid #b71c1c;"></span>Issue</span>
               </div>
 
@@ -2194,7 +2240,7 @@ function _updateTypeCounts(el) {
               <div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;">
                 <div style="background:var(--secondary-background-color);border-radius:12px;padding:12px 16px;max-width:85%;align-self:flex-start;">
                   <div style="font-size:11px;color:var(--secondary-text-color);margin-bottom:4px;">${this.t('misc.ai_assistant')}</div>
-                  <div>Bonjour ! Je peux vous aider à analyser vos automations, expliquer des erreurs de configuration, ou suggérer des améliorations. Comment puis-je vous aider ?</div>
+                  <div>${this.t('misc.chat_greeting')}</div>
                 </div>
               </div>
               <div style="padding:12px 20px;border-top:1px solid var(--divider-color);flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
@@ -2632,7 +2678,7 @@ function _updateTypeCounts(el) {
       // Build context from last scan results
       const stats = this._lastStats || {};
       const ctx = stats.total_issues != null
-        ? `Contexte HACA: ${stats.total_issues} issues trouvées (${stats.automations_count || 0} automations, ${stats.scripts_count || 0} scripts). `
+        ? this.t('misc.ai_context', {total: stats.total_issues, automations: stats.automations_count || 0, scripts: stats.scripts_count || 0})
         : '';
 
       // Show typing indicator
@@ -2675,7 +2721,7 @@ function _updateTypeCounts(el) {
             const wsResult = await this._hass.callWS({
               type: 'conversation/process',
               text: ctx + text,
-              language: this._hass.language || 'fr',
+              language: this._hass.language || this._language || 'en',
               conversation_id: this._chatConvId || null,
             });
             this._chatConvId = wsResult.conversation_id;
@@ -2726,7 +2772,7 @@ function _updateTypeCounts(el) {
       try {
         const result = await this._hass.callWS({ type: 'haca/get_options' });
         const options = result.options || {};
-        const lang = this._language || 'fr';
+        const lang = this._language || 'en';
 
         el.innerHTML = renderConfigTab(options, lang);
         this._attachConfigListeners(el, options);
@@ -2738,7 +2784,7 @@ function _updateTypeCounts(el) {
     }
 
     _attachConfigListeners(el, options) {
-      const lang = this._language || 'fr';
+      const lang = this._language || 'en';
       const t = (fr, en) => lang === 'fr' ? fr : en;
 
       // Compteurs initiaux
@@ -2789,12 +2835,12 @@ function _updateTypeCounts(el) {
       // Bouton Réinitialiser
       el.querySelector('#cfg-reset-btn')?.addEventListener('click', () => {
         if (confirm(t(
-          'Réinitialiser tous les paramètres aux valeurs par défaut ?',
+          this.t('config.reset_confirm'),
           'Reset all settings to default values?'
         ))) {
           el.innerHTML = `<div style="padding:40px;text-align:center;color:var(--secondary-text-color);">
           <ha-icon icon="mdi:loading" style="--mdc-icon-size:32px;animation:haca-spin 1s linear infinite;"></ha-icon>
-          <div style="margin-top:12px;">${t('Réinitialisation…', 'Resetting…')}</div>
+          <div style="margin-top:12px;">${this.t('config.resetting')}</div>
         </div>`;
           this.saveConfig(DEFAULT_OPTIONS).then(() => this.loadConfigTab());
         }
@@ -2815,7 +2861,7 @@ function _updateTypeCounts(el) {
     }
 
     async _doSaveConfig(el) {
-      const lang = this._language || 'fr';
+      const lang = this._language || 'en';
       const t = (fr, en) => lang === 'fr' ? fr : en;
       const statusEl = el.querySelector('#cfg-save-status');
       const saveBtn = el.querySelector('#cfg-save-btn');
@@ -2838,10 +2884,9 @@ function _updateTypeCounts(el) {
           statusEl.className = 'cfg-save-status success';
           statusEl.textContent = monitoringChanged
             ? '✅ ' + t(
-              'Configuration enregistrée. Redémarrez HA pour appliquer le changement de monitoring événementiel.',
-              'Configuration saved. Restart HA to apply event monitoring change.'
+              this.t('config.saved_restart'), this.t('config.saved_restart')
             )
-            : '✅ ' + t('Configuration enregistrée avec succès.', 'Configuration saved successfully.');
+            : this.t('config.saved_success');
           statusEl.style.display = 'block';
           this._lastSavedOptions = options;
           setTimeout(() => { statusEl.style.display = 'none'; }, monitoringChanged ? 6000 : 3500);
@@ -3071,10 +3116,10 @@ function _updateTypeCounts(el) {
         <thead>
           <tr style="border-bottom:2px solid var(--divider-color);text-align:left;">
             <th style="padding:8px 12px;width:32px;">
-              <input type="checkbox" id="recorder-select-all" title="Tout sélectionner">
+              <input type="checkbox" id="recorder-select-all" title="${this.t('recorder.select_all')}">
             </th>
             <th style="padding:8px 12px;">Entity ID</th>
-            <th style="padding:8px 12px;text-align:right;">États</th>
+            <th style="padding:8px 12px;text-align:right;">${this.t('tables.states')}</th>
             <th style="padding:8px 12px;text-align:right;">Stats</th>
             <th style="padding:8px 12px;text-align:right;">Taille est.</th>
             <th style="padding:8px 12px;text-align:center;">Action</th>
@@ -3106,7 +3151,7 @@ function _updateTypeCounts(el) {
       </table>
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <span style="font-size:12px;color:var(--secondary-text-color);">
-          Total estimé : <strong style="color:#ff7043;">~${mb} MB</strong> sur ${count} entité(s)
+          ${this.t('recorder.purge_estimated', {mb, count})}
         </span>
         <button id="recorder-purge-selected-btn" style="background:#ff7043;color:#fff;font-size:12px;padding:6px 14px;">
           <ha-icon icon="mdi:delete-sweep-outline" style="--mdc-icon-size:15px;"></ha-icon> ${this.t('misc.purge_selection')}
@@ -3235,7 +3280,7 @@ function _updateTypeCounts(el) {
           this._removeOrphansFromUI(entityIds);
           // No automatic rescan — the DB WAL checkpoint needs time to propagate.
           // The UI is updated optimistically via _removeOrphansFromUI already.
-          this._showToast(`✅ ${entityIds.length} entité(s) purgée(s) de la base Recorder.`, 'success');
+          this._showToast(this.t('recorder.purge_success', {count: entityIds.length}), 'success');
         } catch (err) {
           console.error('[HACA Purge] callWS error:', err);
           modal.remove();
@@ -4071,10 +4116,10 @@ function _updateTypeCounts(el) {
     const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px;">
         <div class="loader"></div>
-        <div style="font-size:18px;font-weight:600;">✨ Optimisation en cours…</div>
+        <div style="font-size:18px;font-weight:600;">${this.t('optimizer.loading')}</div>
         <div style="font-size:13px;color:var(--secondary-text-color);">
           ${this.escapeHtml(alias)}<br>
-          <span style="font-size:11px;opacity:0.7;">Analyse · Découpage · Modernisation · Blueprints</span>
+          <span style="font-size:11px;opacity:0.7;">${this.t('optimizer.loading_sub')}</span>
         </div>
       </div>
     `);
@@ -4117,7 +4162,7 @@ function _updateTypeCounts(el) {
 
     const tabs = [
       { id: 'optim-tab-analysis',   icon: 'mdi:magnify',       label: 'Diagnostic',     show: true },
-      { id: 'optim-tab-split',      icon: 'mdi:scissors-cutting', label: 'Découpage',   show: hasSplit },
+      { id: 'optim-tab-split',      icon: 'mdi:scissors-cutting', label: this.t('optimizer.tab_split'),   show: hasSplit },
       { id: 'optim-tab-modern',     icon: 'mdi:code-braces',   label: 'Modernisation',  show: hasMod },
       { id: 'optim-tab-blueprint',  icon: 'mdi:puzzle',        label: 'Blueprint',      show: hasBlueprint },
     ].filter(t => t.show);
@@ -4135,10 +4180,10 @@ function _updateTypeCounts(el) {
 
     // ── Score badge ────────────────────────────────────────────────────
     const [scoreColor, levelLabel] =
-      score >= 50 ? ['#ef5350', '🚨 God Automation'] :
-      score >= 30 ? ['#ffa726', '⚠️ Complexe']       :
-      score >= 15 ? ['#ffd54f', '🔶 Moyen']           :
-                    ['#66bb6a', '✅ Simple'];
+      score >= 50 ? ['#ef5350', this.t('complexity.god_automation')] :
+      score >= 30 ? ['#ffa726', this.t('complexity.complex')]       :
+      score >= 15 ? ['#ffd54f', this.t('complexity.medium')]           :
+                    ['#66bb6a', this.t('complexity.simple')];
 
     // ── Patterns pills ─────────────────────────────────────────────────
     const patternPills = patterns.map(p =>
@@ -4152,7 +4197,7 @@ function _updateTypeCounts(el) {
         ${patterns.length ? `
         <div style="margin-bottom:16px;">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;
-               color:var(--secondary-text-color);margin-bottom:8px;">Patterns détectés</div>
+               color:var(--secondary-text-color);margin-bottom:8px;">${this.t('optimizer.patterns_detected')}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">${patternPills}</div>
         </div>` : ''}
         <div style="background:var(--secondary-background-color);padding:18px;border-radius:12px;
@@ -4177,14 +4222,14 @@ function _updateTypeCounts(el) {
         <div style="padding:8px 16px;background:rgba(var(--rgb-primary-color,33,150,243),0.06);
              font-size:12px;color:var(--secondary-text-color);border-bottom:1px solid var(--divider-color);
              flex-shrink:0;">
-          ⚠️ Prévisualisation — aucune modification avant "Appliquer"
+          ${this.t('optimizer.preview_warning')}
           ${isMulti ? ' · YAML contient plusieurs automations séparées par ---' : ''}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;flex:1;overflow:hidden;">
           <div style="overflow:auto;border-right:1px solid var(--divider-color);">
             <div style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;
                  color:#ef5350;background:rgba(239,83,80,0.05);border-bottom:1px solid var(--divider-color);">
-              ◀ Original
+              ${this.t('optimizer.label_original')}
             </div>
             <pre style="margin:0;padding:14px;font-size:11px;line-height:1.5;overflow:auto;
                  max-height:380px;background:var(--secondary-background-color);">${this.escapeHtml(data.original_yaml || '')}</pre>
@@ -4192,7 +4237,7 @@ function _updateTypeCounts(el) {
           <div style="overflow:auto;">
             <div style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;
                  color:#66bb6a;background:rgba(102,187,106,0.05);border-bottom:1px solid var(--divider-color);">
-              ▶ Optimisé
+              ${this.t('optimizer.label_optimized')}
             </div>
             <pre style="margin:0;padding:14px;font-size:11px;line-height:1.5;overflow:auto;
                  max-height:380px;outline:1px solid rgba(102,187,106,0.4);outline-offset:-1px;">${this.escapeHtml(yamlText || '')}</pre>
@@ -4225,7 +4270,7 @@ function _updateTypeCounts(el) {
       <div id="optim-tab-blueprint" class="optim-panel" style="display:none;padding:20px;overflow-y:auto;flex:1;">
         <div style="background:rgba(232,168,56,0.1);border:1px solid #e8a838;border-radius:12px;padding:16px;margin-bottom:16px;">
           <div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px;">
-            🧩 Blueprint correspondant identifié
+            ${this.t('optimizer.blueprint_match')}
           </div>
           ${bp.path ? `<div style="font-family:monospace;font-size:12px;background:var(--secondary-background-color);
               padding:6px 10px;border-radius:6px;margin-bottom:8px;">${this.escapeHtml(bp.path)}</div>` : ''}
@@ -4260,7 +4305,7 @@ function _updateTypeCounts(el) {
             <div style="display:flex;align-items:center;gap:10px;">
               <ha-icon icon="mdi:auto-fix" style="--mdc-icon-size:28px;color:#7b68ee;"></ha-icon>
               <div>
-                <div style="font-size:16px;font-weight:700;">Optimiseur IA — ${this.escapeHtml(alias)}</div>
+                <div style="font-size:16px;font-weight:700;">${this.t('optimizer.modal_title', {alias: this.escapeHtml(alias)})}</div>
                 <div style="font-size:11px;color:var(--secondary-text-color);">${this.escapeHtml(entityId)}</div>
               </div>
             </div>
@@ -4315,7 +4360,7 @@ function _updateTypeCounts(el) {
         if (!yamlText || !eid) return;
 
         btn.disabled = true;
-        btn.innerHTML = '<span class="btn-loader"></span> Application…';
+        btn.innerHTML = `<span class="btn-loader"></span> ${this.t('ai.applying')}`;
 
         try {
           const res = await this.hass.callWS({
@@ -4331,9 +4376,9 @@ function _updateTypeCounts(el) {
               <div style="padding:48px 32px;text-align:center;">
                 <div style="font-size:56px;margin-bottom:20px;
                      filter:drop-shadow(0 4px 12px rgba(123,104,238,0.5));">✅</div>
-                <h2 style="margin-bottom:12px;">Optimisation appliquée !</h2>
+                <h2 style="margin-bottom:12px;">${this.t('optimizer.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.7;margin-bottom:8px;">
-                  ${r.message || r.count + ' automation(s) écrite(s)'}
+                  ${r.message || this.t('optimizer.applied_desc', {result: r.count + ' automation(s) written'})}
                 </p>
                 ${r.backup_path ? `
                 <div style="background:var(--secondary-background-color);padding:10px;border-radius:10px;
@@ -4353,12 +4398,12 @@ function _updateTypeCounts(el) {
             setTimeout(() => this.scanAutomations(), 1200);
           } else {
             btn.disabled = false;
-            btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
+            btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('optimizer.retry')}`;
             this.showHANotithis._showNotification(this.t('misc.ai_error') + (r.error || this.t('fix.error_unknown')), '', 'haca_error');
           }
         } catch(err) {
           btn.disabled = false;
-          btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
+          btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('optimizer.retry')}`;
           this.showHANotithis._showNotification(this.t('misc.ai_error') + err.message, '', 'haca_error');
         }
       });
@@ -4377,7 +4422,7 @@ function _updateTypeCounts(el) {
     const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;">
         <div class="loader"></div>
-        <div style="margin-top:20px;font-size:18px;font-weight:500;">🤖 Analyse de complexité en cours…</div>
+        <div style="margin-top:20px;font-size:18px;font-weight:500;">${this.t('ai.complexity_loading')}</div>
         <div style="margin-top:8px;font-size:13px;color:var(--secondary-text-color);">
           ${this.escapeHtml(row.alias)} — Score ${row.score}
         </div>
@@ -4401,10 +4446,10 @@ function _updateTypeCounts(el) {
       // Score colour
       const s = row.score;
       const [scoreColor, levelText] =
-        s >= 50 ? ['#ef5350', '🚨 God Automation'] :
-        s >= 30 ? ['#ffa726', '⚠️ Complexe']       :
-        s >= 15 ? ['#ffd54f', '🔶 Moyen']           :
-                  ['#66bb6a', '✅ Simple'];
+        s >= 50 ? ['#ef5350', this.t('complexity.god_automation')] :
+        s >= 30 ? ['#ffa726', this.t('complexity.complex')]       :
+        s >= 15 ? ['#ffd54f', this.t('complexity.medium')]           :
+                  ['#66bb6a', this.t('complexity.simple')];
 
       modal._updateContent(`
         <div style="display:flex;flex-direction:column;height:100%;max-height:90vh;">
@@ -4426,8 +4471,8 @@ function _updateTypeCounts(el) {
 
           <!-- Score breakdown pills -->
           <div style="padding:12px 24px;border-bottom:1px solid var(--divider-color);display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;background:var(--secondary-background-color);">
-            ${row.triggers  !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔀 ${row.triggers} déclencheurs</span>` : ''}
-            ${row.conditions !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔍 ${row.conditions} conditions</span>` : ''}
+            ${row.triggers  !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">${this.t('ai.triggers_count', {n: row.triggers})}</span>` : ''}
+            ${row.conditions !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">${this.t('ai.conditions_count', {n: row.conditions})}</span>` : ''}
             ${row.actions   !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">▶ ${row.actions} actions</span>` : ''}
             ${row.templates !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">📝 ${row.templates} templates</span>` : ''}
           </div>
@@ -4438,7 +4483,7 @@ function _updateTypeCounts(el) {
             <!-- Explanation -->
             <div>
               <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--secondary-text-color);margin-bottom:8px;">
-                <ha-icon icon="mdi:lightbulb-outline" style="--mdc-icon-size:14px;"></ha-icon> Analyse
+                <ha-icon icon="mdi:lightbulb-outline" style="--mdc-icon-size:14px;"></ha-icon> ${this.t('ai.analysis_tab')}
               </div>
               <div style="background:var(--secondary-background-color);padding:16px;border-radius:12px;line-height:1.7;font-size:14px;white-space:pre-wrap;border-left:4px solid var(--primary-color);">
                 ${this.escapeHtml(explanation)}
@@ -4453,14 +4498,14 @@ function _updateTypeCounts(el) {
               </div>
               <div style="background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:12px;overflow:hidden;">
                 <div style="padding:8px 14px;background:rgba(var(--rgb-primary-color,33,150,243),0.07);font-size:12px;color:var(--secondary-text-color);border-bottom:1px solid var(--divider-color);">
-                  ⚠️ Prévisualisation uniquement — aucune modification n'est appliquée tant que vous ne cliquez pas sur Appliquer
+                  ${this.t('ai.preview_warning')}
                 </div>
                 <pre id="split-proposal-pre" style="margin:0;padding:16px;font-size:12px;overflow-x:auto;max-height:320px;line-height:1.5;">${this.escapeHtml(splitProposal)}</pre>
               </div>
             </div>
             ` : `
             <div style="padding:16px;background:var(--secondary-background-color);border-radius:12px;font-size:13px;color:var(--secondary-text-color);text-align:center;">
-              Aucune proposition de refactoring générée (automation trop simple ou IA non disponible).
+              ${this.t('ai.no_proposal')}
             </div>
             `}
           </div>
@@ -4477,11 +4522,11 @@ function _updateTypeCounts(el) {
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
               <button class="modal-close-btn" style="background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
-                Fermer
+                ${this.t('actions.close')}
               </button>
               ${hasProposal ? `
               <button id="apply-split-btn" style="background:var(--primary-color);color:white;padding:10px 20px;border-radius:12px;box-shadow:0 4px 10px rgba(var(--rgb-primary-color,33,150,243),0.3);">
-                <ha-icon icon="mdi:check-circle-outline"></ha-icon> Appliquer le refactoring
+                <ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('ai.apply_refactoring')}
               </button>` : ''}
             </div>
           </div>
@@ -4499,7 +4544,7 @@ function _updateTypeCounts(el) {
         modal.querySelector('#apply-split-btn').addEventListener('click', async () => {
           const btn = modal.querySelector('#apply-split-btn');
           btn.disabled = true;
-          btn.innerHTML = '<span class="btn-loader"></span> Application…';
+          btn.innerHTML = `<span class="btn-loader"></span> ${this.t('ai.applying')}`;
           try {
             await this.hass.callWS({
               type: 'call_service',
@@ -4511,21 +4556,21 @@ function _updateTypeCounts(el) {
             modal._updateContent(`
               <div style="padding:48px 32px;text-align:center;">
                 <div style="font-size:56px;margin-bottom:20px;">✅</div>
-                <h2 style="margin-bottom:12px;">Refactoring appliqué</h2>
+                <h2 style="margin-bottom:12px;">${this.t('ai.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.6;">
-                  Les scripts ont été extraits et l'automation simplifiée.<br>
-                  Un backup a été créé avant la modification.
+                  ${this.t('ai.applied_desc')}<br>
+                  ${this.t('ai.applied_backup')}
                 </p>
                 <button onclick="this.closest('.haca-modal').remove()"
                   style="margin-top:24px;background:var(--primary-color);color:white;padding:10px 28px;border-radius:10px;">
-                  Fermer
+                  ${this.t('actions.close')}
                 </button>
               </div>
             `);
             setTimeout(() => this.scanAutomations(), 1500);
           } catch(err) {
             btn.disabled = false;
-            btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Appliquer le refactoring';
+            btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('ai.apply_refactoring')}`;
             this.showHANotithis._showNotification(this.t('misc.error_apply') + err.message, '', 'haca_error');
           }
         });
@@ -4538,7 +4583,7 @@ function _updateTypeCounts(el) {
           <div style="font-size:15px;">${this.escapeHtml(error.message || 'Erreur inconnue')}</div>
           <button onclick="this.closest('.haca-modal').remove()"
             style="margin-top:20px;background:var(--primary-color);color:white;padding:8px 20px;border-radius:8px;">
-            Fermer
+            ${this.t('actions.close')}
           </button>
         </div>
       `);
@@ -4874,8 +4919,8 @@ function _updateTypeCounts(el) {
         .attr('stroke', d => d.id === node.id ? 'var(--primary-color)' : (d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)'));
     }
 
-    const typeLabels = { automation:'Automation', script:'Script', scene:'Scène',
-                         entity:'Entité', blueprint:'Blueprint', device:'Appareil' };
+    const typeLabels = { automation:'Automation', script:'Script', scene: this.t('graph.type_scene'),
+                         entity: this.t('graph.type_entity'), blueprint:'Blueprint', device: this.t('graph.type_device') };
     title.textContent = node.label;
 
     const editUrl = this.getHAEditUrl(node.id);
@@ -4903,7 +4948,7 @@ function _updateTypeCounts(el) {
           ${node.issue_count} issue${node.issue_count > 1 ? 's' : ''}
         </div>
         ${issueRows}
-      ` : '<div style="font-size:13px;color:#66bb6a;margin-bottom:12px;">✅ Aucune issue détectée</div>'}
+      ` : `<div style="font-size:13px;color:#66bb6a;margin-bottom:12px;">${this.t('graph.no_issues')}</div>`}
 
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
         ${editUrl ? `<a href="${editUrl}" target="_blank" style="text-decoration:none;">
@@ -4913,7 +4958,7 @@ function _updateTypeCounts(el) {
         </a>` : ''}
         ${node.type === 'entity' ? `<a href="${haStateUrl}" target="_blank" style="text-decoration:none;">
           <button style="width:100%;background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px;">
-            <ha-icon icon="mdi:eye" style="--mdc-icon-size:14px;"></ha-icon> Voir l'état
+            <ha-icon icon="mdi:eye" style="--mdc-icon-size:14px;"></ha-icon> ${this.t('graph.view_state')}
           </button>
         </a>` : ''}
       </div>`;
