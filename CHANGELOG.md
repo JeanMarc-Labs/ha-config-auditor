@@ -2,10 +2,12 @@
 
 All notable changes to this project are documented here.
 
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.2/)  
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.3/)  
 Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
+## [1.0.3] — 2026-03-03 — Hardtext internationalization and bug fixing
+
 ## [1.0.2] — 2026-03-02 — Hard text internationalization and bug fixing
 
 ## [1.0.1] — 2026-03-01 — Internationalization of hard texts
