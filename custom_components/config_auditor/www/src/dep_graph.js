@@ -79,12 +79,22 @@
     let H = svg.clientHeight || svg.parentElement?.clientHeight || 0;
 
     if (W < 10 || H < 10) {
-      // SVG pas encore layouté ou dans onglet caché — on retente dans le prochain frame
+      // SVG pas encore layouté ou dans onglet caché.
+      // On incrémente un compteur de tentatives pour éviter une boucle RAF infinie
+      // si le panel reste caché (ex: navigation sur un autre onglet HA).
+      // Max 30 tentatives (~500ms) puis abandon propre.
+      this._graphRafRetries = (this._graphRafRetries || 0) + 1;
+      if (this._graphRafRetries > 30) {
+        this._graphRafRetries = 0;
+        return; // abandon — le graphe sera redessiné au prochain switchTab
+      }
       requestAnimationFrame(() => {
-        if (this._graphData) this._drawD3Graph(d3, graphData);
+        if (this._connected && this._graphData) this._drawD3Graph(d3, graphData);
+        else this._graphRafRetries = 0; // composant détaché → reset
       });
       return;
     }
+    this._graphRafRetries = 0; // reset au succès
 
     // Clear previous render
     while (svg.firstChild) svg.removeChild(svg.firstChild);

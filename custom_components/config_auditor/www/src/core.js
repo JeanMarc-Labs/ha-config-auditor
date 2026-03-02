@@ -374,13 +374,16 @@
       this._connected = false;
       this._stopAutoRefresh();
 
-      // ── Stopper la simulation D3 (évite des dizaines de requestAnimationFrame zombies)
+      // ── Stopper la simulation D3 et reset RAF
       if (typeof this._graphStopAll === 'function') this._graphStopAll();
+      this._graphRafRetries = 0; // stoppe le RAF différé si en cours
 
-      // ── Désabonner l'event subscription HACA (évite les callbacks sur élément détaché)
-      if (this._unsubNewIssues) {
-        try { this._unsubNewIssues(); } catch (_) { }
-        this._unsubNewIssues = null;
+      // ── Désabonner TOUTES les subscriptions HA (new issues + scans en cours)
+      for (const key of ['_unsubNewIssues', '_unsubScanAll', '_unsubScanAuto', '_unsubScanEntity']) {
+        if (this[key]) {
+          try { this[key](); } catch (_) { }
+          this[key] = null;
+        }
       }
     }
 
@@ -395,11 +398,21 @@
 
     set hass(hass) {
       const wasNull = !this._hass;
+      const prevConnection = this._hass?.connection;
       this._hass = hass;
+
       // set hass() est appelé par HA à CHAQUE changement d'état → ne jamais appeler render() ici.
       // On l'utilise uniquement pour débloquer l'init si hass arrive après set panel().
       if (wasNull && this._initialized && !this._fullyReady) {
         this._boot();
+        return;
+      }
+
+      // ── Détection reconnexion WebSocket HA ──────────────────────────────
+      // Quand HA reconnecte (réseau coupé, redémarrage), un nouvel objet connection
+      // est créé. On doit réinitialiser les subscriptions et relancer le refresh.
+      if (this._fullyReady && hass.connection && hass.connection !== prevConnection) {
+        this._onWSReconnect();
       }
     }
 
@@ -462,8 +475,13 @@
           this.attachListeners();
         }
 
-        // 3. Données : depuis le cache module si disponible → affichage immédiat, zéro flash
-        if (_HC.data) {
+        // 3. Données : depuis le cache module si disponible ET récent (< 30 min)
+        // Au-delà de 30 min, le cache est ignoré (HA a peut-être redémarré)
+        const CACHE_TTL_MS = 30 * 60 * 1000;
+        if (_HC.data && _HC.dataTimestamp && (Date.now() - _HC.dataTimestamp) < CACHE_TTL_MS) {
+          this.updateUI(_HC.data);
+        } else if (_HC.data && !_HC.dataTimestamp) {
+          // Cache sans timestamp (version précédente) → on l'affiche quand même
           this.updateUI(_HC.data);
         }
 
@@ -477,6 +495,47 @@
       } finally {
         this._booting = false;
       }
+    }
+
+    // ── Gestion reconnexion WebSocket HA ────────────────────────────────────
+    // Appelé quand set hass() détecte un changement d'objet connection.
+    // Scénarios couverts : perte réseau, redémarrage HA, veille/réveil machine.
+    _onWSReconnect() {
+      console.info('[HACA] WebSocket reconnect détecté — réinitialisation des subscriptions');
+
+      // 1. Invalider le cache module (HA a peut-être redémarré, données périmées)
+      _HC.data = null;
+      _HC.translations = null;
+
+      // 2. Libérer la subscription issues (liée à l'ancienne connexion)
+      if (this._unsubNewIssues) {
+        try { this._unsubNewIssues(); } catch (_) {}
+        this._unsubNewIssues = null;
+      }
+
+      // 3. Libérer les subscriptions de scan en cours si elles existent
+      for (const key of ['_unsubScanAll', '_unsubScanAuto', '_unsubScanEntity']) {
+        if (this[key]) {
+          try { this[key](); } catch (_) {}
+          this[key] = null;
+        }
+      }
+
+      // 4. Réinitialiser les gardes d'état (le backend a peut-être redémarré)
+      this._scanAllInProgress = false;
+      this._scanAutoInProgress = false;
+      this._scanEntityInProgress = false;
+      this._dataErrorCount = 0;
+      this._dataLoading = false;
+      this._reconnectOverlayShown = false;
+      this._hideReconnectBanner();
+
+      // 5. Graphe RAF : reset du compteur de tentatives
+      this._graphRafRetries = 0;
+
+      // 6. Re-souscrire aux événements HA et recharger les données
+      this._subscribeToNewIssues();
+      this.loadData();
     }
 
     _startAutoRefresh() {
@@ -2445,6 +2504,7 @@
         const result = await this._hass.callWS({ type: 'haca/get_data' });
         this._cachedData = result;
         _HC.data = result;           // cache module : survive aux navigations
+        _HC.dataTimestamp = Date.now(); // pour expiration du cache
         this._dataErrorCount = 0;
         this.updateUI(result);
       } catch (error) {
@@ -2459,6 +2519,8 @@
     }
 
     updateUI(data) {
+      // Guard : ne pas toucher au DOM si le composant est détaché
+      if (!this._connected || !this.shadowRoot) return;
       this._lastData = data;
 
       const safeSetText = (id, val) => {

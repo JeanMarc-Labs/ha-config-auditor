@@ -636,6 +636,8 @@
     // Function to close modal
     const closeModal = () => {
       modal.remove();
+      // Toujours retirer le listener keydown, quelle que soit la méthode de fermeture
+      document.removeEventListener('keydown', handleEscape);
     };
 
     closeBtn.addEventListener('click', closeModal);
@@ -668,8 +670,7 @@
     // Close on Escape key
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleEscape);
+        closeModal(); // closeModal retire lui-même le listener
       }
     };
     document.addEventListener('keydown', handleEscape);
@@ -1187,11 +1188,11 @@
     // on déverrouille quand même le bouton
     const SCAN_TIMEOUT_MS = 5 * 60 * 1000;
     let scanTimeoutId = null;
-    let unsubScanComplete = null;
+    this._unsubScanAll = null; // stocké sur this pour nettoyage dans disconnectedCallback
 
     const _cleanup = () => {
       if (scanTimeoutId) { clearTimeout(scanTimeoutId); scanTimeoutId = null; }
-      if (unsubScanComplete) { try { unsubScanComplete(); } catch (_) {} unsubScanComplete = null; }
+      if (this._unsubScanAll) { try { this._unsubScanAll(); } catch (_) {} this._unsubScanAll = null; }
       this._scanAllInProgress = false;
       this._setButtonLoading(btn, false, originalContent);
     };
@@ -1200,7 +1201,7 @@
       // S'abonner à haca_scan_complete AVANT de lancer le scan
       // pour ne manquer aucun événement (race condition impossible)
       if (this.hass?.connection) {
-        unsubScanComplete = await this.hass.connection.subscribeEvents((event) => {
+        this._unsubScanAll = await this.hass.connection.subscribeEvents((event) => {
           _cleanup();
           this.loadData();
         }, 'haca_scan_complete');
@@ -1232,17 +1233,17 @@
     const btn = this.shadowRoot.querySelector('#scan-auto');
     const originalContent = `<ha-icon icon="mdi:robot"></ha-icon> ${this.t('buttons.automations')}`;
     this._setButtonLoading(btn, true, originalContent);
-    let unsubDone = null;
+    this._unsubScanAuto = null; // stocké sur this pour nettoyage dans disconnectedCallback
     let tid = null;
     const _done = () => {
       if (tid) { clearTimeout(tid); tid = null; }
-      if (unsubDone) { try { unsubDone(); } catch (_) {} unsubDone = null; }
+      if (this._unsubScanAuto) { try { this._unsubScanAuto(); } catch (_) {} this._unsubScanAuto = null; }
       this._scanAutoInProgress = false;
       this._setButtonLoading(btn, false, originalContent);
     };
     try {
       if (this.hass?.connection) {
-        unsubDone = await this.hass.connection.subscribeEvents(() => {
+        this._unsubScanAuto = await this.hass.connection.subscribeEvents(() => {
           _done(); this.loadData();
         }, 'haca_scan_complete');
       }
@@ -1260,17 +1261,17 @@
     const btn = this.shadowRoot.querySelector('#scan-entity');
     const originalContent = `<ha-icon icon="mdi:lightning-bolt"></ha-icon> ${this.t('buttons.entities')}`;
     this._setButtonLoading(btn, true, originalContent);
-    let unsubDone = null;
+    this._unsubScanEntity = null; // stocké sur this pour nettoyage dans disconnectedCallback
     let tid = null;
     const _done = () => {
       if (tid) { clearTimeout(tid); tid = null; }
-      if (unsubDone) { try { unsubDone(); } catch (_) {} unsubDone = null; }
+      if (this._unsubScanEntity) { try { this._unsubScanEntity(); } catch (_) {} this._unsubScanEntity = null; }
       this._scanEntityInProgress = false;
       this._setButtonLoading(btn, false, originalContent);
     };
     try {
       if (this.hass?.connection) {
-        unsubDone = await this.hass.connection.subscribeEvents(() => {
+        this._unsubScanEntity = await this.hass.connection.subscribeEvents(() => {
           _done(); this.loadData();
         }, 'haca_scan_complete');
       }
