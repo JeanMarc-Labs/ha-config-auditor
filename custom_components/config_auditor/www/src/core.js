@@ -18,7 +18,7 @@
       this._defaultTranslations = {
         title: "H.A.C.A",
         subtitle: "Home Assistant Config Auditor",
-        version: "1.0.2",
+        version: "1.0.3",
         buttons: {
           scan_all: "Full Scan",
           automations: "Automations",
@@ -552,14 +552,14 @@
 
       // 2. Libérer la subscription issues (liée à l'ancienne connexion)
       if (this._unsubNewIssues) {
-        try { this._unsubNewIssues(); } catch (_) {}
+        try { this._unsubNewIssues(); } catch (_) { }
         this._unsubNewIssues = null;
       }
 
       // 3. Libérer les subscriptions de scan en cours si elles existent
       for (const key of ['_unsubScanAll', '_unsubScanAuto', '_unsubScanEntity']) {
         if (this[key]) {
-          try { this[key](); } catch (_) {}
+          try { this[key](); } catch (_) { }
           this[key] = null;
         }
       }
@@ -1862,10 +1862,10 @@
               <div style="padding:16px 20px 12px;border-bottom:1px solid var(--divider-color);flex-shrink:0;">
                 <h2 style="margin:0;font-size:16px;display:flex;align-items:center;gap:8px;">
                   <ha-icon icon="mdi:robot-happy-outline" style="color:var(--primary-color);"></ha-icon>
-                  Chat avec l&#x27;assistant IA
+                  ${this.t('misc.chat_assistant')}
                 </h2>
                 <p style="margin:6px 0 0;font-size:12px;color:var(--secondary-text-color);">
-                  Posez des questions sur votre configuration Home Assistant, vos automations et les issues HACA.
+                  ${this.t('misc.chat_assistant_desc')}
                 </p>
               </div>
               <div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;">
@@ -1875,12 +1875,12 @@
                 </div>
               </div>
               <div style="padding:12px 20px;border-top:1px solid var(--divider-color);flex-shrink:0;display:flex;gap:8px;align-items:flex-end;">
-                <textarea id="chat-input" placeholder="Posez votre question…" rows="2"
+                <textarea id="chat-input" placeholder="${this.t('misc.chat_input_placeholder')}" rows="2"
                   style="flex:1;padding:10px 14px;border-radius:12px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font-size:14px;font-family:inherit;resize:vertical;min-height:42px;max-height:120px;outline:none;line-height:1.4;"></textarea>
                 <button id="chat-send"
                   style="padding:10px 18px;border-radius:12px;background:var(--primary-color);color:white;border:none;cursor:pointer;font-weight:600;font-size:14px;flex-shrink:0;height:42px;display:flex;align-items:center;gap:6px;">
                   <ha-icon icon="mdi:send" style="--mdc-icon-size:16px;"></ha-icon>
-                  Envoyer
+                  ${this.t('misc.chat_send')}
                 </button>
               </div>
             </div>
@@ -2309,7 +2309,7 @@
       // Build context from last scan results
       const stats = this._lastStats || {};
       const ctx = stats.total_issues != null
-        ? this.t('misc.ai_context', {total: stats.total_issues, automations: stats.automations_count || 0, scripts: stats.scripts_count || 0})
+        ? this.t('misc.ai_context', { total: stats.total_issues, automations: stats.automations_count || 0, scripts: stats.scripts_count || 0 })
         : '';
 
       // Show typing indicator
@@ -2782,7 +2782,7 @@
       </table>
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <span style="font-size:12px;color:var(--secondary-text-color);">
-          ${this.t('recorder.purge_estimated', {mb, count})}
+          ${this.t('recorder.purge_estimated', { mb, count })}
         </span>
         <button id="recorder-purge-selected-btn" style="background:#ff7043;color:#fff;font-size:12px;padding:6px 14px;">
           <ha-icon icon="mdi:delete-sweep-outline" style="--mdc-icon-size:15px;"></ha-icon> ${this.t('misc.purge_selection')}
@@ -2911,7 +2911,7 @@
           this._removeOrphansFromUI(entityIds);
           // No automatic rescan — the DB WAL checkpoint needs time to propagate.
           // The UI is updated optimistically via _removeOrphansFromUI already.
-          this._showToast(this.t('recorder.purge_success', {count: entityIds.length}), 'success');
+          this._showToast(this.t('recorder.purge_success', { count: entityIds.length }), 'success');
         } catch (err) {
           console.error('[HACA Purge] callWS error:', err);
           modal.remove();
