@@ -1,4 +1,4 @@
-// HACA-BUILD: 43d590e7  2026-03-02T07:21:21Z
+// HACA-BUILD: a4832d0c  2026-03-02T09:53:14Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -743,13 +743,16 @@ function _updateTypeCounts(el) {
       this._connected = false;
       this._stopAutoRefresh();
 
-      // ── Stopper la simulation D3 (évite des dizaines de requestAnimationFrame zombies)
+      // ── Stopper la simulation D3 et reset RAF
       if (typeof this._graphStopAll === 'function') this._graphStopAll();
+      this._graphRafRetries = 0; // stoppe le RAF différé si en cours
 
-      // ── Désabonner l'event subscription HACA (évite les callbacks sur élément détaché)
-      if (this._unsubNewIssues) {
-        try { this._unsubNewIssues(); } catch (_) { }
-        this._unsubNewIssues = null;
+      // ── Désabonner TOUTES les subscriptions HA (new issues + scans en cours)
+      for (const key of ['_unsubNewIssues', '_unsubScanAll', '_unsubScanAuto', '_unsubScanEntity']) {
+        if (this[key]) {
+          try { this[key](); } catch (_) { }
+          this[key] = null;
+        }
       }
     }
 
@@ -764,11 +767,21 @@ function _updateTypeCounts(el) {
 
     set hass(hass) {
       const wasNull = !this._hass;
+      const prevConnection = this._hass?.connection;
       this._hass = hass;
+
       // set hass() est appelé par HA à CHAQUE changement d'état → ne jamais appeler render() ici.
       // On l'utilise uniquement pour débloquer l'init si hass arrive après set panel().
       if (wasNull && this._initialized && !this._fullyReady) {
         this._boot();
+        return;
+      }
+
+      // ── Détection reconnexion WebSocket HA ──────────────────────────────
+      // Quand HA reconnecte (réseau coupé, redémarrage), un nouvel objet connection
+      // est créé. On doit réinitialiser les subscriptions et relancer le refresh.
+      if (this._fullyReady && hass.connection && hass.connection !== prevConnection) {
+        this._onWSReconnect();
       }
     }
 
@@ -831,8 +844,13 @@ function _updateTypeCounts(el) {
           this.attachListeners();
         }
 
-        // 3. Données : depuis le cache module si disponible → affichage immédiat, zéro flash
-        if (_HC.data) {
+        // 3. Données : depuis le cache module si disponible ET récent (< 30 min)
+        // Au-delà de 30 min, le cache est ignoré (HA a peut-être redémarré)
+        const CACHE_TTL_MS = 30 * 60 * 1000;
+        if (_HC.data && _HC.dataTimestamp && (Date.now() - _HC.dataTimestamp) < CACHE_TTL_MS) {
+          this.updateUI(_HC.data);
+        } else if (_HC.data && !_HC.dataTimestamp) {
+          // Cache sans timestamp (version précédente) → on l'affiche quand même
           this.updateUI(_HC.data);
         }
 
@@ -846,6 +864,47 @@ function _updateTypeCounts(el) {
       } finally {
         this._booting = false;
       }
+    }
+
+    // ── Gestion reconnexion WebSocket HA ────────────────────────────────────
+    // Appelé quand set hass() détecte un changement d'objet connection.
+    // Scénarios couverts : perte réseau, redémarrage HA, veille/réveil machine.
+    _onWSReconnect() {
+      console.info('[HACA] WebSocket reconnect détecté — réinitialisation des subscriptions');
+
+      // 1. Invalider le cache module (HA a peut-être redémarré, données périmées)
+      _HC.data = null;
+      _HC.translations = null;
+
+      // 2. Libérer la subscription issues (liée à l'ancienne connexion)
+      if (this._unsubNewIssues) {
+        try { this._unsubNewIssues(); } catch (_) {}
+        this._unsubNewIssues = null;
+      }
+
+      // 3. Libérer les subscriptions de scan en cours si elles existent
+      for (const key of ['_unsubScanAll', '_unsubScanAuto', '_unsubScanEntity']) {
+        if (this[key]) {
+          try { this[key](); } catch (_) {}
+          this[key] = null;
+        }
+      }
+
+      // 4. Réinitialiser les gardes d'état (le backend a peut-être redémarré)
+      this._scanAllInProgress = false;
+      this._scanAutoInProgress = false;
+      this._scanEntityInProgress = false;
+      this._dataErrorCount = 0;
+      this._dataLoading = false;
+      this._reconnectOverlayShown = false;
+      this._hideReconnectBanner();
+
+      // 5. Graphe RAF : reset du compteur de tentatives
+      this._graphRafRetries = 0;
+
+      // 6. Re-souscrire aux événements HA et recharger les données
+      this._subscribeToNewIssues();
+      this.loadData();
     }
 
     _startAutoRefresh() {
@@ -2814,6 +2873,7 @@ function _updateTypeCounts(el) {
         const result = await this._hass.callWS({ type: 'haca/get_data' });
         this._cachedData = result;
         _HC.data = result;           // cache module : survive aux navigations
+        _HC.dataTimestamp = Date.now(); // pour expiration du cache
         this._dataErrorCount = 0;
         this.updateUI(result);
       } catch (error) {
@@ -2828,6 +2888,8 @@ function _updateTypeCounts(el) {
     }
 
     updateUI(data) {
+      // Guard : ne pas toucher au DOM si le composant est détaché
+      if (!this._connected || !this.shadowRoot) return;
       this._lastData = data;
 
       const safeSetText = (id, val) => {
@@ -3235,62 +3297,62 @@ function _updateTypeCounts(el) {
     }
 
 
-    // ── pagination.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  PAGINATION — mixin partagé par tous les onglets HACA
-    //
-    //  _HC.pagination[id] = { page: 0, pageSize: 10 }
-    //  persist dans le cache module → survit aux navigations HA.
-    // ═══════════════════════════════════════════════════════════════════════
+// ── pagination.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  PAGINATION — mixin partagé par tous les onglets HACA
+  //
+  //  _HC.pagination[id] = { page: 0, pageSize: 10 }
+  //  persist dans le cache module → survit aux navigations HA.
+  // ═══════════════════════════════════════════════════════════════════════
 
-    /** Lecture de l'état de pagination d'un conteneur. */
-    _pagState(id) {
-      if (!_HC.pagination) _HC.pagination = {};
-      if (!_HC.pagination[id]) _HC.pagination[id] = { page: 0, pageSize: 10 };
-      return _HC.pagination[id];
-    }
+  /** Lecture de l'état de pagination d'un conteneur. */
+  _pagState(id) {
+    if (!_HC.pagination)  _HC.pagination = {};
+    if (!_HC.pagination[id]) _HC.pagination[id] = { page: 0, pageSize: 10 };
+    return _HC.pagination[id];
+  }
 
-    /** Mise à jour et re-render immédiat. */
-    _pagSet(id, patch, rerenderFn) {
-      const st = this._pagState(id);
-      Object.assign(st, patch);
-      rerenderFn();
-    }
+  /** Mise à jour et re-render immédiat. */
+  _pagSet(id, patch, rerenderFn) {
+    const st = this._pagState(id);
+    Object.assign(st, patch);
+    rerenderFn();
+  }
 
-    /** Tranche d'items pour la page courante. */
-    _pagSlice(items, page, pageSize) {
-      const start = page * pageSize;
-      return items.slice(start, start + pageSize);
-    }
+  /** Tranche d'items pour la page courante. */
+  _pagSlice(items, page, pageSize) {
+    const start = page * pageSize;
+    return items.slice(start, start + pageSize);
+  }
 
-    /**
-     * Génère le HTML de la barre de pagination.
-     * @param {string}   id         identifiant unique du conteneur
-     * @param {number}   total      nombre total d'items
-     * @param {number}   page       page courante (0-indexed)
-     * @param {number}   pageSize   items par page
-     * @returns {string} HTML à injecter sous la liste
-     */
-    _pagHTML(id, total, page, pageSize) {
-      if (total === 0) {
-        // Même sans items : afficher le sélecteur de taille pour que l'utilisateur sache qu'il existe
-        return `<div class="pag-bar" data-pag-id="${id}"
+  /**
+   * Génère le HTML de la barre de pagination.
+   * @param {string}   id         identifiant unique du conteneur
+   * @param {number}   total      nombre total d'items
+   * @param {number}   page       page courante (0-indexed)
+   * @param {number}   pageSize   items par page
+   * @returns {string} HTML à injecter sous la liste
+   */
+  _pagHTML(id, total, page, pageSize) {
+    if (total === 0) {
+      // Même sans items : afficher le sélecteur de taille pour que l'utilisateur sache qu'il existe
+      return `<div class="pag-bar" data-pag-id="${id}"
         style="display:flex;align-items:center;gap:8px;padding:10px 4px 4px;
                border-top:1px solid var(--divider-color);margin-top:8px;">
         <span style="font-size:12px;color:var(--secondary-text-color);">${this.t('pagination.show')}</span>
-        ${[10, 50, 100].map(n => `<button class="pag-size" data-pag-id="${id}" data-size="${n}"
+        ${[10,50,100].map(n => `<button class="pag-size" data-pag-id="${id}" data-size="${n}"
           style="padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;
                  border:1px solid var(--divider-color);cursor:pointer;
-                 background:${pageSize === n ? 'var(--primary-color)' : 'var(--secondary-background-color)'};
-                 color:${pageSize === n ? '#fff' : 'var(--primary-text-color)'};">${n}</button>`).join('')}
+                 background:${pageSize===n?'var(--primary-color)':'var(--secondary-background-color)'};
+                 color:${pageSize===n?'#fff':'var(--primary-text-color)'};">${n}</button>`).join('')}
         <span style="font-size:12px;color:var(--secondary-text-color);margin-left:auto;">0 élément</span>
       </div>`;
-      }
-      const totalPages = Math.ceil(total / pageSize);
-      const from = page * pageSize + 1;
-      const to = Math.min((page + 1) * pageSize, total);
+    }
+    const totalPages = Math.ceil(total / pageSize);
+    const from = page * pageSize + 1;
+    const to   = Math.min((page + 1) * pageSize, total);
 
-      const sizeBtn = (n) => `
+    const sizeBtn = (n) => `
       <button class="pag-size" data-pag-id="${id}" data-size="${n}"
         style="padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;border:1px solid var(--divider-color);
                background:${pageSize === n ? 'var(--primary-color)' : 'var(--secondary-background-color)'};
@@ -3298,7 +3360,7 @@ function _updateTypeCounts(el) {
         ${n}
       </button>`;
 
-      const navBtn = (label, icon, disabled, targetPage) => `
+    const navBtn = (label, icon, disabled, targetPage) => `
       <button class="pag-nav" data-pag-id="${id}" data-page="${targetPage}"
         ${disabled ? 'disabled' : ''}
         style="padding:4px 10px;border-radius:6px;font-size:12px;border:1px solid var(--divider-color);
@@ -3308,7 +3370,7 @@ function _updateTypeCounts(el) {
         <ha-icon icon="${icon}" style="--mdc-icon-size:15px;"></ha-icon>${label}
       </button>`;
 
-      return `
+    return `
       <div class="pag-bar" data-pag-id="${id}"
         style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
                gap:8px;padding:12px 4px 4px;border-top:1px solid var(--divider-color);margin-top:8px;">
@@ -3320,74 +3382,74 @@ function _updateTypeCounts(el) {
           ${from}–${to} sur <strong>${total}</strong>
         </span>
         <div style="display:flex;gap:6px;">
-          ${navBtn(this.t('pagination.prev'), 'mdi:chevron-left', page === 0, page - 1)}
-          ${navBtn(this.t('pagination.next'), 'mdi:chevron-right', page >= totalPages - 1, page + 1)}
+          ${navBtn(this.t('pagination.prev'), 'mdi:chevron-left',  page === 0,              page - 1)}
+          ${navBtn(this.t('pagination.next'), 'mdi:chevron-right', page >= totalPages - 1,  page + 1)}
         </div>
       </div>`;
-    }
+  }
 
-    /**
-     * Branche les événements de la barre de pagination dans un conteneur DOM.
-     * rerenderFn() sera appelée après chaque changement d'état.
-     */
-    _pagWire(container, rerenderFn) {
-      container.querySelectorAll('.pag-size').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const id = btn.dataset.pagId;
-          const size = parseInt(btn.dataset.size);
-          this._pagSet(id, { pageSize: size, page: 0 }, rerenderFn);
-        });
+  /**
+   * Branche les événements de la barre de pagination dans un conteneur DOM.
+   * rerenderFn() sera appelée après chaque changement d'état.
+   */
+  _pagWire(container, rerenderFn) {
+    container.querySelectorAll('.pag-size').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id   = btn.dataset.pagId;
+        const size = parseInt(btn.dataset.size);
+        this._pagSet(id, { pageSize: size, page: 0 }, rerenderFn);
       });
-      container.querySelectorAll('.pag-nav').forEach(btn => {
-        if (btn.disabled) return;
-        btn.addEventListener('click', () => {
-          const id = btn.dataset.pagId;
-          const pg = parseInt(btn.dataset.page);
-          this._pagSet(id, { page: pg }, rerenderFn);
-        });
+    });
+    container.querySelectorAll('.pag-nav').forEach(btn => {
+      if (btn.disabled) return;
+      btn.addEventListener('click', () => {
+        const id   = btn.dataset.pagId;
+        const pg   = parseInt(btn.dataset.page);
+        this._pagSet(id, { page: pg }, rerenderFn);
       });
+    });
+  }
+
+// ── history.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  AUDIT HISTORY
+  // ═══════════════════════════════════════════════════════════════════════
+
+  async _loadSparkline() {
+    if (this._sparklineLoading) return;
+    this._sparklineLoading = true;
+    try {
+      const result = await this._hass.callWS({ type: 'haca/get_history', limit: 30 });
+      const history = result.history || [];
+      this._renderSparkline(history);
+      this._renderHealthTrend(history);
+    } catch (e) {
+      // Non-fatal — sparkline is decorative
+    } finally {
+      this._sparklineLoading = false;
     }
+  }
 
-    // ── history.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  AUDIT HISTORY
-    // ═══════════════════════════════════════════════════════════════════════
+  _renderSparkline(history) {
+    const svg = this.shadowRoot.querySelector('#sparkline-svg');
+    if (!svg || history.length < 2) return;
 
-    async _loadSparkline() {
-      if (this._sparklineLoading) return;
-      this._sparklineLoading = true;
-      try {
-        const result = await this._hass.callWS({ type: 'haca/get_history', limit: 30 });
-        const history = result.history || [];
-        this._renderSparkline(history);
-        this._renderHealthTrend(history);
-      } catch (e) {
-        // Non-fatal — sparkline is decorative
-      } finally {
-        this._sparklineLoading = false;
-      }
-    }
+    const scores = history.map(h => h.score);
+    const W = svg.clientWidth || 200;
+    const H = 52;
+    const pad = 4;
+    const minS = Math.max(0, Math.min(...scores) - 5);
+    const maxS = Math.min(100, Math.max(...scores) + 5);
+    const range = maxS - minS || 1;
 
-    _renderSparkline(history) {
-      const svg = this.shadowRoot.querySelector('#sparkline-svg');
-      if (!svg || history.length < 2) return;
+    const xs = scores.map((_, i) => pad + (i / (scores.length - 1)) * (W - pad * 2));
+    const ys = scores.map(s => H - pad - ((s - minS) / range) * (H - pad * 2));
 
-      const scores = history.map(h => h.score);
-      const W = svg.clientWidth || 200;
-      const H = 52;
-      const pad = 4;
-      const minS = Math.max(0, Math.min(...scores) - 5);
-      const maxS = Math.min(100, Math.max(...scores) + 5);
-      const range = maxS - minS || 1;
+    const pts = xs.map((x, i) => `${x},${ys[i]}`).join(' ');
+    const area = `M${xs[0]},${H} ` + xs.map((x, i) => `L${x},${ys[i]}`).join(' ') + ` L${xs[xs.length-1]},${H} Z`;
 
-      const xs = scores.map((_, i) => pad + (i / (scores.length - 1)) * (W - pad * 2));
-      const ys = scores.map(s => H - pad - ((s - minS) / range) * (H - pad * 2));
-
-      const pts = xs.map((x, i) => `${x},${ys[i]}`).join(' ');
-      const area = `M${xs[0]},${H} ` + xs.map((x, i) => `L${x},${ys[i]}`).join(' ') + ` L${xs[xs.length - 1]},${H} Z`;
-
-      const col = 'var(--primary-color)';
-      svg.innerHTML = `
+    const col = 'var(--primary-color)';
+    svg.innerHTML = `
       <defs>
         <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="${col}" stop-opacity="0.3"/>
@@ -3398,81 +3460,81 @@ function _updateTypeCounts(el) {
       <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
       ${xs.map((x, i) => `<circle cx="${x}" cy="${ys[i]}" r="2.5" fill="${col}" opacity="0.7"/>`).join('')}
     `;
+  }
+
+  _renderHealthTrend(history) {
+    const el = this.shadowRoot.querySelector('#health-score-trend');
+    if (!el || history.length < 2) return;
+    const last  = history[history.length - 1].score;
+    const prev  = history[history.length - 2].score;
+    const delta = last - prev;
+    if (delta === 0) {
+      el.textContent = this.t('history.stable');
+      el.style.color = 'var(--secondary-text-color)';
+    } else if (delta > 0) {
+      el.textContent = this.t('history.trend_up').replace('{delta}', delta);
+      el.style.color = 'var(--success-color,#4caf50)';
+    } else {
+      el.textContent = this.t('history.trend_down').replace('{delta}', delta);
+      el.style.color = 'var(--error-color,#ef5350)';
     }
+  }
 
-    _renderHealthTrend(history) {
-      const el = this.shadowRoot.querySelector('#health-score-trend');
-      if (!el || history.length < 2) return;
-      const last = history[history.length - 1].score;
-      const prev = history[history.length - 2].score;
-      const delta = last - prev;
-      if (delta === 0) {
-        el.textContent = this.t('history.stable');
-        el.style.color = 'var(--secondary-text-color)';
-      } else if (delta > 0) {
-        el.textContent = this.t('history.trend_up').replace('{delta}', delta);
-        el.style.color = 'var(--success-color,#4caf50)';
-      } else {
-        el.textContent = this.t('history.trend_down').replace('{delta}', delta);
-        el.style.color = 'var(--error-color,#ef5350)';
-      }
+  async loadHistory() {
+    const rangeEl = this.shadowRoot.querySelector('#history-range');
+    const limit = parseInt(rangeEl?.value || '30');
+
+    try {
+      const result = await this._hass.callWS({ type: 'haca/get_history', limit });
+      const history = result.history || [];
+      this._renderHistoryChart(history);
+      this._renderHistorySummary(history);
+      this._renderHistoryTable(history);
+    } catch (e) {
+      const tbody = this.shadowRoot.querySelector('#history-tbody');
+      if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error-color);">${this.t('history.error')}${e.message}</td></tr>`;
     }
+  }
 
-    async loadHistory() {
-      const rangeEl = this.shadowRoot.querySelector('#history-range');
-      const limit = parseInt(rangeEl?.value || '30');
+  _renderHistoryChart(history) {
+    const svg = this.shadowRoot.querySelector('#history-chart-svg');
+    if (!svg || history.length < 2) return;
 
-      try {
-        const result = await this._hass.callWS({ type: 'haca/get_history', limit });
-        const history = result.history || [];
-        this._renderHistoryChart(history);
-        this._renderHistorySummary(history);
-        this._renderHistoryTable(history);
-      } catch (e) {
-        const tbody = this.shadowRoot.querySelector('#history-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error-color);">${this.t('history.error')}${e.message}</td></tr>`;
-      }
-    }
+    const W = svg.clientWidth || 600;
+    const H = 180;
+    const padL = 40, padR = 12, padT = 12, padB = 8;
+    const scores = history.map(h => h.score);
+    const minS = 0, maxS = 100;
 
-    _renderHistoryChart(history) {
-      const svg = this.shadowRoot.querySelector('#history-chart-svg');
-      if (!svg || history.length < 2) return;
+    const toX = i => padL + (i / (scores.length - 1)) * (W - padL - padR);
+    const toY = s => padT + ((maxS - s) / (maxS - minS)) * (H - padT - padB);
 
-      const W = svg.clientWidth || 600;
-      const H = 180;
-      const padL = 40, padR = 12, padT = 12, padB = 8;
-      const scores = history.map(h => h.score);
-      const minS = 0, maxS = 100;
+    const xs = scores.map((_, i) => toX(i));
+    const ys = scores.map(s => toY(s));
 
-      const toX = i => padL + (i / (scores.length - 1)) * (W - padL - padR);
-      const toY = s => padT + ((maxS - s) / (maxS - minS)) * (H - padT - padB);
-
-      const xs = scores.map((_, i) => toX(i));
-      const ys = scores.map(s => toY(s));
-
-      // Grid lines at 0, 25, 50, 75, 100
-      const grid = [0, 25, 50, 75, 100].map(v => {
-        const y = toY(v);
-        return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"
+    // Grid lines at 0, 25, 50, 75, 100
+    const grid = [0, 25, 50, 75, 100].map(v => {
+      const y = toY(v);
+      return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"
         stroke="var(--divider-color)" stroke-width="0.5" stroke-dasharray="${v === 0 || v === 100 ? '' : '3,3'}"/>
         <text x="${padL - 4}" y="${y}" text-anchor="end" font-size="9"
           fill="var(--secondary-text-color)" dominant-baseline="middle">${v}</text>`;
-      }).join('');
+    }).join('');
 
-      const area = `M${xs[0]},${H - padB} ` + xs.map((x, i) => `L${x},${ys[i]}`).join(' ')
-        + ` L${xs[xs.length - 1]},${H - padB} Z`;
-      const line = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${ys[i]}`).join(' ');
+    const area = `M${xs[0]},${H - padB} ` + xs.map((x, i) => `L${x},${ys[i]}`).join(' ')
+      + ` L${xs[xs.length-1]},${H - padB} Z`;
+    const line = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${ys[i]}`).join(' ');
 
-      // Dots with hit areas
-      const dots = xs.map((x, i) => {
-        const s = scores[i];
-        const col = s >= 80 ? '#4caf50' : s >= 50 ? '#ffa726' : '#ef5350';
-        return `<circle class="hist-dot" cx="${x}" cy="${ys[i]}" r="4"
+    // Dots with hit areas
+    const dots = xs.map((x, i) => {
+      const s = scores[i];
+      const col = s >= 80 ? '#4caf50' : s >= 50 ? '#ffa726' : '#ef5350';
+      return `<circle class="hist-dot" cx="${x}" cy="${ys[i]}" r="4"
         fill="${col}" stroke="var(--card-background-color)" stroke-width="2"
         data-idx="${i}" style="cursor:pointer;"/>`;
-      }).join('');
+    }).join('');
 
-      svg.innerHTML = `
+    svg.innerHTML = `
       <defs>
         <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="var(--primary-color)" stop-opacity="0.35"/>
@@ -3490,106 +3552,106 @@ function _updateTypeCounts(el) {
       ${dots}
     `;
 
-      // Tooltip on dot hover
-      const tooltip = this.shadowRoot.querySelector('#history-tooltip');
-      svg.querySelectorAll('.hist-dot').forEach(dot => {
-        dot.addEventListener('mouseenter', (e) => {
-          const idx = parseInt(dot.dataset.idx);
-          const entry = history[idx];
-          if (!tooltip || !entry) return;
-          tooltip.style.display = 'block';
-          tooltip.innerHTML = `
+    // Tooltip on dot hover
+    const tooltip = this.shadowRoot.querySelector('#history-tooltip');
+    svg.querySelectorAll('.hist-dot').forEach(dot => {
+      dot.addEventListener('mouseenter', (e) => {
+        const idx = parseInt(dot.dataset.idx);
+        const entry = history[idx];
+        if (!tooltip || !entry) return;
+        tooltip.style.display = 'block';
+        tooltip.innerHTML = `
           <div style="font-weight:700;margin-bottom:4px;">${entry.date} ${entry.time}</div>
           <div>Score : <strong style="color:${scores[idx] >= 80 ? '#4caf50' : scores[idx] >= 50 ? '#ffa726' : '#ef5350'}">${entry.score}%</strong></div>
           <div style="color:var(--secondary-text-color);font-size:11px;margin-top:2px;">${this.t('history.issues_total').replace('{total}', entry.total)}</div>`;
-          // Position tooltip
-          const svgRect = svg.getBoundingClientRect();
-          const cx = parseFloat(dot.getAttribute('cx'));
-          const cy = parseFloat(dot.getAttribute('cy'));
-          const left = cx + 8;
-          const top = Math.max(0, cy - 40);
-          tooltip.style.left = `${left}px`;
-          tooltip.style.top = `${top}px`;
-        });
-        dot.addEventListener('mouseleave', () => {
-          if (tooltip) tooltip.style.display = 'none';
-        });
+        // Position tooltip
+        const svgRect = svg.getBoundingClientRect();
+        const cx = parseFloat(dot.getAttribute('cx'));
+        const cy = parseFloat(dot.getAttribute('cy'));
+        const left = cx + 8;
+        const top  = Math.max(0, cy - 40);
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top  = `${top}px`;
       });
+      dot.addEventListener('mouseleave', () => {
+        if (tooltip) tooltip.style.display = 'none';
+      });
+    });
 
-      // X-axis labels (show ~5 evenly spaced)
-      const xLabels = this.shadowRoot.querySelector('#history-x-labels');
-      if (xLabels) {
-        const step = Math.max(1, Math.floor(history.length / 5));
-        const labelItems = history
-          .filter((_, i) => i % step === 0 || i === history.length - 1)
-          .map(h => `<span>${h.date.slice(5)}</span>`)
-          .join('');
-        xLabels.innerHTML = labelItems;
-      }
+    // X-axis labels (show ~5 evenly spaced)
+    const xLabels = this.shadowRoot.querySelector('#history-x-labels');
+    if (xLabels) {
+      const step = Math.max(1, Math.floor(history.length / 5));
+      const labelItems = history
+        .filter((_, i) => i % step === 0 || i === history.length - 1)
+        .map(h => `<span>${h.date.slice(5)}</span>`)
+        .join('');
+      xLabels.innerHTML = labelItems;
     }
+  }
 
-    _renderHistorySummary(history) {
-      const el = this.shadowRoot.querySelector('#history-summary');
-      if (!el || history.length === 0) return;
+  _renderHistorySummary(history) {
+    const el = this.shadowRoot.querySelector('#history-summary');
+    if (!el || history.length === 0) return;
 
-      const scores = history.map(h => h.score);
-      const latest = history[history.length - 1];
-      const best = Math.max(...scores);
-      const worst = Math.min(...scores);
-      const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
-      const trend7 = history.length >= 7
-        ? latest.score - history[history.length - 7].score : null;
+    const scores = history.map(h => h.score);
+    const latest = history[history.length - 1];
+    const best   = Math.max(...scores);
+    const worst  = Math.min(...scores);
+    const avg    = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+    const trend7 = history.length >= 7
+      ? latest.score - history[history.length - 7].score : null;
 
-      const card = (icon, label, value, color = 'var(--primary-text-color)') =>
-        `<div style="background:var(--secondary-background-color);border-radius:10px;padding:12px 14px;">
+    const card = (icon, label, value, color='var(--primary-text-color)') =>
+      `<div style="background:var(--secondary-background-color);border-radius:10px;padding:12px 14px;">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--secondary-text-color);letter-spacing:0.5px;margin-bottom:4px;">${label}</div>
         <div style="font-size:22px;font-weight:700;color:${color};">${value}</div>
       </div>`;
 
-      el.innerHTML = [
-        card('mdi:star', this.t('history.best'), best + '%', '#4caf50'),
-        card('mdi:alert', this.t('history.worst'), worst + '%', worst < 50 ? '#ef5350' : 'var(--primary-text-color)'),
-        card('mdi:approximately-equal', this.t('history.avg'), avg + '%'),
-        trend7 !== null
-          ? card('mdi:trending-up', this.t('history.trend_7d'),
+    el.innerHTML = [
+      card('mdi:star', this.t('history.best'), best + '%', '#4caf50'),
+      card('mdi:alert', this.t('history.worst'), worst + '%', worst < 50 ? '#ef5350' : 'var(--primary-text-color)'),
+      card('mdi:approximately-equal', this.t('history.avg'), avg + '%'),
+      trend7 !== null
+        ? card('mdi:trending-up', this.t('history.trend_7d'),
             (trend7 >= 0 ? '+' : '') + trend7 + ' pts',
             trend7 > 0 ? '#4caf50' : trend7 < 0 ? '#ef5350' : 'var(--secondary-text-color)')
-          : '',
-        card('mdi:counter', this.t('history.scans'), history.length),
-      ].join('');
+        : '',
+      card('mdi:counter', this.t('history.scans'), history.length),
+    ].join('');
+  }
+
+  _renderHistoryTable(history) {
+    const tbody = this.shadowRoot.querySelector('#history-tbody');
+    if (!tbody) return;
+
+    if (history.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('history.no_data')}</td></tr>`;
+      this._updateHistoryDeleteBar();
+      return;
     }
 
-    _renderHistoryTable(history) {
-      const tbody = this.shadowRoot.querySelector('#history-tbody');
-      if (!tbody) return;
+    // Most recent first
+    const reversed = [...history].reverse();
 
-      if (history.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('history.no_data')}</td></tr>`;
-        this._updateHistoryDeleteBar();
-        return;
-      }
+    // ── Pagination ──────────────────────────────────────────────────────
+    const PAG_ID = 'history-tbody';
+    const st = this._pagState(PAG_ID);
+    const paged = this._pagSlice(reversed, st.page, st.pageSize);
 
-      // Most recent first
-      const reversed = [...history].reverse();
+    tbody.innerHTML = paged.map((entry, i) => {
+      const prev = reversed[i + 1];
+      const delta = prev ? entry.score - prev.score : null;
+      const deltaStr = delta === null ? '—'
+        : delta > 0 ? `<span style="color:#4caf50">▲ +${delta}</span>`
+        : delta < 0 ? `<span style="color:#ef5350">▼ ${delta}</span>`
+        : '<span style="color:var(--secondary-text-color)">→</span>';
 
-      // ── Pagination ──────────────────────────────────────────────────────
-      const PAG_ID = 'history-tbody';
-      const st = this._pagState(PAG_ID);
-      const paged = this._pagSlice(reversed, st.page, st.pageSize);
+      const scoreCol = entry.score >= 80 ? '#4caf50' : entry.score >= 50 ? '#ffa726' : '#ef5350';
+      const bg = i === 0 ? 'background:rgba(var(--rgb-primary-color,33,150,243),0.05);' : '';
+      const tsEsc = (entry.ts || '').replace(/"/g, '&quot;');
 
-      tbody.innerHTML = paged.map((entry, i) => {
-        const prev = reversed[i + 1];
-        const delta = prev ? entry.score - prev.score : null;
-        const deltaStr = delta === null ? '—'
-          : delta > 0 ? `<span style="color:#4caf50">▲ +${delta}</span>`
-            : delta < 0 ? `<span style="color:#ef5350">▼ ${delta}</span>`
-              : '<span style="color:var(--secondary-text-color)">→</span>';
-
-        const scoreCol = entry.score >= 80 ? '#4caf50' : entry.score >= 50 ? '#ffa726' : '#ef5350';
-        const bg = i === 0 ? 'background:rgba(var(--rgb-primary-color,33,150,243),0.05);' : '';
-        const tsEsc = (entry.ts || '').replace(/"/g, '&quot;');
-
-        return `<tr style="${bg}border-bottom:1px solid var(--divider-color);">
+      return `<tr style="${bg}border-bottom:1px solid var(--divider-color);">
         <td style="padding:8px 10px;">
           <input type="checkbox" class="history-cb" data-ts="${tsEsc}" style="cursor:pointer;">
         </td>
@@ -3598,178 +3660,178 @@ function _updateTypeCounts(el) {
         <td style="padding:8px 10px;text-align:center;">${deltaStr}</td>
         <td style="padding:8px 10px;text-align:center;">${entry.total ?? '—'}</td>
       </tr>`;
-      }).join('');
+    }).join('');
 
-      // Stocker les données pour le "tout supprimer"
-      tbody._historyData = history;
+    // Stocker les données pour le "tout supprimer"
+    tbody._historyData = history;
 
-      // Listeners checkboxes
-      this._attachHistoryDeleteListeners(history);
-      this._updateHistoryDeleteBar();
+    // Listeners checkboxes
+    this._attachHistoryDeleteListeners(history);
+    this._updateHistoryDeleteBar();
 
-      // Barre de pagination
-      // tbody.parentElement = <table> (pas de .table-wrap ici)
-      // La barre est insérée APRÈS <table> comme sibling → supprimer dans le parent
-      const tableEl = tbody.closest('table') || tbody.parentElement;
-      const tableParent = tableEl?.parentElement;
-      if (tableParent) {
-        // Supprimer toutes les barres existantes dans le parent (évite l'accumulation)
-        tableParent.querySelectorAll('.pag-bar[data-pag-id="history-tbody"]')
-          .forEach(el => el.remove());
-        tableEl.insertAdjacentHTML('afterend',
-          this._pagHTML(PAG_ID, reversed.length, st.page, st.pageSize)
-        );
-        this._pagWire(tableParent, () => this._renderHistoryTable(history));
-      }
+    // Barre de pagination
+    // tbody.parentElement = <table> (pas de .table-wrap ici)
+    // La barre est insérée APRÈS <table> comme sibling → supprimer dans le parent
+    const tableEl = tbody.closest('table') || tbody.parentElement;
+    const tableParent = tableEl?.parentElement;
+    if (tableParent) {
+      // Supprimer toutes les barres existantes dans le parent (évite l'accumulation)
+      tableParent.querySelectorAll('.pag-bar[data-pag-id="history-tbody"]')
+        .forEach(el => el.remove());
+      tableEl.insertAdjacentHTML('afterend',
+        this._pagHTML(PAG_ID, reversed.length, st.page, st.pageSize)
+      );
+      this._pagWire(tableParent, () => this._renderHistoryTable(history));
+    }
+  }
+
+  _attachHistoryDeleteListeners(history) {
+    // Select-all
+    const selAll = this.shadowRoot.querySelector('#history-select-all');
+    if (selAll) {
+      selAll.onchange = () => {
+        this.shadowRoot.querySelectorAll('.history-cb').forEach(cb => { cb.checked = selAll.checked; });
+        this._updateHistoryDeleteBar();
+      };
     }
 
-    _attachHistoryDeleteListeners(history) {
-      // Select-all
-      const selAll = this.shadowRoot.querySelector('#history-select-all');
-      if (selAll) {
-        selAll.onchange = () => {
-          this.shadowRoot.querySelectorAll('.history-cb').forEach(cb => { cb.checked = selAll.checked; });
-          this._updateHistoryDeleteBar();
-        };
-      }
-
-      // Individual checkboxes
-      this.shadowRoot.querySelectorAll('.history-cb').forEach(cb => {
-        cb.onchange = () => {
-          const all = this.shadowRoot.querySelectorAll('.history-cb');
-          const checked = this.shadowRoot.querySelectorAll('.history-cb:checked');
-          const selAllEl = this.shadowRoot.querySelector('#history-select-all');
-          if (selAllEl) {
-            selAllEl.checked = checked.length === all.length;
-            selAllEl.indeterminate = checked.length > 0 && checked.length < all.length;
-          }
-          this._updateHistoryDeleteBar();
-        };
-      });
-
-      // Delete selected
-      const delBtn = this.shadowRoot.querySelector('#history-delete-selected');
-      if (delBtn) {
-        delBtn.onclick = () => this._deleteSelectedHistory();
-      }
-
-      // Delete all
-      const delAllBtn = this.shadowRoot.querySelector('#history-delete-all');
-      if (delAllBtn) {
-        delAllBtn.onclick = () => this._deleteAllHistory(history);
-      }
-    }
-
-    _updateHistoryDeleteBar() {
-      const bar = this.shadowRoot.querySelector('#history-delete-bar');
-      const countEl = this.shadowRoot.querySelector('#history-selected-count');
-      if (!bar) return;
-      const checked = this.shadowRoot.querySelectorAll('.history-cb:checked');
-      const total = this.shadowRoot.querySelectorAll('.history-cb');
-      if (checked.length > 0) {
-        bar.style.display = 'flex';
-        if (countEl) countEl.textContent = this.t('history.entries_selected').replace('{count}', checked.length).replace('{total}', total.length);
-      } else {
-        bar.style.display = 'none';
-      }
-    }
-
-    async _deleteSelectedHistory() {
-      const checked = [...this.shadowRoot.querySelectorAll('.history-cb:checked')];
-      if (checked.length === 0) return;
-      const timestamps = checked.map(cb => cb.dataset.ts).filter(Boolean);
-      if (!confirm(this.t('history.confirm_delete').replace('{count}', timestamps.length))) return;
-      await this._doDeleteHistory(timestamps);
-    }
-
-    async _deleteAllHistory(history) {
-      const total = history.length;
-      if (!confirm(this.t('history.confirm_delete_all').replace('{total}', total))) return;
-      const timestamps = history.map(e => e.ts).filter(Boolean);
-      await this._doDeleteHistory(timestamps);
-    }
-
-    async _doDeleteHistory(timestamps) {
-      try {
-        const result = await this._hass.callWS({
-          type: 'haca/delete_history',
-          timestamps,
-        });
-        const deleted = result?.deleted ?? timestamps.length;
-        // Recharger l'historique
-        await this.loadHistory();
-        // Feedback rapide
-        const bar = this.shadowRoot.querySelector('#history-delete-bar');
-        if (bar) {
-          const msg = document.createElement('span');
-          msg.style.cssText = 'color:var(--success-color,#4caf50);font-size:13px;font-weight:600;';
-          msg.textContent = this.t('history.deleted').replace('{count}', deleted);
-          bar.appendChild(msg);
-          setTimeout(() => msg.remove(), 3000);
+    // Individual checkboxes
+    this.shadowRoot.querySelectorAll('.history-cb').forEach(cb => {
+      cb.onchange = () => {
+        const all = this.shadowRoot.querySelectorAll('.history-cb');
+        const checked = this.shadowRoot.querySelectorAll('.history-cb:checked');
+        const selAllEl = this.shadowRoot.querySelector('#history-select-all');
+        if (selAllEl) {
+          selAllEl.checked = checked.length === all.length;
+          selAllEl.indeterminate = checked.length > 0 && checked.length < all.length;
         }
-      } catch (e) {
-        alert(this.t('history.delete_error') + e.message);
-      }
+        this._updateHistoryDeleteBar();
+      };
+    });
+
+    // Delete selected
+    const delBtn = this.shadowRoot.querySelector('#history-delete-selected');
+    if (delBtn) {
+      delBtn.onclick = () => this._deleteSelectedHistory();
     }
 
-
-    // ── complexity.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  COMPLEXITY RANKING TABLE
-    // ═══════════════════════════════════════════════════════════════════════
-
-    _renderComplexityTable(scores) {
-      const tbody = this.shadowRoot.querySelector('#complexity-tbody');
-      if (!tbody) return;
-
-      // Store for sorting
-      this._complexityScores = scores;
-      this._complexitySortKey = this._complexitySortKey || 'score';
-      this._complexitySortAsc = this._complexitySortAsc ?? false;
-
-      this._drawComplexityTable();
-      this._attachComplexitySortListeners();
+    // Delete all
+    const delAllBtn = this.shadowRoot.querySelector('#history-delete-all');
+    if (delAllBtn) {
+      delAllBtn.onclick = () => this._deleteAllHistory(history);
     }
+  }
 
-    _drawComplexityTable() {
-      const tbody = this.shadowRoot.querySelector('#complexity-tbody');
-      if (!tbody) return;
-      const scores = this._complexityScores || [];
+  _updateHistoryDeleteBar() {
+    const bar = this.shadowRoot.querySelector('#history-delete-bar');
+    const countEl = this.shadowRoot.querySelector('#history-selected-count');
+    if (!bar) return;
+    const checked = this.shadowRoot.querySelectorAll('.history-cb:checked');
+    const total = this.shadowRoot.querySelectorAll('.history-cb');
+    if (checked.length > 0) {
+      bar.style.display = 'flex';
+      if (countEl) countEl.textContent = this.t('history.entries_selected').replace('{count}', checked.length).replace('{total}', total.length);
+    } else {
+      bar.style.display = 'none';
+    }
+  }
 
-      if (scores.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--secondary-text-color);">
-        ${this.t('misc.run_scan_scores')}</td></tr>`;
-        return;
-      }
+  async _deleteSelectedHistory() {
+    const checked = [...this.shadowRoot.querySelectorAll('.history-cb:checked')];
+    if (checked.length === 0) return;
+    const timestamps = checked.map(cb => cb.dataset.ts).filter(Boolean);
+    if (!confirm(this.t('history.confirm_delete').replace('{count}', timestamps.length))) return;
+    await this._doDeleteHistory(timestamps);
+  }
 
-      const sorted = [...scores].sort((a, b) => {
-        const av = a[this._complexitySortKey] ?? 0;
-        const bv = b[this._complexitySortKey] ?? 0;
-        const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
-        return this._complexitySortAsc ? cmp : -cmp;
+  async _deleteAllHistory(history) {
+    const total = history.length;
+    if (!confirm(this.t('history.confirm_delete_all').replace('{total}', total))) return;
+    const timestamps = history.map(e => e.ts).filter(Boolean);
+    await this._doDeleteHistory(timestamps);
+  }
+
+  async _doDeleteHistory(timestamps) {
+    try {
+      const result = await this._hass.callWS({
+        type: 'haca/delete_history',
+        timestamps,
       });
+      const deleted = result?.deleted ?? timestamps.length;
+      // Recharger l'historique
+      await this.loadHistory();
+      // Feedback rapide
+      const bar = this.shadowRoot.querySelector('#history-delete-bar');
+      if (bar) {
+        const msg = document.createElement('span');
+        msg.style.cssText = 'color:var(--success-color,#4caf50);font-size:13px;font-weight:600;';
+        msg.textContent = this.t('history.deleted').replace('{count}', deleted);
+        bar.appendChild(msg);
+        setTimeout(() => msg.remove(), 3000);
+      }
+    } catch (e) {
+      alert(this.t('history.delete_error') + e.message);
+    }
+  }
 
-      tbody.innerHTML = sorted.map((row, i) => {
-        const score = row.score;
-        // Colour + label per threshold
-        const [scoreColor, levelBg, levelText] =
-          score >= 50 ? ['#ef5350', 'rgba(239,83,80,0.12)', '🚨 God'] :
-            score >= 30 ? ['#ffa726', 'rgba(255,167,38,0.12)', '⚠️ Complexe'] :
-              score >= 15 ? ['#ffd54f', 'rgba(255,213,79,0.10)', '🔶 Moyen'] :
-                ['#66bb6a', 'rgba(102,187,106,0.10)', '✅ Simple'];
 
-        // Score bar (visual, max = highest score in dataset)
-        const maxScore = sorted[0]?.score || 1;
-        const barPct = Math.round((score / Math.max(maxScore, 1)) * 100);
+// ── complexity.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  COMPLEXITY RANKING TABLE
+  // ═══════════════════════════════════════════════════════════════════════
 
-        const editUrl = this.getHAEditUrl(row.entity_id);
+  _renderComplexityTable(scores) {
+    const tbody = this.shadowRoot.querySelector('#complexity-tbody');
+    if (!tbody) return;
 
-        return `<tr style="border-bottom:1px solid var(--divider-color);${i === 0 ? 'background:rgba(var(--rgb-primary-color,33,150,243),0.03);' : ''}">
+    // Store for sorting
+    this._complexityScores = scores;
+    this._complexitySortKey = this._complexitySortKey || 'score';
+    this._complexitySortAsc = this._complexitySortAsc ?? false;
+
+    this._drawComplexityTable();
+    this._attachComplexitySortListeners();
+  }
+
+  _drawComplexityTable() {
+    const tbody = this.shadowRoot.querySelector('#complexity-tbody');
+    if (!tbody) return;
+    const scores = this._complexityScores || [];
+
+    if (scores.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--secondary-text-color);">
+        ${this.t('misc.run_scan_scores')}</td></tr>`;
+      return;
+    }
+
+    const sorted = [...scores].sort((a, b) => {
+      const av = a[this._complexitySortKey] ?? 0;
+      const bv = b[this._complexitySortKey] ?? 0;
+      const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+      return this._complexitySortAsc ? cmp : -cmp;
+    });
+
+    tbody.innerHTML = sorted.map((row, i) => {
+      const score = row.score;
+      // Colour + label per threshold
+      const [scoreColor, levelBg, levelText] =
+        score >= 50 ? ['#ef5350', 'rgba(239,83,80,0.12)', '🚨 God'] :
+        score >= 30 ? ['#ffa726', 'rgba(255,167,38,0.12)', '⚠️ Complexe'] :
+        score >= 15 ? ['#ffd54f', 'rgba(255,213,79,0.10)', '🔶 Moyen'] :
+                      ['#66bb6a', 'rgba(102,187,106,0.10)', '✅ Simple'];
+
+      // Score bar (visual, max = highest score in dataset)
+      const maxScore = sorted[0]?.score || 1;
+      const barPct = Math.round((score / Math.max(maxScore, 1)) * 100);
+
+      const editUrl = this.getHAEditUrl(row.entity_id);
+
+      return `<tr style="border-bottom:1px solid var(--divider-color);${i === 0 ? 'background:rgba(var(--rgb-primary-color,33,150,243),0.03);' : ''}">
         <td style="padding:8px 10px;max-width:220px;">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${this.escapeHtml(row.alias)}">
             ${editUrl
-            ? `<a href="${editUrl}" target="_blank" style="color:var(--primary-text-color);text-decoration:none;">${this.escapeHtml(row.alias)}</a>`
-            : this.escapeHtml(row.alias)}
+              ? `<a href="${editUrl}" target="_blank" style="color:var(--primary-text-color);text-decoration:none;">${this.escapeHtml(row.alias)}</a>`
+              : this.escapeHtml(row.alias)}
           </div>
           <div style="font-size:11px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this.escapeHtml(row.entity_id)}</div>
         </td>
@@ -3795,96 +3857,96 @@ function _updateTypeCounts(el) {
           </button>
         </td>
       </tr>`;
-      }).join('');
+    }).join('');
 
-      // Wire AI buttons
-      tbody.querySelectorAll('.cplx-ai-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const row = (this._complexityScores || []).find(r => r.entity_id === btn.dataset.entity);
-          if (row) this._showComplexityAI(row);
-        });
+    // Wire AI buttons
+    tbody.querySelectorAll('.cplx-ai-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = (this._complexityScores || []).find(r => r.entity_id === btn.dataset.entity);
+        if (row) this._showComplexityAI(row);
       });
-    }
+    });
+  }
 
-    _attachComplexitySortListeners() {
-      // Header click to sort
-      const ths = this.shadowRoot.querySelectorAll('#complexity-table-container th[data-sort]');
-      ths.forEach(th => {
-        // Remove old listener by cloning
-        const fresh = th.cloneNode(true);
-        th.parentNode.replaceChild(fresh, th);
-        fresh.addEventListener('click', () => {
-          const key = fresh.dataset.sort;
-          if (this._complexitySortKey === key) {
-            this._complexitySortAsc = !this._complexitySortAsc;
-          } else {
-            this._complexitySortKey = key;
-            this._complexitySortAsc = false;
-          }
-          this._drawComplexityTable();
-          this._attachComplexitySortListeners();
-        });
-      });
-
-      // Sort button (shortcut: toggle score asc/desc)
-      const btn = this.shadowRoot.querySelector('#complexity-sort-btn');
-      if (btn) {
-        const fresh = btn.cloneNode(true);
-        btn.parentNode.replaceChild(fresh, btn);
-        fresh.addEventListener('click', () => {
-          this._complexitySortKey = 'score';
+  _attachComplexitySortListeners() {
+    // Header click to sort
+    const ths = this.shadowRoot.querySelectorAll('#complexity-table-container th[data-sort]');
+    ths.forEach(th => {
+      // Remove old listener by cloning
+      const fresh = th.cloneNode(true);
+      th.parentNode.replaceChild(fresh, th);
+      fresh.addEventListener('click', () => {
+        const key = fresh.dataset.sort;
+        if (this._complexitySortKey === key) {
           this._complexitySortAsc = !this._complexitySortAsc;
-          fresh.innerHTML = `<ha-icon icon="mdi:sort-${this._complexitySortAsc ? 'ascending' : 'descending'}"></ha-icon> Score ${this._complexitySortAsc ? '↑' : '↓'}`;
-          this._drawComplexityTable();
-        });
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    //  SEGMENT CONTROL — 3rd navigation level (Issues / Scores)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    _switchSegment(clickedBtn) {
-      const segId = clickedBtn.dataset.seg;
-      const panelId = 'seg-' + clickedBtn.dataset.panel; // IDs are "seg-auto-issues" etc.
-
-      // Toggle buttons in this segment bar
-      this.shadowRoot.querySelectorAll(`.segment-btn[data-seg="${segId}"]`).forEach(b => {
-        b.classList.toggle('active', b === clickedBtn);
+        } else {
+          this._complexitySortKey = key;
+          this._complexitySortAsc = false;
+        }
+        this._drawComplexityTable();
+        this._attachComplexitySortListeners();
       });
+    });
 
-      // Show the target panel, hide the others in the same group
-      this.shadowRoot.querySelectorAll(`[id^="seg-${segId}-"]`).forEach(panel => {
-        panel.classList.toggle('active', panel.id === panelId);
+    // Sort button (shortcut: toggle score asc/desc)
+    const btn = this.shadowRoot.querySelector('#complexity-sort-btn');
+    if (btn) {
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener('click', () => {
+        this._complexitySortKey = 'score';
+        this._complexitySortAsc = !this._complexitySortAsc;
+        fresh.innerHTML = `<ha-icon icon="mdi:sort-${this._complexitySortAsc ? 'ascending' : 'descending'}"></ha-icon> Score ${this._complexitySortAsc ? '↑' : '↓'}`;
+        this._drawComplexityTable();
       });
     }
+  }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  SCRIPT COMPLEXITY TABLE
-    // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
+  //  SEGMENT CONTROL — 3rd navigation level (Issues / Scores)
+  // ═══════════════════════════════════════════════════════════════════════
 
-    _renderScriptComplexityTable(scores) {
-      const tbody = this.shadowRoot.querySelector('#script-complexity-tbody');
-      if (!tbody) return;
-      this._scriptComplexityScores = scores;
+  _switchSegment(clickedBtn) {
+    const segId   = clickedBtn.dataset.seg;
+    const panelId = 'seg-' + clickedBtn.dataset.panel; // IDs are "seg-auto-issues" etc.
 
-      if (!scores.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>`;
-        return;
-      }
+    // Toggle buttons in this segment bar
+    this.shadowRoot.querySelectorAll(`.segment-btn[data-seg="${segId}"]`).forEach(b => {
+      b.classList.toggle('active', b === clickedBtn);
+    });
 
-      const maxScore = scores[0]?.score || 1;
-      tbody.innerHTML = scores.map((row, i) => {
-        const score = row.score;
-        const [scoreColor, levelBg, levelText] =
-          score >= 50 ? ['#ef5350', 'rgba(239,83,80,0.12)', '🚨 God'] :
-            score >= 30 ? ['#ffa726', 'rgba(255,167,38,0.12)', '⚠️ Complexe'] :
-              score >= 15 ? ['#ffd54f', 'rgba(255,213,79,0.10)', '🔶 Moyen'] :
-                ['#66bb6a', 'rgba(102,187,106,0.10)', '✅ Simple'];
-        const barPct = Math.round((score / Math.max(maxScore, 1)) * 100);
-        const editUrl = this.getHAEditUrl(row.entity_id);
+    // Show the target panel, hide the others in the same group
+    this.shadowRoot.querySelectorAll(`[id^="seg-${segId}-"]`).forEach(panel => {
+      panel.classList.toggle('active', panel.id === panelId);
+    });
+  }
 
-        return `<tr style="border-bottom:1px solid var(--divider-color);${i === 0 ? 'background:rgba(var(--rgb-primary-color,33,150,243),0.03);' : ''}">
+  // ═══════════════════════════════════════════════════════════════════════
+  //  SCRIPT COMPLEXITY TABLE
+  // ═══════════════════════════════════════════════════════════════════════
+
+  _renderScriptComplexityTable(scores) {
+    const tbody = this.shadowRoot.querySelector('#script-complexity-tbody');
+    if (!tbody) return;
+    this._scriptComplexityScores = scores;
+
+    if (!scores.length) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>`;
+      return;
+    }
+
+    const maxScore = scores[0]?.score || 1;
+    tbody.innerHTML = scores.map((row, i) => {
+      const score = row.score;
+      const [scoreColor, levelBg, levelText] =
+        score >= 50 ? ['#ef5350', 'rgba(239,83,80,0.12)',  '🚨 God'] :
+        score >= 30 ? ['#ffa726', 'rgba(255,167,38,0.12)', '⚠️ Complexe'] :
+        score >= 15 ? ['#ffd54f', 'rgba(255,213,79,0.10)', '🔶 Moyen'] :
+                      ['#66bb6a', 'rgba(102,187,106,0.10)','✅ Simple'];
+      const barPct = Math.round((score / Math.max(maxScore, 1)) * 100);
+      const editUrl = this.getHAEditUrl(row.entity_id);
+
+      return `<tr style="border-bottom:1px solid var(--divider-color);${i===0?'background:rgba(var(--rgb-primary-color,33,150,243),0.03);':''}">
         <td style="padding:8px 10px;max-width:240px;">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${this.escapeHtml(row.alias)}">
             ${editUrl ? `<a href="${editUrl}" target="_blank" style="color:var(--primary-text-color);text-decoration:none;">${this.escapeHtml(row.alias)}</a>` : this.escapeHtml(row.alias)}
@@ -3911,35 +3973,35 @@ function _updateTypeCounts(el) {
           </button>
         </td>
       </tr>`;
-      }).join('');
+    }).join('');
 
-      // Wire AI buttons
-      tbody.querySelectorAll('.cplx-ai-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const row = (this._scriptComplexityScores || []).find(r => r.entity_id === btn.dataset.entity);
-          if (row) this._showComplexityAI(row);
-        });
+    // Wire AI buttons
+    tbody.querySelectorAll('.cplx-ai-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = (this._scriptComplexityScores || []).find(r => r.entity_id === btn.dataset.entity);
+        if (row) this._showComplexityAI(row);
       });
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  SCENE STATS TABLE
+  // ═══════════════════════════════════════════════════════════════════════
+
+  _renderSceneStatsTable(stats) {
+    const tbody = this.shadowRoot.querySelector('#scene-stats-tbody');
+    if (!tbody) return;
+
+    if (!stats.length) {
+      tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>`;
+      return;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  SCENE STATS TABLE
-    // ═══════════════════════════════════════════════════════════════════════
-
-    _renderSceneStatsTable(stats) {
-      const tbody = this.shadowRoot.querySelector('#scene-stats-tbody');
-      if (!tbody) return;
-
-      if (!stats.length) {
-        tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>`;
-        return;
-      }
-
-      const maxE = stats[0]?.entities || 1;
-      tbody.innerHTML = stats.map((row, i) => {
-        const barPct = Math.round((row.entities / Math.max(maxE, 1)) * 100);
-        const editUrl = this.getHAEditUrl(row.entity_id);
-        return `<tr style="border-bottom:1px solid var(--divider-color);">
+    const maxE = stats[0]?.entities || 1;
+    tbody.innerHTML = stats.map((row, i) => {
+      const barPct = Math.round((row.entities / Math.max(maxE, 1)) * 100);
+      const editUrl = this.getHAEditUrl(row.entity_id);
+      return `<tr style="border-bottom:1px solid var(--divider-color);">
         <td style="padding:8px 10px;max-width:260px;">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${this.escapeHtml(row.alias)}">
             ${editUrl ? `<a href="${editUrl}" target="_blank" style="color:var(--primary-text-color);text-decoration:none;">${this.escapeHtml(row.alias)}</a>` : this.escapeHtml(row.alias)}
@@ -3955,30 +4017,30 @@ function _updateTypeCounts(el) {
           </div>
         </td>
       </tr>`;
-      }).join('');
+    }).join('');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  BLUEPRINT STATS TABLE
+  // ═══════════════════════════════════════════════════════════════════════
+
+  _renderBlueprintStatsTable(stats) {
+    const tbody = this.shadowRoot.querySelector('#blueprint-stats-tbody');
+    if (!tbody) return;
+
+    if (!stats.length) {
+      tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>`;
+      return;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  BLUEPRINT STATS TABLE
-    // ═══════════════════════════════════════════════════════════════════════
+    const maxC = stats[0]?.count || 1;
+    tbody.innerHTML = stats.map(row => {
+      const barPct = Math.round((row.count / Math.max(maxC, 1)) * 100);
+      const shortPath = row.path.split('/').pop();
+      const autoList = (row.automations || []).slice(0, 5).map(a => this.escapeHtml(a)).join(', ')
+        + (row.automations.length > 5 ? ` +${row.automations.length - 5}` : '');
 
-    _renderBlueprintStatsTable(stats) {
-      const tbody = this.shadowRoot.querySelector('#blueprint-stats-tbody');
-      if (!tbody) return;
-
-      if (!stats.length) {
-        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>`;
-        return;
-      }
-
-      const maxC = stats[0]?.count || 1;
-      tbody.innerHTML = stats.map(row => {
-        const barPct = Math.round((row.count / Math.max(maxC, 1)) * 100);
-        const shortPath = row.path.split('/').pop();
-        const autoList = (row.automations || []).slice(0, 5).map(a => this.escapeHtml(a)).join(', ')
-          + (row.automations.length > 5 ? ` +${row.automations.length - 5}` : '');
-
-        return `<tr style="border-bottom:1px solid var(--divider-color);">
+      return `<tr style="border-bottom:1px solid var(--divider-color);">
         <td style="padding:8px 10px;max-width:240px;">
           <div style="font-weight:600;" title="${this.escapeHtml(row.path)}">${this.escapeHtml(shortPath)}</div>
           <div style="font-size:11px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this.escapeHtml(row.path)}</div>
@@ -3993,20 +4055,20 @@ function _updateTypeCounts(el) {
         </td>
         <td style="padding:8px 10px;font-size:12px;color:var(--secondary-text-color);">${autoList || '—'}</td>
       </tr>`;
-      }).join('');
-    }
+    }).join('');
+  }
 
-    // ── optimizer.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  AI AUTOMATION OPTIMIZER — multi-tab modal
-    // ═══════════════════════════════════════════════════════════════════════
+// ── optimizer.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  AI AUTOMATION OPTIMIZER — multi-tab modal
+  // ═══════════════════════════════════════════════════════════════════════
 
-    async _showOptimizer(issue) {
-      const entityId = issue.entity_id;
-      const alias = issue.alias || entityId;
+  async _showOptimizer(issue) {
+    const entityId = issue.entity_id;
+    const alias    = issue.alias || entityId;
 
-      // ── Loading modal ──────────────────────────────────────────────────
-      const modal = this.createModal(`
+    // ── Loading modal ──────────────────────────────────────────────────
+    const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px;">
         <div class="loader"></div>
         <div style="font-size:18px;font-weight:600;">✨ Optimisation en cours…</div>
@@ -4017,24 +4079,24 @@ function _updateTypeCounts(el) {
       </div>
     `);
 
-      try {
-        // Pass all current issues + complexity scores for context
-        const allIssues = this._lastData?.automation_issue_list || [];
-        const scores = this._lastData?.complexity_scores || [];
+    try {
+      // Pass all current issues + complexity scores for context
+      const allIssues = this._lastData?.automation_issue_list || [];
+      const scores    = this._lastData?.complexity_scores     || [];
 
-        const resp = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'optimize_automation',
-          service_data: { entity_id: entityId, issues: allIssues, complexity_scores: scores },
-          return_response: true,
-        });
+      const resp = await this.hass.callWS({
+        type:         'call_service',
+        domain:       'config_auditor',
+        service:      'optimize_automation',
+        service_data: { entity_id: entityId, issues: allIssues, complexity_scores: scores },
+        return_response: true,
+      });
 
-        const data = resp?.response || resp || {};
-        this._renderOptimizerModal(modal, data, alias, entityId);
+      const data = resp?.response || resp || {};
+      this._renderOptimizerModal(modal, data, alias, entityId);
 
-      } catch (err) {
-        modal._updateContent(`
+    } catch (err) {
+      modal._updateContent(`
         <div style="padding:32px;text-align:center;">
           <div style="font-size:40px;margin-bottom:16px;">❌</div>
           <div style="color:var(--error-color);font-size:15px;">${this.escapeHtml(err.message || this.t('fix.error_unknown'))}</div>
@@ -4042,25 +4104,25 @@ function _updateTypeCounts(el) {
             style="margin-top:20px;background:var(--primary-color);color:white;padding:8px 20px;border-radius:8px;">Fermer</button>
         </div>
       `);
-      }
     }
+  }
 
-    _renderOptimizerModal(modal, data, alias, entityId) {
-      const score = data.score || 0;
-      const patterns = data.detected_patterns || [];
-      const issues = data.issues_found || [];
-      const hasSplit = data.has_split;
-      const hasBlueprint = data.has_blueprint;
-      const hasMod = !!data.modernised_yaml?.trim();
+  _renderOptimizerModal(modal, data, alias, entityId) {
+    const score        = data.score || 0;
+    const patterns     = data.detected_patterns || [];
+    const issues       = data.issues_found      || [];
+    const hasSplit     = data.has_split;
+    const hasBlueprint = data.has_blueprint;
+    const hasMod       = !!data.modernised_yaml?.trim();
 
-      const tabs = [
-        { id: 'optim-tab-analysis', icon: 'mdi:magnify', label: 'Diagnostic', show: true },
-        { id: 'optim-tab-split', icon: 'mdi:scissors-cutting', label: 'Découpage', show: hasSplit },
-        { id: 'optim-tab-modern', icon: 'mdi:code-braces', label: 'Modernisation', show: hasMod },
-        { id: 'optim-tab-blueprint', icon: 'mdi:puzzle', label: 'Blueprint', show: hasBlueprint },
-      ].filter(t => t.show);
+    const tabs = [
+      { id: 'optim-tab-analysis',   icon: 'mdi:magnify',       label: 'Diagnostic',     show: true },
+      { id: 'optim-tab-split',      icon: 'mdi:scissors-cutting', label: 'Découpage',   show: hasSplit },
+      { id: 'optim-tab-modern',     icon: 'mdi:code-braces',   label: 'Modernisation',  show: hasMod },
+      { id: 'optim-tab-blueprint',  icon: 'mdi:puzzle',        label: 'Blueprint',      show: hasBlueprint },
+    ].filter(t => t.show);
 
-      const tabBtns = tabs.map((t, i) => `
+    const tabBtns = tabs.map((t, i) => `
       <button class="optim-tab-btn${i === 0 ? ' active' : ''}" data-panel="${t.id}"
         style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:none;
                border-bottom:${i === 0 ? '2px solid var(--primary-color)' : '2px solid transparent'};
@@ -4071,21 +4133,21 @@ function _updateTypeCounts(el) {
         ${t.id === 'optim-tab-blueprint' ? '<span style="background:#e8a838;color:white;border-radius:8px;padding:0 6px;font-size:10px;">MATCH</span>' : ''}
       </button>`).join('');
 
-      // ── Score badge ────────────────────────────────────────────────────
-      const [scoreColor, levelLabel] =
-        score >= 50 ? ['#ef5350', '🚨 God Automation'] :
-          score >= 30 ? ['#ffa726', '⚠️ Complexe'] :
-            score >= 15 ? ['#ffd54f', '🔶 Moyen'] :
-              ['#66bb6a', '✅ Simple'];
+    // ── Score badge ────────────────────────────────────────────────────
+    const [scoreColor, levelLabel] =
+      score >= 50 ? ['#ef5350', '🚨 God Automation'] :
+      score >= 30 ? ['#ffa726', '⚠️ Complexe']       :
+      score >= 15 ? ['#ffd54f', '🔶 Moyen']           :
+                    ['#66bb6a', '✅ Simple'];
 
-      // ── Patterns pills ─────────────────────────────────────────────────
-      const patternPills = patterns.map(p =>
-        `<span style="background:rgba(239,83,80,0.1);border:1px solid #ef5350;color:#b71c1c;
+    // ── Patterns pills ─────────────────────────────────────────────────
+    const patternPills = patterns.map(p =>
+      `<span style="background:rgba(239,83,80,0.1);border:1px solid #ef5350;color:#b71c1c;
               border-radius:6px;padding:2px 10px;font-size:11px;">⚠️ ${this.escapeHtml(p)}</span>`
-      ).join('');
+    ).join('');
 
-      // ── Tab panels ─────────────────────────────────────────────────────
-      const panelAnalysis = `
+    // ── Tab panels ─────────────────────────────────────────────────────
+    const panelAnalysis = `
       <div id="optim-tab-analysis" class="optim-panel active" style="padding:20px;overflow-y:auto;flex:1;">
         ${patterns.length ? `
         <div style="margin-bottom:16px;">
@@ -4102,7 +4164,7 @@ function _updateTypeCounts(el) {
         <div style="margin-top:16px;">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;
                color:var(--secondary-text-color);margin-bottom:8px;">Issues HACA associées</div>
-          ${issues.slice(0, 8).map(i => `
+          ${issues.slice(0,8).map(i => `
           <div style="padding:8px 12px;border-left:3px solid #ffa726;background:rgba(255,167,38,0.07);
                border-radius:0 8px 8px 0;margin-bottom:6px;font-size:13px;">
             ${this.escapeHtml(i)}
@@ -4110,7 +4172,7 @@ function _updateTypeCounts(el) {
         </div>` : ''}
       </div>`;
 
-      const mkYamlPanel = (id, yamlText, applyLabel, isMulti) => `
+    const mkYamlPanel = (id, yamlText, applyLabel, isMulti) => `
       <div id="${id}" class="optim-panel" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
         <div style="padding:8px 16px;background:rgba(var(--rgb-primary-color,33,150,243),0.06);
              font-size:12px;color:var(--secondary-text-color);border-bottom:1px solid var(--divider-color);
@@ -4150,16 +4212,16 @@ function _updateTypeCounts(el) {
         </div>
       </div>`;
 
-      const panelSplit = hasSplit
-        ? mkYamlPanel('optim-tab-split', data.split_automations, this.t('misc.apply_split') || 'Apply split', true)
-        : '';
-      const panelModern = hasMod
-        ? mkYamlPanel('optim-tab-modern', data.modernised_yaml, this.t('misc.apply_modernize') || 'Apply modernization', false)
-        : '';
+    const panelSplit = hasSplit
+      ? mkYamlPanel('optim-tab-split', data.split_automations, this.t('misc.apply_split') || 'Apply split', true)
+      : '';
+    const panelModern = hasMod
+      ? mkYamlPanel('optim-tab-modern', data.modernised_yaml, this.t('misc.apply_modernize') || 'Apply modernization', false)
+      : '';
 
-      // Blueprint panel
-      const bp = data.blueprint_match || {};
-      const panelBP = hasBlueprint ? `
+    // Blueprint panel
+    const bp = data.blueprint_match || {};
+    const panelBP = hasBlueprint ? `
       <div id="optim-tab-blueprint" class="optim-panel" style="display:none;padding:20px;overflow-y:auto;flex:1;">
         <div style="background:rgba(232,168,56,0.1);border:1px solid #e8a838;border-radius:12px;padding:16px;margin-bottom:16px;">
           <div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px;">
@@ -4188,7 +4250,7 @@ function _updateTypeCounts(el) {
         </div>` : ''}
       </div>` : '';
 
-      modal._updateContent(`
+    modal._updateContent(`
       <div style="display:flex;flex-direction:column;height:100%;max-height:92vh;">
 
         <!-- Header -->
@@ -4228,44 +4290,44 @@ function _updateTypeCounts(el) {
       </div>
     `);
 
-      // ── Tab switching ──────────────────────────────────────────────────
-      modal.querySelectorAll('.optim-tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          modal.querySelectorAll('.optim-tab-btn').forEach(b => {
-            b.style.borderBottom = '2px solid transparent';
-            b.style.color = 'var(--secondary-text-color)';
-          });
-          modal.querySelectorAll('.optim-panel').forEach(p => {
-            p.style.display = 'none'; p.classList.remove('active');
-          });
-          btn.style.borderBottom = '2px solid var(--primary-color)';
-          btn.style.color = 'var(--primary-color)';
-          const panel = modal.querySelector('#' + btn.dataset.panel);
-          if (panel) { panel.style.display = 'flex'; panel.classList.add('active'); }
+    // ── Tab switching ──────────────────────────────────────────────────
+    modal.querySelectorAll('.optim-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.optim-tab-btn').forEach(b => {
+          b.style.borderBottom = '2px solid transparent';
+          b.style.color = 'var(--secondary-text-color)';
         });
+        modal.querySelectorAll('.optim-panel').forEach(p => {
+          p.style.display = 'none'; p.classList.remove('active');
+        });
+        btn.style.borderBottom = '2px solid var(--primary-color)';
+        btn.style.color = 'var(--primary-color)';
+        const panel = modal.querySelector('#' + btn.dataset.panel);
+        if (panel) { panel.style.display = 'flex'; panel.classList.add('active'); }
       });
+    });
 
-      // ── Apply buttons ──────────────────────────────────────────────────
-      modal.querySelectorAll('.optim-apply-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const yamlText = decodeURIComponent(btn.dataset.yaml || '');
-          const eid = btn.dataset.entity;
-          if (!yamlText || !eid) return;
+    // ── Apply buttons ──────────────────────────────────────────────────
+    modal.querySelectorAll('.optim-apply-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const yamlText = decodeURIComponent(btn.dataset.yaml || '');
+        const eid      = btn.dataset.entity;
+        if (!yamlText || !eid) return;
 
-          btn.disabled = true;
-          btn.innerHTML = '<span class="btn-loader"></span> Application…';
+        btn.disabled = true;
+        btn.innerHTML = '<span class="btn-loader"></span> Application…';
 
-          try {
-            const res = await this.hass.callWS({
-              type: 'call_service',
-              domain: 'config_auditor',
-              service: 'apply_optimization',
-              service_data: { entity_id: eid, new_yaml: yamlText },
-              return_response: true,
-            });
-            const r = res?.response || res || {};
-            if (r.success) {
-              modal._updateContent(`
+        try {
+          const res = await this.hass.callWS({
+            type:         'call_service',
+            domain:       'config_auditor',
+            service:      'apply_optimization',
+            service_data: { entity_id: eid, new_yaml: yamlText },
+            return_response: true,
+          });
+          const r = res?.response || res || {};
+          if (r.success) {
+            modal._updateContent(`
               <div style="padding:48px 32px;text-align:center;">
                 <div style="font-size:56px;margin-bottom:20px;
                      filter:drop-shadow(0 4px 12px rgba(123,104,238,0.5));">✅</div>
@@ -4288,31 +4350,31 @@ function _updateTypeCounts(el) {
                 </div>
               </div>
             `);
-              setTimeout(() => this.scanAutomations(), 1200);
-            } else {
-              btn.disabled = false;
-              btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
-              this.showHANotithis._showNotification(this.t('misc.ai_error') + (r.error || this.t('fix.error_unknown')), '', 'haca_error');
-            }
-          } catch (err) {
+            setTimeout(() => this.scanAutomations(), 1200);
+          } else {
             btn.disabled = false;
             btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
-            this.showHANotithis._showNotification(this.t('misc.ai_error') + err.message, '', 'haca_error');
+            this.showHANotithis._showNotification(this.t('misc.ai_error') + (r.error || this.t('fix.error_unknown')), '', 'haca_error');
           }
-        });
+        } catch(err) {
+          btn.disabled = false;
+          btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Réessayer';
+          this.showHANotithis._showNotification(this.t('misc.ai_error') + err.message, '', 'haca_error');
+        }
       });
-    }
+    });
+  }
 
-    // ── ai_explain.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  AI COMPLEXITY ANALYSIS MODAL
-    // ═══════════════════════════════════════════════════════════════════════
+// ── ai_explain.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  AI COMPLEXITY ANALYSIS MODAL
+  // ═══════════════════════════════════════════════════════════════════════
 
-    async _showComplexityAI(row) {
-      const kind = row.entity_id.startsWith('script.') ? 'Script' : 'Automation';
+  async _showComplexityAI(row) {
+    const kind = row.entity_id.startsWith('script.') ? 'Script' : 'Automation';
 
-      // ── Loading modal ──────────────────────────────────────────────────
-      const modal = this.createModal(`
+    // ── Loading modal ──────────────────────────────────────────────────
+    const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;">
         <div class="loader"></div>
         <div style="margin-top:20px;font-size:18px;font-weight:500;">🤖 Analyse de complexité en cours…</div>
@@ -4322,29 +4384,29 @@ function _updateTypeCounts(el) {
       </div>
     `);
 
-      try {
-        const response = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'analyze_complexity_ai',
-          service_data: { row },
-          return_response: true,
-        });
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'analyze_complexity_ai',
+        service_data: { row },
+        return_response: true,
+      });
 
-        const data = response?.response || response || {};
-        const explanation = data.explanation || this.t('misc.no_explanation');
-        const splitProposal = data.split_proposal || '';
-        const hasProposal = data.has_proposal && splitProposal;
+      const data = response?.response || response || {};
+      const explanation  = data.explanation  || this.t('misc.no_explanation');
+      const splitProposal = data.split_proposal || '';
+      const hasProposal  = data.has_proposal && splitProposal;
 
-        // Score colour
-        const s = row.score;
-        const [scoreColor, levelText] =
-          s >= 50 ? ['#ef5350', '🚨 God Automation'] :
-            s >= 30 ? ['#ffa726', '⚠️ Complexe'] :
-              s >= 15 ? ['#ffd54f', '🔶 Moyen'] :
-                ['#66bb6a', '✅ Simple'];
+      // Score colour
+      const s = row.score;
+      const [scoreColor, levelText] =
+        s >= 50 ? ['#ef5350', '🚨 God Automation'] :
+        s >= 30 ? ['#ffa726', '⚠️ Complexe']       :
+        s >= 15 ? ['#ffd54f', '🔶 Moyen']           :
+                  ['#66bb6a', '✅ Simple'];
 
-        modal._updateContent(`
+      modal._updateContent(`
         <div style="display:flex;flex-direction:column;height:100%;max-height:90vh;">
 
           <!-- Header -->
@@ -4364,9 +4426,9 @@ function _updateTypeCounts(el) {
 
           <!-- Score breakdown pills -->
           <div style="padding:12px 24px;border-bottom:1px solid var(--divider-color);display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;background:var(--secondary-background-color);">
-            ${row.triggers !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔀 ${row.triggers} déclencheurs</span>` : ''}
+            ${row.triggers  !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔀 ${row.triggers} déclencheurs</span>` : ''}
             ${row.conditions !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔍 ${row.conditions} conditions</span>` : ''}
-            ${row.actions !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">▶ ${row.actions} actions</span>` : ''}
+            ${row.actions   !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">▶ ${row.actions} actions</span>` : ''}
             ${row.templates !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">📝 ${row.templates} templates</span>` : ''}
           </div>
 
@@ -4426,27 +4488,27 @@ function _updateTypeCounts(el) {
         </div>
       `);
 
-        // Close button
-        modal.querySelector('.modal-close-btn').addEventListener('click', () => {
-          if (modal._closeModal) modal._closeModal();
-          else modal.parentElement?.remove();
-        });
+      // Close button
+      modal.querySelector('.modal-close-btn').addEventListener('click', () => {
+        if (modal._closeModal) modal._closeModal();
+        else modal.parentElement?.remove();
+      });
 
-        // Apply button — write split_proposal to scripts.yaml (new scripts) + simplified automation
-        if (hasProposal) {
-          modal.querySelector('#apply-split-btn').addEventListener('click', async () => {
-            const btn = modal.querySelector('#apply-split-btn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="btn-loader"></span> Application…';
-            try {
-              await this.hass.callWS({
-                type: 'call_service',
-                domain: 'config_auditor',
-                service: 'apply_complexity_split',
-                service_data: { entity_id: row.entity_id, yaml_proposal: splitProposal },
-                return_response: false,
-              });
-              modal._updateContent(`
+      // Apply button — write split_proposal to scripts.yaml (new scripts) + simplified automation
+      if (hasProposal) {
+        modal.querySelector('#apply-split-btn').addEventListener('click', async () => {
+          const btn = modal.querySelector('#apply-split-btn');
+          btn.disabled = true;
+          btn.innerHTML = '<span class="btn-loader"></span> Application…';
+          try {
+            await this.hass.callWS({
+              type: 'call_service',
+              domain: 'config_auditor',
+              service: 'apply_complexity_split',
+              service_data: { entity_id: row.entity_id, yaml_proposal: splitProposal },
+              return_response: false,
+            });
+            modal._updateContent(`
               <div style="padding:48px 32px;text-align:center;">
                 <div style="font-size:56px;margin-bottom:20px;">✅</div>
                 <h2 style="margin-bottom:12px;">Refactoring appliqué</h2>
@@ -4460,17 +4522,17 @@ function _updateTypeCounts(el) {
                 </button>
               </div>
             `);
-              setTimeout(() => this.scanAutomations(), 1500);
-            } catch (err) {
-              btn.disabled = false;
-              btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Appliquer le refactoring';
-              this.showHANotithis._showNotification(this.t('misc.error_apply') + err.message, '', 'haca_error');
-            }
-          });
-        }
+            setTimeout(() => this.scanAutomations(), 1500);
+          } catch(err) {
+            btn.disabled = false;
+            btn.innerHTML = '<ha-icon icon="mdi:check-circle-outline"></ha-icon> Appliquer le refactoring';
+            this.showHANotithis._showNotification(this.t('misc.error_apply') + err.message, '', 'haca_error');
+          }
+        });
+      }
 
-      } catch (error) {
-        modal._updateContent(`
+    } catch(error) {
+      modal._updateContent(`
         <div style="padding:32px;text-align:center;color:var(--error-color);">
           <div style="font-size:40px;margin-bottom:16px;">❌</div>
           <div style="font-size:15px;">${this.escapeHtml(error.message || 'Erreur inconnue')}</div>
@@ -4480,346 +4542,354 @@ function _updateTypeCounts(el) {
           </button>
         </div>
       `);
+    }
+  }
+
+// ── dep_graph.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  DEPENDENCY GRAPH — D3.js force-directed
+  // ═══════════════════════════════════════════════════════════════════════
+
+  _graphNodeColor(node) {
+    if (node.has_issues) {
+      return node.max_severity === 'high' ? '#ef5350' :
+             node.max_severity === 'medium' ? '#ffa726' : '#ffd54f';
+    }
+    return {
+      automation: '#7b68ee',
+      script:     '#20b2aa',
+      scene:      '#ffa500',
+      entity:     '#6dbf6d',
+      blueprint:  '#e8a838',
+      device:     '#a0a0b0',
+    }[node.type] || '#888';
+  }
+
+  _graphNodeRadius(node) {
+    const base = { automation: 10, script: 9, scene: 9, blueprint: 10, device: 8, entity: 6 };
+    return (base[node.type] || 6) + Math.min(node.degree * 1.2, 12);
+  }
+
+  async _loadD3() {
+    if (window.d3) return window.d3;
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js';
+      s.onload = () => resolve(window.d3);
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  async _renderDepGraph(graphData) {
+    const svg = this.shadowRoot.querySelector('#dep-graph-svg');
+    const empty = this.shadowRoot.querySelector('#graph-empty');
+    if (!svg) return;
+
+    if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+      svg.style.display = 'none';
+      if (empty) empty.style.display = 'flex';
+      return;
+    }
+
+    svg.style.display = 'block';
+    if (empty) empty.style.display = 'none';
+
+    // Load D3 lazily
+    let d3;
+    try { d3 = await this._loadD3(); }
+    catch(e) { console.error('HACA: D3 load failed', e); return; }
+
+    // Store raw data for filter reuse
+    this._graphRawData = graphData;
+    this._graphIssuesOnly = this._graphIssuesOnly || false;
+
+    this._drawD3Graph(d3, graphData);
+  }
+
+  _drawD3Graph(d3, graphData) {
+    const svg = this.shadowRoot.querySelector('#dep-graph-svg');
+    if (!svg) return;
+
+    // ── Stopper l'ancienne simulation AVANT d'en créer une nouvelle ──────────
+    // Sans ce stop(), chaque refresh (toutes les 60s sur l'onglet Carte) laisse
+    // une simulation D3 zombie tourner en requestAnimationFrame : memory/CPU leak
+    // critique qui provoque la page blanche après quelques heures.
+    if (this._graphSimulation) {
+      this._graphSimulation.stop();
+      this._graphSimulation = null;
+    }
+
+    // Get dimensions — si le SVG est dans un onglet caché (display:none),
+    // clientWidth = 0. On reporte le rendu via requestAnimationFrame pour
+    // éviter que la simulation tourne avec W=0 → translate(NaN,NaN) en boucle.
+    let W = svg.clientWidth  || svg.parentElement?.clientWidth  || 0;
+    let H = svg.clientHeight || svg.parentElement?.clientHeight || 0;
+
+    if (W < 10 || H < 10) {
+      // SVG pas encore layouté ou dans onglet caché.
+      // On incrémente un compteur de tentatives pour éviter une boucle RAF infinie
+      // si le panel reste caché (ex: navigation sur un autre onglet HA).
+      // Max 30 tentatives (~500ms) puis abandon propre.
+      this._graphRafRetries = (this._graphRafRetries || 0) + 1;
+      if (this._graphRafRetries > 30) {
+        this._graphRafRetries = 0;
+        return; // abandon — le graphe sera redessiné au prochain switchTab
       }
-    }
-
-    // ── dep_graph.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  DEPENDENCY GRAPH — D3.js force-directed
-    // ═══════════════════════════════════════════════════════════════════════
-
-    _graphNodeColor(node) {
-      if (node.has_issues) {
-        return node.max_severity === 'high' ? '#ef5350' :
-          node.max_severity === 'medium' ? '#ffa726' : '#ffd54f';
-      }
-      return {
-        automation: '#7b68ee',
-        script: '#20b2aa',
-        scene: '#ffa500',
-        entity: '#6dbf6d',
-        blueprint: '#e8a838',
-        device: '#a0a0b0',
-      }[node.type] || '#888';
-    }
-
-    _graphNodeRadius(node) {
-      const base = { automation: 10, script: 9, scene: 9, blueprint: 10, device: 8, entity: 6 };
-      return (base[node.type] || 6) + Math.min(node.degree * 1.2, 12);
-    }
-
-    async _loadD3() {
-      if (window.d3) return window.d3;
-      return new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js';
-        s.onload = () => resolve(window.d3);
-        s.onerror = reject;
-        document.head.appendChild(s);
+      requestAnimationFrame(() => {
+        if (this._connected && this._graphData) this._drawD3Graph(d3, graphData);
+        else this._graphRafRetries = 0; // composant détaché → reset
       });
+      return;
     }
+    this._graphRafRetries = 0; // reset au succès
 
-    async _renderDepGraph(graphData) {
-      const svg = this.shadowRoot.querySelector('#dep-graph-svg');
-      const empty = this.shadowRoot.querySelector('#graph-empty');
-      if (!svg) return;
+    // Clear previous render
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-      if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
-        svg.style.display = 'none';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
+    const svgSel = d3.select(svg);
 
-      svg.style.display = 'block';
-      if (empty) empty.style.display = 'none';
+    // Defs — arrowhead marker
+    const defs = svgSel.append('defs');
+    const mkArrow = (id, color) => defs.append('marker')
+      .attr('id', id)
+      .attr('viewBox', '0 -5 10 10').attr('refX', 22).attr('refY', 0)
+      .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', color);
+    mkArrow('arrow-normal', 'var(--divider-color, #aaa)');
+    mkArrow('arrow-issue', '#ef5350');
+    mkArrow('arrow-blueprint', '#e8a838');
 
-      // Load D3 lazily
-      let d3;
-      try { d3 = await this._loadD3(); }
-      catch (e) { console.error('HACA: D3 load failed', e); return; }
+    // Apply active filter
+    const typeFilter = this.shadowRoot.querySelector('#graph-type-filter')?.value || 'all';
+    const issuesOnly = this._graphIssuesOnly;
 
-      // Store raw data for filter reuse
-      this._graphRawData = graphData;
-      this._graphIssuesOnly = this._graphIssuesOnly || false;
-
-      this._drawD3Graph(d3, graphData);
-    }
-
-    _drawD3Graph(d3, graphData) {
-      const svg = this.shadowRoot.querySelector('#dep-graph-svg');
-      if (!svg) return;
-
-      // ── Stopper l'ancienne simulation AVANT d'en créer une nouvelle ──────────
-      // Sans ce stop(), chaque refresh (toutes les 60s sur l'onglet Carte) laisse
-      // une simulation D3 zombie tourner en requestAnimationFrame : memory/CPU leak
-      // critique qui provoque la page blanche après quelques heures.
-      if (this._graphSimulation) {
-        this._graphSimulation.stop();
-        this._graphSimulation = null;
-      }
-
-      // Get dimensions — si le SVG est dans un onglet caché (display:none),
-      // clientWidth = 0. On reporte le rendu via requestAnimationFrame pour
-      // éviter que la simulation tourne avec W=0 → translate(NaN,NaN) en boucle.
-      let W = svg.clientWidth || svg.parentElement?.clientWidth || 0;
-      let H = svg.clientHeight || svg.parentElement?.clientHeight || 0;
-
-      if (W < 10 || H < 10) {
-        // SVG pas encore layouté ou dans onglet caché — on retente dans le prochain frame
-        requestAnimationFrame(() => {
-          if (this._graphData) this._drawD3Graph(d3, graphData);
-        });
-        return;
-      }
-
-      // Clear previous render
-      while (svg.firstChild) svg.removeChild(svg.firstChild);
-
-      const svgSel = d3.select(svg);
-
-      // Defs — arrowhead marker
-      const defs = svgSel.append('defs');
-      const mkArrow = (id, color) => defs.append('marker')
-        .attr('id', id)
-        .attr('viewBox', '0 -5 10 10').attr('refX', 22).attr('refY', 0)
-        .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-        .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', color);
-      mkArrow('arrow-normal', 'var(--divider-color, #aaa)');
-      mkArrow('arrow-issue', '#ef5350');
-      mkArrow('arrow-blueprint', '#e8a838');
-
-      // Apply active filter
-      const typeFilter = this.shadowRoot.querySelector('#graph-type-filter')?.value || 'all';
-      const issuesOnly = this._graphIssuesOnly;
-
-      let nodes = graphData.nodes.filter(n =>
-        (typeFilter === 'all' || n.type === typeFilter) &&
-        (!issuesOnly || n.has_issues)
-      );
-      const nodeIds = new Set(nodes.map(n => n.id));
-      // Include neighbors of filtered nodes so edges make sense
-      if (typeFilter !== 'all' || issuesOnly) {
-        graphData.edges.forEach(e => {
-          if (nodeIds.has(e.source) || nodeIds.has(e.target)) {
-            if (!nodeIds.has(e.source)) {
-              const nb = graphData.nodes.find(n => n.id === e.source);
-              if (nb) { nodes.push(nb); nodeIds.add(nb.id); }
-            }
-            if (!nodeIds.has(e.target)) {
-              const nb = graphData.nodes.find(n => n.id === e.target);
-              if (nb) { nodes.push(nb); nodeIds.add(nb.id); }
-            }
+    let nodes = graphData.nodes.filter(n =>
+      (typeFilter === 'all' || n.type === typeFilter) &&
+      (!issuesOnly || n.has_issues)
+    );
+    const nodeIds = new Set(nodes.map(n => n.id));
+    // Include neighbors of filtered nodes so edges make sense
+    if (typeFilter !== 'all' || issuesOnly) {
+      graphData.edges.forEach(e => {
+        if (nodeIds.has(e.source) || nodeIds.has(e.target)) {
+          if (!nodeIds.has(e.source)) {
+            const nb = graphData.nodes.find(n => n.id === e.source);
+            if (nb) { nodes.push(nb); nodeIds.add(nb.id); }
           }
-        });
-      }
-      const edges = graphData.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-      // Deep-clone for simulation (D3 mutates objects)
-      const simNodes = nodes.map(n => ({ ...n }));
-      const nodeById = Object.fromEntries(simNodes.map(n => [n.id, n]));
-      const simEdges = edges.map(e => ({
-        ...e,
-        source: nodeById[e.source] || e.source,
-        target: nodeById[e.target] || e.target,
-      })).filter(e => e.source && e.target);
-
-      // Zoom behaviour
-      const zoomG = svgSel.append('g').attr('class', 'zoom-root');
-      const zoom = d3.zoom().scaleExtent([0.05, 4]).on('zoom', ev => {
-        zoomG.attr('transform', ev.transform);
+          if (!nodeIds.has(e.target)) {
+            const nb = graphData.nodes.find(n => n.id === e.target);
+            if (nb) { nodes.push(nb); nodeIds.add(nb.id); }
+          }
+        }
       });
-      svgSel.call(zoom);
-      this._d3Zoom = zoom;
-      this._d3SvgSel = svgSel;
+    }
+    const edges = graphData.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
 
-      // Force simulation
-      const simulation = d3.forceSimulation(simNodes)
-        .force('link', d3.forceLink(simEdges).id(d => d.id).distance(d => {
-          const types = d.source.type + '-' + d.target.type;
-          if (types.includes('blueprint')) return 50;
-          if (types.includes('device')) return 40;
-          if (types.includes('entity')) return 30;
-          return 45;
-        }).strength(0.8))
-        .force('charge', d3.forceManyBody().strength(d => -60 - d.degree * 5))
-        .force('center', d3.forceCenter(W / 2, H / 2).strength(0.08))
-        .force('collide', d3.forceCollide(d => this._graphNodeRadius(d) + 3))
-        .alphaDecay(0.03);
+    // Deep-clone for simulation (D3 mutates objects)
+    const simNodes = nodes.map(n => ({ ...n }));
+    const nodeById = Object.fromEntries(simNodes.map(n => [n.id, n]));
+    const simEdges = edges.map(e => ({
+      ...e,
+      source: nodeById[e.source] || e.source,
+      target: nodeById[e.target] || e.target,
+    })).filter(e => e.source && e.target);
 
-      this._graphSimulation = simulation;
+    // Zoom behaviour
+    const zoomG = svgSel.append('g').attr('class', 'zoom-root');
+    const zoom = d3.zoom().scaleExtent([0.05, 4]).on('zoom', ev => {
+      zoomG.attr('transform', ev.transform);
+    });
+    svgSel.call(zoom);
+    this._d3Zoom   = zoom;
+    this._d3SvgSel = svgSel;
 
-      // ── Edges ──────────────────────────────────────────────────────────
-      const edgeColor = e => e.rel === 'uses_blueprint' ? '#e8a838' :
-        e.rel === 'calls_script' ? '#20b2aa' :
-          (e.source.has_issues || e.target.has_issues) ? '#ef535066' :
-            'var(--divider-color, #aaa)';
-      const arrowId = e => e.rel === 'uses_blueprint' ? 'arrow-blueprint' :
-        (e.source.has_issues || e.target.has_issues) ? 'arrow-issue' :
-          'arrow-normal';
+    // Force simulation
+    const simulation = d3.forceSimulation(simNodes)
+      .force('link',   d3.forceLink(simEdges).id(d => d.id).distance(d => {
+        const types = d.source.type + '-' + d.target.type;
+        if (types.includes('blueprint')) return 50;
+        if (types.includes('device'))    return 40;
+        if (types.includes('entity'))    return 30;
+        return 45;
+      }).strength(0.8))
+      .force('charge', d3.forceManyBody().strength(d => -60 - d.degree * 5))
+      .force('center', d3.forceCenter(W / 2, H / 2).strength(0.08))
+      .force('collide', d3.forceCollide(d => this._graphNodeRadius(d) + 3))
+      .alphaDecay(0.03);
 
-      const link = zoomG.append('g').attr('class', 'links')
-        .selectAll('line').data(simEdges).join('line')
-        .attr('stroke', edgeColor)
-        .attr('stroke-width', e => e.rel === 'calls_script' ? 2 : 1)
-        .attr('stroke-dasharray', e => e.rel === 'belongs_to_device' ? '4 3' : null)
-        .attr('stroke-opacity', 0.6)
-        .attr('marker-end', e => 'url(#' + arrowId(e) + ')');
+    this._graphSimulation = simulation;
 
-      // ── Nodes ───────────────────────────────────────────────────────────
-      const node = zoomG.append('g').attr('class', 'nodes')
-        .selectAll('g').data(simNodes).join('g')
-        .attr('class', 'node-g')
-        .style('cursor', 'pointer')
-        .call(d3.drag()
-          .on('start', (ev, d) => {
-            if (!ev.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x; d.fy = d.y;
-          })
-          .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
-          .on('end', (ev, d) => {
-            if (!ev.active) simulation.alphaTarget(0);
-            d.fx = null; d.fy = null;
-          })
-        )
-        .on('click', (ev, d) => {
-          ev.stopPropagation();
-          this._graphShowSidebar(d);
-        });
+    // ── Edges ──────────────────────────────────────────────────────────
+    const edgeColor = e => e.rel === 'uses_blueprint' ? '#e8a838' :
+                            e.rel === 'calls_script'   ? '#20b2aa' :
+                            (e.source.has_issues || e.target.has_issues) ? '#ef535066' :
+                            'var(--divider-color, #aaa)';
+    const arrowId = e => e.rel === 'uses_blueprint' ? 'arrow-blueprint' :
+                          (e.source.has_issues || e.target.has_issues) ? 'arrow-issue' :
+                          'arrow-normal';
 
-      // Circle
-      node.append('circle')
-        .attr('r', d => this._graphNodeRadius(d))
-        .attr('fill', d => this._graphNodeColor(d))
-        .attr('stroke', d => d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)')
-        .attr('stroke-width', d => d.has_issues ? 2.5 : 1)
-        .attr('filter', d => d.has_issues ? 'drop-shadow(0 0 4px rgba(239,83,80,0.6))' : null);
+    const link = zoomG.append('g').attr('class', 'links')
+      .selectAll('line').data(simEdges).join('line')
+      .attr('stroke', edgeColor)
+      .attr('stroke-width', e => e.rel === 'calls_script' ? 2 : 1)
+      .attr('stroke-dasharray', e => e.rel === 'belongs_to_device' ? '4 3' : null)
+      .attr('stroke-opacity', 0.6)
+      .attr('marker-end', e => 'url(#' + arrowId(e) + ')');
 
-      // Issue badge ring (pulsing)
-      node.filter(d => d.has_issues && d.max_severity === 'high')
-        .append('circle')
-        .attr('r', d => this._graphNodeRadius(d) + 4)
-        .attr('fill', 'none')
-        .attr('stroke', '#ef5350')
-        .attr('stroke-width', 1.5)
-        .attr('stroke-opacity', 0.5);
-
-      // Label — only show for non-entity or high-degree nodes
-      node.filter(d => d.type !== 'entity' || d.degree > 3 || d.has_issues)
-        .append('text')
-        .text(d => d.label.length > 22 ? d.label.slice(0, 20) + '…' : d.label)
-        .attr('dy', d => -this._graphNodeRadius(d) - 4)
-        .attr('text-anchor', 'middle')
-        .attr('font-size', '10px')
-        .attr('fill', 'var(--primary-text-color)')
-        .attr('pointer-events', 'none');
-
-      // Issue count badge
-      node.filter(d => d.issue_count > 0)
-        .append('text')
-        .text(d => d.issue_count)
-        .attr('dy', '0.35em')
-        .attr('text-anchor', 'middle')
-        .attr('font-size', '9px')
-        .attr('font-weight', '700')
-        .attr('fill', 'white')
-        .attr('pointer-events', 'none');
-
-      // Click on SVG background → close sidebar
-      svgSel.on('click', () => {
-        const sb = this.shadowRoot.querySelector('#graph-sidebar');
-        if (sb) sb.style.display = 'none';
-        node.select('circle').attr('stroke-width', d => d.has_issues ? 2.5 : 1);
+    // ── Nodes ───────────────────────────────────────────────────────────
+    const node = zoomG.append('g').attr('class', 'nodes')
+      .selectAll('g').data(simNodes).join('g')
+      .attr('class', 'node-g')
+      .style('cursor', 'pointer')
+      .call(d3.drag()
+        .on('start', (ev, d) => {
+          if (!ev.active) simulation.alphaTarget(0.3).restart();
+          d.fx = d.x; d.fy = d.y;
+        })
+        .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+        .on('end', (ev, d) => {
+          if (!ev.active) simulation.alphaTarget(0);
+          d.fx = null; d.fy = null;
+        })
+      )
+      .on('click', (ev, d) => {
+        ev.stopPropagation();
+        this._graphShowSidebar(d);
       });
 
-      // Tick — guard NaN : si les positions ne sont pas encore calculées (debut simulation)
-      // ou si le SVG a été masqué entre-temps, on saute ce frame pour éviter le spam
-      // "Expected number, translate(NaN,NaN)" dans la console
-      simulation.on('tick', () => {
-        link.attr('x1', d => isNaN(d.source.x) ? 0 : d.source.x)
+    // Circle
+    node.append('circle')
+      .attr('r', d => this._graphNodeRadius(d))
+      .attr('fill', d => this._graphNodeColor(d))
+      .attr('stroke', d => d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)')
+      .attr('stroke-width', d => d.has_issues ? 2.5 : 1)
+      .attr('filter', d => d.has_issues ? 'drop-shadow(0 0 4px rgba(239,83,80,0.6))' : null);
+
+    // Issue badge ring (pulsing)
+    node.filter(d => d.has_issues && d.max_severity === 'high')
+      .append('circle')
+      .attr('r', d => this._graphNodeRadius(d) + 4)
+      .attr('fill', 'none')
+      .attr('stroke', '#ef5350')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', 0.5);
+
+    // Label — only show for non-entity or high-degree nodes
+    node.filter(d => d.type !== 'entity' || d.degree > 3 || d.has_issues)
+      .append('text')
+      .text(d => d.label.length > 22 ? d.label.slice(0, 20) + '…' : d.label)
+      .attr('dy', d => -this._graphNodeRadius(d) - 4)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '10px')
+      .attr('fill', 'var(--primary-text-color)')
+      .attr('pointer-events', 'none');
+
+    // Issue count badge
+    node.filter(d => d.issue_count > 0)
+      .append('text')
+      .text(d => d.issue_count)
+      .attr('dy', '0.35em')
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '9px')
+      .attr('font-weight', '700')
+      .attr('fill', 'white')
+      .attr('pointer-events', 'none');
+
+    // Click on SVG background → close sidebar
+    svgSel.on('click', () => {
+      const sb = this.shadowRoot.querySelector('#graph-sidebar');
+      if (sb) sb.style.display = 'none';
+      node.select('circle').attr('stroke-width', d => d.has_issues ? 2.5 : 1);
+    });
+
+    // Tick — guard NaN : si les positions ne sont pas encore calculées (debut simulation)
+    // ou si le SVG a été masqué entre-temps, on saute ce frame pour éviter le spam
+    // "Expected number, translate(NaN,NaN)" dans la console
+    simulation.on('tick', () => {
+      link.attr('x1', d => isNaN(d.source.x) ? 0 : d.source.x)
           .attr('y1', d => isNaN(d.source.y) ? 0 : d.source.y)
           .attr('x2', d => isNaN(d.target.x) ? 0 : d.target.x)
           .attr('y2', d => isNaN(d.target.y) ? 0 : d.target.y);
-        node.attr('transform', d => {
-          if (isNaN(d.x) || isNaN(d.y)) return `translate(${W / 2},${H / 2})`;
-          return `translate(${d.x},${d.y})`;
-        });
+      node.attr('transform', d => {
+        if (isNaN(d.x) || isNaN(d.y)) return `translate(${W/2},${H/2})`;
+        return `translate(${d.x},${d.y})`;
       });
+    });
 
-      // Auto-fit after stabilisation
-      simulation.on('end', () => this._graphResetZoom());
+    // Auto-fit after stabilisation
+    simulation.on('end', () => this._graphResetZoom());
+  }
+
+  // ── Nettoyage complet D3 (appelé depuis disconnectedCallback) ───────────────
+  _graphStopAll() {
+    if (this._graphSimulation) {
+      this._graphSimulation.stop();
+      this._graphSimulation = null;
+    }
+    this._d3Zoom   = null;
+    this._d3SvgSel = null;
+    this._graphRawData = null;
+  }
+
+  _graphResetZoom() {
+    const svg = this.shadowRoot.querySelector('#dep-graph-svg');
+    if (!svg || !this._d3Zoom || !this._d3SvgSel || !window.d3) return;
+    const d3 = window.d3;
+    const W = svg.clientWidth  || 800;
+    const H = svg.clientHeight || 600;
+    this._d3SvgSel.transition().duration(500)
+      .call(this._d3Zoom.transform, d3.zoomIdentity.translate(W / 2, H / 2).scale(0.9).translate(-W / 2, -H / 2));
+  }
+
+  _graphApplyFilters() {
+    if (!this._graphRawData || !window.d3) return;
+    this._drawD3Graph(window.d3, this._graphRawData);
+  }
+
+  _graphSearch(query) {
+    if (!this._d3SvgSel || !window.d3) return;
+    const q = query.toLowerCase().trim();
+    this._d3SvgSel.selectAll('.node-g circle').attr('opacity', d => {
+      if (!q) return 1;
+      const match = d.id.toLowerCase().includes(q) || d.label.toLowerCase().includes(q);
+      return match ? 1 : 0.15;
+    });
+    this._d3SvgSel.selectAll('.node-g text').attr('opacity', d => {
+      if (!q) return 1;
+      return (d.id.toLowerCase().includes(q) || d.label.toLowerCase().includes(q)) ? 1 : 0.1;
+    });
+  }
+
+  _graphShowSidebar(node) {
+    const sb   = this.shadowRoot.querySelector('#graph-sidebar');
+    const title = this.shadowRoot.querySelector('#sidebar-title');
+    const body  = this.shadowRoot.querySelector('#sidebar-body');
+    if (!sb || !title || !body) return;
+
+    // Highlight selected node
+    if (this._d3SvgSel) {
+      this._d3SvgSel.selectAll('.node-g circle')
+        .attr('stroke-width', d => d.id === node.id ? 4 : (d.has_issues ? 2.5 : 1))
+        .attr('stroke', d => d.id === node.id ? 'var(--primary-color)' : (d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)'));
     }
 
-    // ── Nettoyage complet D3 (appelé depuis disconnectedCallback) ───────────────
-    _graphStopAll() {
-      if (this._graphSimulation) {
-        this._graphSimulation.stop();
-        this._graphSimulation = null;
-      }
-      this._d3Zoom = null;
-      this._d3SvgSel = null;
-      this._graphRawData = null;
-    }
+    const typeLabels = { automation:'Automation', script:'Script', scene:'Scène',
+                         entity:'Entité', blueprint:'Blueprint', device:'Appareil' };
+    title.textContent = node.label;
 
-    _graphResetZoom() {
-      const svg = this.shadowRoot.querySelector('#dep-graph-svg');
-      if (!svg || !this._d3Zoom || !this._d3SvgSel || !window.d3) return;
-      const d3 = window.d3;
-      const W = svg.clientWidth || 800;
-      const H = svg.clientHeight || 600;
-      this._d3SvgSel.transition().duration(500)
-        .call(this._d3Zoom.transform, d3.zoomIdentity.translate(W / 2, H / 2).scale(0.9).translate(-W / 2, -H / 2));
-    }
+    const editUrl = this.getHAEditUrl(node.id);
+    const haStateUrl = `/developer-tools/state`;
 
-    _graphApplyFilters() {
-      if (!this._graphRawData || !window.d3) return;
-      this._drawD3Graph(window.d3, this._graphRawData);
-    }
-
-    _graphSearch(query) {
-      if (!this._d3SvgSel || !window.d3) return;
-      const q = query.toLowerCase().trim();
-      this._d3SvgSel.selectAll('.node-g circle').attr('opacity', d => {
-        if (!q) return 1;
-        const match = d.id.toLowerCase().includes(q) || d.label.toLowerCase().includes(q);
-        return match ? 1 : 0.15;
-      });
-      this._d3SvgSel.selectAll('.node-g text').attr('opacity', d => {
-        if (!q) return 1;
-        return (d.id.toLowerCase().includes(q) || d.label.toLowerCase().includes(q)) ? 1 : 0.1;
-      });
-    }
-
-    _graphShowSidebar(node) {
-      const sb = this.shadowRoot.querySelector('#graph-sidebar');
-      const title = this.shadowRoot.querySelector('#sidebar-title');
-      const body = this.shadowRoot.querySelector('#sidebar-body');
-      if (!sb || !title || !body) return;
-
-      // Highlight selected node
-      if (this._d3SvgSel) {
-        this._d3SvgSel.selectAll('.node-g circle')
-          .attr('stroke-width', d => d.id === node.id ? 4 : (d.has_issues ? 2.5 : 1))
-          .attr('stroke', d => d.id === node.id ? 'var(--primary-color)' : (d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)'));
-      }
-
-      const typeLabels = {
-        automation: 'Automation', script: 'Script', scene: 'Scène',
-        entity: 'Entité', blueprint: 'Blueprint', device: 'Appareil'
-      };
-      title.textContent = node.label;
-
-      const editUrl = this.getHAEditUrl(node.id);
-      const haStateUrl = `/developer-tools/state`;
-
-      const issueRows = (node.issue_summary || []).map(iss => {
-        const sCol = iss.severity === 'high' ? '#ef5350' : iss.severity === 'medium' ? '#ffa726' : '#ffd54f';
-        return `<div style="padding:8px;border-radius:8px;background:var(--secondary-background-color);margin-bottom:6px;border-left:3px solid ${sCol};">
+    const issueRows = (node.issue_summary || []).map(iss => {
+      const sCol = iss.severity === 'high' ? '#ef5350' : iss.severity === 'medium' ? '#ffa726' : '#ffd54f';
+      return `<div style="padding:8px;border-radius:8px;background:var(--secondary-background-color);margin-bottom:6px;border-left:3px solid ${sCol};">
         <div style="font-size:11px;font-weight:700;color:${sCol};text-transform:uppercase;">${iss.severity}</div>
         <div style="font-size:12px;margin-top:2px;line-height:1.4;">${this.escapeHtml(iss.message)}</div>
       </div>`;
-      }).join('');
+    }).join('');
 
-      body.innerHTML = `
+    body.innerHTML = `
       <div style="margin-bottom:12px;">
         <span style="background:${this._graphNodeColor(node)};color:white;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:700;">
           ${typeLabels[node.type] || node.type}
@@ -4848,123 +4918,123 @@ function _updateTypeCounts(el) {
         </a>` : ''}
       </div>`;
 
-      sb.style.display = 'block';
-    }
+    sb.style.display = 'block';
+  }
 
-    // ── Export SVG ────────────────────────────────────────────────────────────
-    _graphExportSVG() {
-      const svg = this.shadowRoot.querySelector('#dep-graph-svg');
-      if (!svg) return;
+  // ── Export SVG ────────────────────────────────────────────────────────────
+  _graphExportSVG() {
+    const svg = this.shadowRoot.querySelector('#dep-graph-svg');
+    if (!svg) return;
 
-      // Clone so we can embed styles without touching the live DOM
-      const clone = svg.cloneNode(true);
-      const W = svg.clientWidth || 800;
-      const H = svg.clientHeight || 600;
-      clone.setAttribute('width', W);
-      clone.setAttribute('height', H);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    // Clone so we can embed styles without touching the live DOM
+    const clone = svg.cloneNode(true);
+    const W = svg.clientWidth  || 800;
+    const H = svg.clientHeight || 600;
+    clone.setAttribute('width',  W);
+    clone.setAttribute('height', H);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 
-      // Embed minimal inline styles so the SVG renders stand-alone
-      const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-      style.textContent = [
-        'text { font-family: sans-serif; font-size: 10px; fill: #333; }',
-        'line { stroke-opacity: 0.6; }',
-        'circle { stroke-width: 1; }',
-      ].join(' ');
-      clone.insertBefore(style, clone.firstChild);
+    // Embed minimal inline styles so the SVG renders stand-alone
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = [
+      'text { font-family: sans-serif; font-size: 10px; fill: #333; }',
+      'line { stroke-opacity: 0.6; }',
+      'circle { stroke-width: 1; }',
+    ].join(' ');
+    clone.insertBefore(style, clone.firstChild);
 
-      const serial = new XMLSerializer();
-      const svgStr = serial.serializeToString(clone);
-      const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `haca-graph-${new Date().toISOString().slice(0, 10)}.svg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+    const serial  = new XMLSerializer();
+    const svgStr  = serial.serializeToString(clone);
+    const blob    = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url     = URL.createObjectURL(blob);
+    const a       = document.createElement('a');
+    a.href        = url;
+    a.download    = `haca-graph-${new Date().toISOString().slice(0,10)}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
-    // ── Export PNG ────────────────────────────────────────────────────────────
-    _graphExportPNG() {
-      const svg = this.shadowRoot.querySelector('#dep-graph-svg');
-      if (!svg) return;
+  // ── Export PNG ────────────────────────────────────────────────────────────
+  _graphExportPNG() {
+    const svg = this.shadowRoot.querySelector('#dep-graph-svg');
+    if (!svg) return;
 
-      const W = svg.clientWidth || 800;
-      const H = svg.clientHeight || 600;
+    const W = svg.clientWidth  || 800;
+    const H = svg.clientHeight || 600;
 
-      // Serialise to SVG data-URI
-      const clone = svg.cloneNode(true);
-      clone.setAttribute('width', W);
-      clone.setAttribute('height', H);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-      style.textContent = [
-        'text { font-family: sans-serif; font-size: 10px; fill: #333; }',
-        'line { stroke-opacity: 0.6; }',
-        'circle { stroke-width: 1; }',
-      ].join(' ');
-      clone.insertBefore(style, clone.firstChild);
+    // Serialise to SVG data-URI
+    const clone = svg.cloneNode(true);
+    clone.setAttribute('width',  W);
+    clone.setAttribute('height', H);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = [
+      'text { font-family: sans-serif; font-size: 10px; fill: #333; }',
+      'line { stroke-opacity: 0.6; }',
+      'circle { stroke-width: 1; }',
+    ].join(' ');
+    clone.insertBefore(style, clone.firstChild);
 
-      const serial = new XMLSerializer();
-      const svgStr = serial.serializeToString(clone);
-      const svgB64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+    const serial = new XMLSerializer();
+    const svgStr = serial.serializeToString(clone);
+    const svgB64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
 
-      // Draw on canvas → PNG blob
-      const canvas = document.createElement('canvas');
-      canvas.width = W * 2;   // 2x for retina
-      canvas.height = H * 2;
-      const ctx = canvas.getContext('2d');
-      ctx.scale(2, 2);
+    // Draw on canvas → PNG blob
+    const canvas  = document.createElement('canvas');
+    canvas.width  = W * 2;   // 2x for retina
+    canvas.height = H * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
 
-      const img = new Image();
-      img.onload = () => {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, W, H);
-        ctx.drawImage(img, 0, 0, W, H);
-        canvas.toBlob(blob => {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `haca-graph-${new Date().toISOString().slice(0, 10)}.png`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }, 'image/png');
-      };
-      img.onerror = () => {
-        // Fallback: download as SVG if PNG rendering fails
-        console.warn('[HACA] PNG export failed, falling back to SVG');
-        this._graphExportSVG();
-      };
-      img.src = svgB64;
-    }
+    const img = new Image();
+    img.onload = () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(img, 0, 0, W, H);
+      canvas.toBlob(blob => {
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `haca-graph-${new Date().toISOString().slice(0,10)}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 'image/png');
+    };
+    img.onerror = () => {
+      // Fallback: download as SVG if PNG rendering fails
+      console.warn('[HACA] PNG export failed, falling back to SVG');
+      this._graphExportSVG();
+    };
+    img.src = svgB64;
+  }
 
-    // ── battery.js ──────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════
-    //  BATTERY MONITOR RENDER
-    // ═══════════════════════════════════════════════════════════════════════
+// ── battery.js ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+  //  BATTERY MONITOR RENDER
+  // ═══════════════════════════════════════════════════════════════════════
 
-    _renderBatteryTables(list) {
-      this._batteryList = list;
+  _renderBatteryTables(list) {
+    this._batteryList = list;
 
-      // ── Stat cards ───────────────────────────────────────────────────────
-      const cards = this.shadowRoot.querySelector('#bat-stat-cards');
-      if (cards) {
-        const critical = list.filter(b => b.severity === 'high').length;
-        const low = list.filter(b => b.severity === 'medium').length;
-        const warning = list.filter(b => b.severity === 'low').length;
-        const ok = list.filter(b => !b.severity).length;
-        const total = list.length;
-        cards.innerHTML = [
-          { label: this.t('battery.stat_critical'), val: critical, color: '#ef5350', icon: 'mdi:battery-alert' },
-          { label: this.t('battery.stat_low'), val: low, color: '#ffa726', icon: 'mdi:battery-20' },
-          { label: this.t('battery.stat_watch'), val: warning, color: '#ffd54f', icon: 'mdi:battery-50' },
-          { label: this.t('battery.stat_ok'), val: ok, color: '#66bb6a', icon: 'mdi:battery' },
-          { label: this.t('battery.stat_total'), val: total, color: 'var(--primary-color)', icon: 'mdi:battery-check' },
-        ].map(s => `
+    // ── Stat cards ───────────────────────────────────────────────────────
+    const cards = this.shadowRoot.querySelector('#bat-stat-cards');
+    if (cards) {
+      const critical = list.filter(b => b.severity === 'high').length;
+      const low      = list.filter(b => b.severity === 'medium').length;
+      const warning  = list.filter(b => b.severity === 'low').length;
+      const ok       = list.filter(b => !b.severity).length;
+      const total    = list.length;
+      cards.innerHTML = [
+        { label: this.t('battery.stat_critical'), val: critical, color: '#ef5350', icon: 'mdi:battery-alert' },
+        { label: this.t('battery.stat_low'),      val: low,      color: '#ffa726', icon: 'mdi:battery-20' },
+        { label: this.t('battery.stat_watch'),    val: warning,  color: '#ffd54f', icon: 'mdi:battery-50' },
+        { label: this.t('battery.stat_ok'),       val: ok,       color: '#66bb6a', icon: 'mdi:battery' },
+        { label: this.t('battery.stat_total'),    val: total,    color: 'var(--primary-color)', icon: 'mdi:battery-check' },
+      ].map(s => `
         <div style="background:var(--secondary-background-color);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--divider-color);">
           <div style="display:flex;align-items:center;gap:6px;">
             <ha-icon icon="${s.icon}" style="--mdc-icon-size:18px;color:${s.color};"></ha-icon>
@@ -4972,102 +5042,102 @@ function _updateTypeCounts(el) {
           </div>
           <div style="font-size:26px;font-weight:800;color:${s.color};line-height:1;">${s.val}</div>
         </div>`).join('');
-      }
-
-      // ── Summary text ─────────────────────────────────────────────────────
-      const txt = this.shadowRoot.querySelector('#bat-summary-text');
-      if (txt) {
-        const alerts = list.filter(b => b.severity).length;
-        txt.textContent = alerts > 0
-          ? (alerts === 1 ? this.t('battery.alerts_summary_one') : this.t('battery.alerts_summary_other', { count: alerts }))
-          : list.length > 0 ? this.t('battery.all_ok_summary', { count: list.length }) : this.t('battery.none_detected');
-        txt.style.color = alerts > 0 ? '#ffa726' : 'var(--secondary-text-color)';
-      }
-
-      // ── Full table (main batteries tab) ──────────────────────────────────
-      this._applyBatteryFilter(
-        this.shadowRoot.querySelector('#bat-filter-select')?.value || 'all'
-      );
-
-      // ── Mini table (in Entités segment) ──────────────────────────────────
-      const miniTbody = this.shadowRoot.querySelector('#bat-mini-tbody');
-      if (miniTbody) {
-        const alertBats = list.filter(b => b.severity);
-        if (!alertBats.length && !list.length) {
-          miniTbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--secondary-text-color);">${this.t('battery.run_scan')}</td></tr>`;
-        } else if (!alertBats.length) {
-          miniTbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:16px;color:#66bb6a;">${this.t('battery.all_ok_mini')}</td></tr>`;
-        } else {
-          miniTbody.innerHTML = alertBats.slice(0, 10).map(b => this._batRow(b)).join('');
-        }
-      }
     }
 
-    _applyBatteryFilter(filterVal) {
-      const tbody = this.shadowRoot.querySelector('#bat-tbody');
-      if (!tbody) return;
-      const list = this._batteryList || [];
-      if (!list.length) {
-        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('battery.run_scan')}</td></tr>`;
-        this._removeBatPagBar();
-        return;
+    // ── Summary text ─────────────────────────────────────────────────────
+    const txt = this.shadowRoot.querySelector('#bat-summary-text');
+    if (txt) {
+      const alerts = list.filter(b => b.severity).length;
+      txt.textContent = alerts > 0
+        ? (alerts === 1 ? this.t('battery.alerts_summary_one') : this.t('battery.alerts_summary_other', {count: alerts}))
+        : list.length > 0 ? this.t('battery.all_ok_summary', {count: list.length}) : this.t('battery.none_detected');
+      txt.style.color = alerts > 0 ? '#ffa726' : 'var(--secondary-text-color)';
+    }
+
+    // ── Full table (main batteries tab) ──────────────────────────────────
+    this._applyBatteryFilter(
+      this.shadowRoot.querySelector('#bat-filter-select')?.value || 'all'
+    );
+
+    // ── Mini table (in Entités segment) ──────────────────────────────────
+    const miniTbody = this.shadowRoot.querySelector('#bat-mini-tbody');
+    if (miniTbody) {
+      const alertBats = list.filter(b => b.severity);
+      if (!alertBats.length && !list.length) {
+        miniTbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--secondary-text-color);">${this.t('battery.run_scan')}</td></tr>`;
+      } else if (!alertBats.length) {
+        miniTbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:16px;color:#66bb6a;">${this.t('battery.all_ok_mini')}</td></tr>`;
+      } else {
+        miniTbody.innerHTML = alertBats.slice(0, 10).map(b => this._batRow(b)).join('');
       }
+    }
+  }
 
-      let filtered = list;
-      if (filterVal === 'alert') filtered = list.filter(b => b.severity);
-      else if (filterVal === 'high') filtered = list.filter(b => b.severity === 'high');
-      else if (filterVal === 'medium') filtered = list.filter(b => b.severity === 'medium');
-      else if (filterVal === 'low') filtered = list.filter(b => b.severity === 'low');
-      else if (filterVal === 'ok') filtered = list.filter(b => !b.severity);
-
-      if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('battery.no_category')}</td></tr>`;
-        this._removeBatPagBar();
-        return;
-      }
-
-      // ── Pagination ─────────────────────────────────────────────────────────
-      const PAG_ID = 'battery-table';
-      if (this._batLastFilter !== filterVal) {
-        this._pagSet(PAG_ID, { page: 0 }, () => { });
-        this._batLastFilter = filterVal;
-      }
-      this._batFiltered = filtered;
-      const st = this._pagState(PAG_ID);
-      const paged = this._pagSlice(filtered, st.page, st.pageSize);
-
-      tbody.innerHTML = paged.map(b => this._batRow(b)).join('');
-
-      // Barre de pagination sous le tableau
+  _applyBatteryFilter(filterVal) {
+    const tbody = this.shadowRoot.querySelector('#bat-tbody');
+    if (!tbody) return;
+    const list = this._batteryList || [];
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('battery.run_scan')}</td></tr>`;
       this._removeBatPagBar();
-      const table = tbody.closest('table');
-      const wrap = table?.parentElement;
-      if (wrap) {
-        wrap.insertAdjacentHTML('afterend', this._pagHTML(PAG_ID, filtered.length, st.page, st.pageSize));
-        const pagBar = wrap.nextElementSibling;
-        if (pagBar?.classList.contains('pag-bar')) {
-          this._pagWire(pagBar.parentElement, () => this._applyBatteryFilter(this._batLastFilter || 'all'));
-        }
+      return;
+    }
+
+    let filtered = list;
+    if (filterVal === 'alert')  filtered = list.filter(b => b.severity);
+    else if (filterVal === 'high')   filtered = list.filter(b => b.severity === 'high');
+    else if (filterVal === 'medium') filtered = list.filter(b => b.severity === 'medium');
+    else if (filterVal === 'low')    filtered = list.filter(b => b.severity === 'low');
+    else if (filterVal === 'ok')     filtered = list.filter(b => !b.severity);
+
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('battery.no_category')}</td></tr>`;
+      this._removeBatPagBar();
+      return;
+    }
+
+    // ── Pagination ─────────────────────────────────────────────────────────
+    const PAG_ID = 'battery-table';
+    if (this._batLastFilter !== filterVal) {
+      this._pagSet(PAG_ID, { page: 0 }, () => {});
+      this._batLastFilter = filterVal;
+    }
+    this._batFiltered = filtered;
+    const st = this._pagState(PAG_ID);
+    const paged = this._pagSlice(filtered, st.page, st.pageSize);
+
+    tbody.innerHTML = paged.map(b => this._batRow(b)).join('');
+
+    // Barre de pagination sous le tableau
+    this._removeBatPagBar();
+    const table = tbody.closest('table');
+    const wrap  = table?.parentElement;
+    if (wrap) {
+      wrap.insertAdjacentHTML('afterend', this._pagHTML(PAG_ID, filtered.length, st.page, st.pageSize));
+      const pagBar = wrap.nextElementSibling;
+      if (pagBar?.classList.contains('pag-bar')) {
+        this._pagWire(pagBar.parentElement, () => this._applyBatteryFilter(this._batLastFilter || 'all'));
       }
     }
+  }
 
-    _removeBatPagBar() {
-      // Supprimer l'éventuelle barre de pagination existante sous le tableau batteries
-      const existing = this.shadowRoot.querySelector('.pag-bar[data-pag-id="battery-table"]');
-      if (existing) existing.remove();
-    }
+  _removeBatPagBar() {
+    // Supprimer l'éventuelle barre de pagination existante sous le tableau batteries
+    const existing = this.shadowRoot.querySelector('.pag-bar[data-pag-id="battery-table"]');
+    if (existing) existing.remove();
+  }
 
-    _batRow(b) {
-      const level = b.level;
-      const [barColor, statusBg, statusText] =
-        b.severity === 'high' ? ['#ef5350', 'rgba(239,83,80,0.12)', this.t('battery.status_critical')] :
-          b.severity === 'medium' ? ['#ffa726', 'rgba(255,167,38,0.12)', this.t('battery.status_low')] :
-            b.severity === 'low' ? ['#ffd54f', 'rgba(255,213,79,0.12)', this.t('battery.status_watch')] :
-              ['#66bb6a', 'rgba(102,187,106,0.10)', this.t('battery.status_ok')];
-      const barPct = Math.round(level);
-      const editUrl = `/developer-tools/state`;
+  _batRow(b) {
+    const level = b.level;
+    const [barColor, statusBg, statusText] =
+      b.severity === 'high'   ? ['#ef5350', 'rgba(239,83,80,0.12)',   this.t('battery.status_critical')] :
+      b.severity === 'medium' ? ['#ffa726', 'rgba(255,167,38,0.12)',  this.t('battery.status_low')]      :
+      b.severity === 'low'    ? ['#ffd54f', 'rgba(255,213,79,0.12)',  this.t('battery.status_watch')]    :
+                                ['#66bb6a', 'rgba(102,187,106,0.10)', this.t('battery.status_ok')];
+    const barPct = Math.round(level);
+    const editUrl = `/developer-tools/state`;
 
-      return `<tr style="border-bottom:1px solid var(--divider-color);">
+    return `<tr style="border-bottom:1px solid var(--divider-color);">
       <td style="padding:8px 10px;max-width:240px;">
         <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${this.escapeHtml(b.friendly_name)}">
           ${this.escapeHtml(b.friendly_name)}
@@ -5086,108 +5156,108 @@ function _updateTypeCounts(el) {
         <span style="background:${statusBg};border-radius:8px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap;">${statusText}</span>
       </td>
     </tr>`;
+  }
+
+  _restoreFilterChip(containerId, filter) {
+    const bar = this.shadowRoot.querySelector(`#filter-bar-${containerId}`);
+    if (!bar) return;
+    bar.querySelectorAll('.filter-chip').forEach(c => { c.className = 'filter-chip'; });
+    const chip = bar.querySelector(`[data-filter="${filter}"]`);
+    if (chip) chip.classList.add(`active-${filter}`);
+  }
+
+  // Helper method to get Home Assistant edit URL for an entity
+  getHAEditUrl(entityId) {
+    if (!entityId) return null;
+
+    const entityIdParts = entityId.split('.');
+    const entityType = entityIdParts[0];
+
+    // Get the item ID from state attributes
+    const state = this.hass?.states?.[entityId];
+    const itemId = state?.attributes?.id;
+
+    // Map entity types to their edit URLs
+    if (entityType === 'automation' && itemId) {
+      return `/config/automation/edit/${itemId}`;
+    } else if (entityType === 'script' && itemId) {
+      return `/config/script/edit/${itemId}`;
+    } else if (entityType === 'scene' && itemId) {
+      return `/config/scene/edit/${itemId}`;
+    } else if (entityType === 'automation') {
+      // Fallback: try to use entity_id without the prefix
+      return `/config/automation/edit/${entityIdParts[1]}`;
+    } else if (entityType === 'script') {
+      return `/config/script/edit/${entityIdParts[1]}`;
+    } else if (entityType === 'scene') {
+      return `/config/scene/edit/${entityIdParts[1]}`;
     }
 
-    _restoreFilterChip(containerId, filter) {
-      const bar = this.shadowRoot.querySelector(`#filter-bar-${containerId}`);
-      if (!bar) return;
-      bar.querySelectorAll('.filter-chip').forEach(c => { c.className = 'filter-chip'; });
-      const chip = bar.querySelector(`[data-filter="${filter}"]`);
-      if (chip) chip.classList.add(`active-${filter}`);
+    return null;
+  }
+
+  renderIssues(issues, containerId, severityFilter) {
+    const container = this.shadowRoot.querySelector(`#${containerId}`);
+    if (!container) return;
+
+    // Store full list on container for filtering/export
+    container._allIssues = issues;
+
+    // ── Extended filter: type-based shortcuts ────────────────────────────
+    const GHOST_TYPES     = new Set(['ghost_automation', 'never_triggered']);
+    const DUPLICATE_TYPES = new Set(['duplicate_automation', 'probable_duplicate_automation']);
+
+    let filtered;
+    if (!severityFilter || severityFilter === 'all') {
+      filtered = issues;
+    } else if (severityFilter === 'ghost') {
+      filtered = issues.filter(i => GHOST_TYPES.has(i.type));
+    } else if (severityFilter === 'duplicate') {
+      filtered = issues.filter(i => DUPLICATE_TYPES.has(i.type));
+    } else {
+      filtered = issues.filter(i => i.severity === severityFilter);
     }
 
-    // Helper method to get Home Assistant edit URL for an entity
-    getHAEditUrl(entityId) {
-      if (!entityId) return null;
-
-      const entityIdParts = entityId.split('.');
-      const entityType = entityIdParts[0];
-
-      // Get the item ID from state attributes
-      const state = this.hass?.states?.[entityId];
-      const itemId = state?.attributes?.id;
-
-      // Map entity types to their edit URLs
-      if (entityType === 'automation' && itemId) {
-        return `/config/automation/edit/${itemId}`;
-      } else if (entityType === 'script' && itemId) {
-        return `/config/script/edit/${itemId}`;
-      } else if (entityType === 'scene' && itemId) {
-        return `/config/scene/edit/${itemId}`;
-      } else if (entityType === 'automation') {
-        // Fallback: try to use entity_id without the prefix
-        return `/config/automation/edit/${entityIdParts[1]}`;
-      } else if (entityType === 'script') {
-        return `/config/script/edit/${entityIdParts[1]}`;
-      } else if (entityType === 'scene') {
-        return `/config/scene/edit/${entityIdParts[1]}`;
-      }
-
-      return null;
-    }
-
-    renderIssues(issues, containerId, severityFilter) {
-      const container = this.shadowRoot.querySelector(`#${containerId}`);
-      if (!container) return;
-
-      // Store full list on container for filtering/export
-      container._allIssues = issues;
-
-      // ── Extended filter: type-based shortcuts ────────────────────────────
-      const GHOST_TYPES = new Set(['ghost_automation', 'never_triggered']);
-      const DUPLICATE_TYPES = new Set(['duplicate_automation', 'probable_duplicate_automation']);
-
-      let filtered;
-      if (!severityFilter || severityFilter === 'all') {
-        filtered = issues;
-      } else if (severityFilter === 'ghost') {
-        filtered = issues.filter(i => GHOST_TYPES.has(i.type));
-      } else if (severityFilter === 'duplicate') {
-        filtered = issues.filter(i => DUPLICATE_TYPES.has(i.type));
-      } else {
-        filtered = issues.filter(i => i.severity === severityFilter);
-      }
-
-      if (filtered.length === 0) {
-        const msg = (severityFilter && severityFilter !== 'all')
-          ? this.t('messages.no_issues_filtered')
-          : this.t('messages.no_issues');
-        container.innerHTML = `
+    if (filtered.length === 0) {
+      const msg = (severityFilter && severityFilter !== 'all')
+        ? this.t('messages.no_issues_filtered')
+        : this.t('messages.no_issues');
+      container.innerHTML = `
         <div class="empty-state">
             <ha-icon icon="mdi:check-decagram-outline"></ha-icon>
             <p>${msg}</p>
         </div>`;
-        return;
-      }
+      return;
+    }
 
-      // ── Pagination ────────────────────────────────────────────────────────
-      // Si le filtre a changé, revenir en page 0
-      if (container._lastFilter !== severityFilter) {
-        this._pagSet(containerId, { page: 0 }, () => { });
-        container._lastFilter = severityFilter;
-      }
-      container._filteredIssues = filtered; // pour re-render depuis paginator
+    // ── Pagination ────────────────────────────────────────────────────────
+    // Si le filtre a changé, revenir en page 0
+    if (container._lastFilter !== severityFilter) {
+      this._pagSet(containerId, { page: 0 }, () => {});
+      container._lastFilter = severityFilter;
+    }
+    container._filteredIssues = filtered; // pour re-render depuis paginator
 
-      const st = this._pagState(containerId);
-      const paged = this._pagSlice(filtered, st.page, st.pageSize);
+    const st = this._pagState(containerId);
+    const paged = this._pagSlice(filtered, st.page, st.pageSize);
 
-      // Store paged list by index — buttons use data-idx, never raw JSON in DOM
-      container._renderedIssues = paged;
+    // Store paged list by index — buttons use data-idx, never raw JSON in DOM
+    container._renderedIssues = paged;
 
-      container.innerHTML = paged.map((i, idx) => {
-        const isFixable = ['device_id_in_trigger', 'device_id_in_action', 'device_id_in_target', 'device_trigger_platform', 'device_id_in_condition', 'device_condition_platform', 'incorrect_mode_motion_single', 'template_simple_state', 'no_description', 'no_alias', 'broken_device_reference', 'zombie_entity'].includes(i.type) || i.fix_available;
-        const icon = i.severity === 'high' ? 'mdi:alert-decagram' : (i.severity === 'medium' ? 'mdi:alert' : 'mdi:information');
-        const isGhost = i.type === 'ghost_automation' || i.type === 'never_triggered';
-        const isDuplicate = i.type === 'duplicate_automation' || i.type === 'probable_duplicate_automation';
-        const cardIcon = isGhost ? 'mdi:ghost-outline' : isDuplicate ? 'mdi:content-copy' : icon;
-        const isSecurity = i.type.includes('security') || i.type.includes('secret') || i.type === 'sensitive_data_exposure';
-        const isDashboard = i.type === 'dashboard_missing_entity';
-        const editUrl = isDashboard ? null : this.getHAEditUrl(i.entity_id);
-        // For dashboard issues: link to the Lovelace dashboard editor
-        // dashboard_url is stored by the analyzer: /lovelace/0 or /dashboard_id/0
-        const dashboardUrl = isDashboard ? (i.dashboard_url || '/lovelace/0') : null;
+    container.innerHTML = paged.map((i, idx) => {
+      const isFixable = ['device_id_in_trigger', 'device_id_in_action', 'device_id_in_target', 'device_trigger_platform', 'device_id_in_condition', 'device_condition_platform', 'incorrect_mode_motion_single', 'template_simple_state', 'no_description', 'no_alias', 'broken_device_reference', 'zombie_entity'].includes(i.type) || i.fix_available;
+      const icon = i.severity === 'high' ? 'mdi:alert-decagram' : (i.severity === 'medium' ? 'mdi:alert' : 'mdi:information');
+      const isGhost     = i.type === 'ghost_automation' || i.type === 'never_triggered';
+      const isDuplicate = i.type === 'duplicate_automation' || i.type === 'probable_duplicate_automation';
+      const cardIcon    = isGhost ? 'mdi:ghost-outline' : isDuplicate ? 'mdi:content-copy' : icon;
+      const isSecurity = i.type.includes('security') || i.type.includes('secret') || i.type === 'sensitive_data_exposure';
+      const isDashboard = i.type === 'dashboard_missing_entity';
+      const editUrl = isDashboard ? null : this.getHAEditUrl(i.entity_id);
+      // For dashboard issues: link to the Lovelace dashboard editor
+      // dashboard_url is stored by the analyzer: /lovelace/0 or /dashboard_id/0
+      const dashboardUrl = isDashboard ? (i.dashboard_url || '/lovelace/0') : null;
 
-        return `
+      return `
       <div class="issue-item ${i.severity}" style="${isSecurity ? 'border-left-color: var(--error-color, #ef5350);' : ''}">
         <div class="issue-main">
             <div class="issue-info">
@@ -5199,11 +5269,11 @@ function _updateTypeCounts(el) {
                 ${i.type === 'zombie_entity' && (i.automation_names || i.source_name) ? `
                 <div style="font-size:12px;color:var(--secondary-text-color);margin-top:4px;display:flex;align-items:center;gap:4px;">
                     <ha-icon icon="mdi:robot" style="--mdc-icon-size:12px;flex-shrink:0;"></ha-icon>
-                    <span>${this.t('issues.in_automations')} ${this.escapeHtml((i.automation_names || [i.source_name]).slice(0, 3).join(', '))}</span>
+                    <span>${this.t('issues.in_automations')} ${this.escapeHtml((i.automation_names || [i.source_name]).slice(0,3).join(', '))}</span>
                 </div>` : i.type === 'dashboard_missing_entity' ? `
                 <div style="font-size:12px;color:var(--secondary-text-color);margin-top:4px;display:flex;align-items:center;gap:4px;">
                     <ha-icon icon="mdi:view-dashboard-outline" style="--mdc-icon-size:12px;flex-shrink:0;"></ha-icon>
-                    <span>${this.escapeHtml(i.source_name || i.dashboard || '?')} &rsaquo; ${this.escapeHtml((i.locations || [i.location || '?']).slice(0, 2).join(', '))}</span>
+                    <span>${this.escapeHtml(i.source_name || i.dashboard || '?')} &rsaquo; ${this.escapeHtml((i.locations || [i.location || '?']).slice(0,2).join(', '))}</span>
                 </div>` : (i.location && i.location !== '—' ? `
                 <div style="font-size:12px;color:var(--secondary-text-color);margin-top:4px;display:flex;align-items:center;gap:4px;">
                     <ha-icon icon="mdi:map-marker-outline" style="--mdc-icon-size:12px;flex-shrink:0;"></ha-icon>
@@ -5217,12 +5287,12 @@ function _updateTypeCounts(el) {
                     <ha-icon icon="mdi:robot"></ha-icon> IA
                 </button>
                 ${i.entity_id && i.entity_id.startsWith('automation.') && (() => {
-            const scores = this._lastData?.complexity_scores || [];
-            const row = scores.find(s => s.entity_id === i.entity_id);
-            return row && row.score >= 15;
-          })() ? `
+                  const scores = this._lastData?.complexity_scores || [];
+                  const row = scores.find(s => s.entity_id === i.entity_id);
+                  return row && row.score >= 15;
+                })() ? `
                 <button class="optimize-btn" data-idx="${idx}"
-                  title="${this.t('issues.complexity_score_title', { score: (this._lastData?.complexity_scores || []).find(s => s.entity_id === i.entity_id)?.score || 0 })}"
+                  title="${this.t('issues.complexity_score_title', {score: (this._lastData?.complexity_scores||[]).find(s=>s.entity_id===i.entity_id)?.score||0})}"
                   style="background:linear-gradient(135deg,#7b68ee,#a855f7);color:white;display:flex;align-items:center;gap:4px;">
                   <ha-icon icon="mdi:auto-fix" style="--mdc-icon-size:15px;"></ha-icon> ${this.t('issues.optimize')}
                 </button>` : ''}
@@ -5253,14 +5323,14 @@ function _updateTypeCounts(el) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;">
           ${i.last_triggered_days_ago != null ? `
           <span style="background:rgba(255,167,38,0.12);border:1px solid #ffa726;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:600;color:#e65100;">
-            ⏱ ${this.t('issues.ghost_last_triggered', { days: i.last_triggered_days_ago })}
+            ⏱ ${this.t('issues.ghost_last_triggered', {days: i.last_triggered_days_ago})}
           </span>` : `
           <span style="background:rgba(239,83,80,0.10);border:1px solid #ef5350;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:600;color:#b71c1c;">
             ${this.t('issues.ghost_never_triggered')}
           </span>`}
           ${i.unavailable_triggers && i.unavailable_triggers.length ? `
           <span style="background:rgba(239,83,80,0.10);border:1px solid #ef5350;border-radius:6px;padding:2px 10px;font-size:11px;color:#b71c1c;" title="${i.unavailable_triggers.join(', ')}">
-            ${i.unavailable_triggers.length === 1 ? this.t('issues.ghost_unavailable_one') : this.t('issues.ghost_unavailable_other', { count: i.unavailable_triggers.length })}
+            ${i.unavailable_triggers.length === 1 ? this.t('issues.ghost_unavailable_one') : this.t('issues.ghost_unavailable_other', {count: i.unavailable_triggers.length})}
           </span>` : ''}
         </div>` : ''}
 
@@ -5268,18 +5338,18 @@ function _updateTypeCounts(el) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;">
           ${i.type === 'probable_duplicate_automation' ? `
           <span style="background:rgba(255,167,38,0.12);border:1px solid #ffa726;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:700;color:#e65100;">
-            ${this.t('issues.duplicate_jaccard', { pct: i.similarity_pct })}
+            ${this.t('issues.duplicate_jaccard', {pct: i.similarity_pct})}
           </span>` : `
           <span style="background:rgba(239,83,80,0.10);border:1px solid #ef5350;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:700;color:#b71c1c;">
             ${this.t('issues.duplicate_exact')}
           </span>`}
           ${i.similar_to ? `
           <span style="background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:11px;color:var(--secondary-text-color);" title="${this.escapeHtml(i.similar_to)}">
-            ↔ ${this.escapeHtml(i.similar_to.replace('automation.', ''))}
+            ↔ ${this.escapeHtml(i.similar_to.replace('automation.',''))}
           </span>` : ''}
-          ${i.duplicate_ids && i.duplicate_ids.length ? i.duplicate_ids.slice(0, 3).map(d => `
+          ${i.duplicate_ids && i.duplicate_ids.length ? i.duplicate_ids.slice(0,3).map(d => `
           <span style="background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:11px;color:var(--secondary-text-color);" title="${this.escapeHtml(d)}">
-            ↔ ${this.escapeHtml(d.replace('automation.', ''))}
+            ↔ ${this.escapeHtml(d.replace('automation.',''))}
           </span>`).join('') : ''}
         </div>` : ''}
 
@@ -5292,44 +5362,44 @@ function _updateTypeCounts(el) {
       </div>
     `}).join('');
 
-      container.querySelectorAll('.fix-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const idx = parseInt(e.currentTarget.dataset.idx, 10);
-          const issue = container._renderedIssues[idx];
-          if (issue) this.showFixPreview(issue);
-        });
+    container.querySelectorAll('.fix-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.dataset.idx, 10);
+        const issue = container._renderedIssues[idx];
+        if (issue) this.showFixPreview(issue);
       });
+    });
 
-      container.querySelectorAll('.optimize-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const idx = parseInt(e.currentTarget.dataset.idx, 10);
-          const issue = container._renderedIssues?.[idx];
-          if (issue) this._showOptimizer(issue);
-        });
+    container.querySelectorAll('.optimize-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.dataset.idx, 10);
+        const issue = container._renderedIssues?.[idx];
+        if (issue) this._showOptimizer(issue);
       });
+    });
 
-      container.querySelectorAll('.explain-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const idx = parseInt(e.currentTarget.dataset.idx, 10);
-          const issue = container._renderedIssues[idx];
-          if (issue) this.explainWithAI(issue);
-        });
+    container.querySelectorAll('.explain-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.dataset.idx, 10);
+        const issue = container._renderedIssues[idx];
+        if (issue) this.explainWithAI(issue);
       });
+    });
 
-      // ── Barre de pagination ──────────────────────────────────────────────
-      container.insertAdjacentHTML('beforeend',
-        this._pagHTML(containerId, filtered.length, st.page, st.pageSize)
-      );
-      this._pagWire(container, () => {
-        // Re-render depuis les données filtrées stockées sur le conteneur
-        this.renderIssues(container._allIssues, containerId, container._lastFilter);
-        // Restaurer l'état du chip actif (renderIssues ne touche pas aux chips)
-        this._restoreFilterChip(containerId, container._lastFilter || 'all');
-      });
-    }
+    // ── Barre de pagination ──────────────────────────────────────────────
+    container.insertAdjacentHTML('beforeend',
+      this._pagHTML(containerId, filtered.length, st.page, st.pageSize)
+    );
+    this._pagWire(container, () => {
+      // Re-render depuis les données filtrées stockées sur le conteneur
+      this.renderIssues(container._allIssues, containerId, container._lastFilter);
+      // Restaurer l'état du chip actif (renderIssues ne touche pas aux chips)
+      this._restoreFilterChip(containerId, container._lastFilter || 'all');
+    });
+  }
 
-    async explainWithAI(issue) {
-      const card = this.createModal(`
+  async explainWithAI(issue) {
+    const card = this.createModal(`
         <div style="padding: 40px; text-align: center; display: flex; flex-direction: column; align-items: center;">
             <div class="loader"></div>
             <div style="margin-top: 20px; font-size: 18px; font-weight: 500; color: var(--primary-text-color);">🤖 ${this.t('ai.analyzing')}</div>
@@ -5337,23 +5407,23 @@ function _updateTypeCounts(el) {
         </div>
     `);
 
-      try {
-        const response = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'explain_issue_ai',
-          service_data: { issue: issue },
-          return_response: true
-        });
-        let explanation = this.t('ai.no_explanation');
+    try {
+      const response = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'explain_issue_ai',
+        service_data: { issue: issue },
+        return_response: true
+      });
+      let explanation = this.t('ai.no_explanation');
 
-        if (response && response.response && response.response.explanation) {
-          explanation = response.response.explanation;
-        } else if (response && response.explanation) {
-          explanation = response.explanation;
-        }
+      if (response && response.response && response.response.explanation) {
+        explanation = response.response.explanation;
+      } else if (response && response.explanation) {
+        explanation = response.explanation;
+      }
 
-        card._updateContent(`
+      card._updateContent(`
         <div style="padding: 24px;">
             <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px; border-bottom: 1px solid var(--divider-color); padding-bottom: 16px;">
                 <ha-icon icon="mdi:robot" style="--mdc-icon-size: 48px; color: var(--primary-color);"></ha-icon>
@@ -5368,46 +5438,46 @@ function _updateTypeCounts(el) {
         </div>
       `);
 
-      } catch (error) {
-        card._updateContent(`<div style="padding: 24px; color: var(--error-color);">❌ ${this.t('notifications.error')}: ${error.message}</div>`);
-        setTimeout(() => card.parentElement.remove(), 4000);
-      }
+    } catch (error) {
+      card._updateContent(`<div style="padding: 24px; color: var(--error-color);">❌ ${this.t('notifications.error')}: ${error.message}</div>`);
+      setTimeout(() => card.parentElement.remove(), 4000);
+    }
+  }
+
+  async showFixPreview(issue) {
+    // Handle description/alias issues with AI suggestion
+    if (['no_description', 'no_alias'].includes(issue.type)) {
+      this.fixDescriptionAI(issue);
+      return;
     }
 
-    async showFixPreview(issue) {
-      // Handle description/alias issues with AI suggestion
-      if (['no_description', 'no_alias'].includes(issue.type)) {
-        this.fixDescriptionAI(issue);
-        return;
+    // Handle zombie entity - entity referenced but doesn't exist
+    if (issue.type === 'zombie_entity') {
+      this.showZombieEntityFix(issue);
+      return;
+    }
+
+    // Handle broken device reference - cannot be auto-fixed, show explanation
+    if (issue.type === 'broken_device_reference') {
+      // Determine edit URL based on entity type and ID
+      let editUrl = '';
+      const entityId = issue.entity_id || '';
+      const entityIdParts = entityId.split('.');
+      const entityType = entityIdParts[0];
+
+      // Get the automation/script/scene ID from state attributes
+      const state = this.hass.states[entityId];
+      const itemId = state?.attributes?.id;
+
+      if (entityType === 'automation' && itemId) {
+        editUrl = `/config/automation/edit/${itemId}`;
+      } else if (entityType === 'script' && itemId) {
+        editUrl = `/config/script/edit/${itemId}`;
+      } else if (entityType === 'scene' && itemId) {
+        editUrl = `/config/scene/edit/${itemId}`;
       }
 
-      // Handle zombie entity - entity referenced but doesn't exist
-      if (issue.type === 'zombie_entity') {
-        this.showZombieEntityFix(issue);
-        return;
-      }
-
-      // Handle broken device reference - cannot be auto-fixed, show explanation
-      if (issue.type === 'broken_device_reference') {
-        // Determine edit URL based on entity type and ID
-        let editUrl = '';
-        const entityId = issue.entity_id || '';
-        const entityIdParts = entityId.split('.');
-        const entityType = entityIdParts[0];
-
-        // Get the automation/script/scene ID from state attributes
-        const state = this.hass.states[entityId];
-        const itemId = state?.attributes?.id;
-
-        if (entityType === 'automation' && itemId) {
-          editUrl = `/config/automation/edit/${itemId}`;
-        } else if (entityType === 'script' && itemId) {
-          editUrl = `/config/script/edit/${itemId}`;
-        } else if (entityType === 'scene' && itemId) {
-          editUrl = `/config/scene/edit/${itemId}`;
-        }
-
-        const card = this.createModal(`
+      const card = this.createModal(`
         <div style="padding: 24px;">
             <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px; border-bottom: 1px solid var(--divider-color); padding-bottom: 16px;">
                 <ha-icon icon="mdi:alert-circle" style="--mdc-icon-size: 48px; color: var(--error-color);"></ha-icon>
@@ -5441,124 +5511,124 @@ function _updateTypeCounts(el) {
             </div>
         </div>
       `);
-        card.querySelector('.close-btn')?.addEventListener('click', () => { if (card._closeModal) card._closeModal(); else card.parentElement?.remove(); });
+      card.querySelector('.close-btn')?.addEventListener('click', () => { if (card._closeModal) card._closeModal(); else card.parentElement?.remove(); });
+      return;
+    }
+
+    // Determine service payload based on issue type
+    let service = '';
+    let serviceData = {};
+
+    if (['device_id_in_trigger', 'device_id_in_action', 'device_id_in_target', 'device_trigger_platform', 'device_id_in_condition', 'device_condition_platform'].includes(issue.type)) {
+      service = 'preview_device_id';
+
+      // Extract automation_id from entity_id
+      // Try multiple strategies to find the automation ID
+      let automation_id = null;
+
+      // Strategy 1: Get from state attributes
+      const state = this.hass.states[issue.entity_id];
+      if (state && state.attributes.id) {
+        automation_id = state.attributes.id;
+      }
+
+      // Strategy 2: Extract from entity_id (automation.xxx -> xxx)
+      if (!automation_id && issue.entity_id && issue.entity_id.startsWith('automation.')) {
+        const entity_name = issue.entity_id.replace('automation.', '');
+        // Try to find automation by alias that matches the entity name
+        automation_id = entity_name;
+      }
+
+      // Strategy 3: Use the entity_id itself as fallback
+      if (!automation_id) {
+        automation_id = issue.entity_id;
+      }
+
+      if (automation_id) {
+        serviceData = { automation_id: automation_id };
+      } else {
+        console.warn("Could not find automation ID for", issue.entity_id);
+        this.showHANotification(this.t('fix.cannot_find_automation'), issue.entity_id || '', 'haca_error');
         return;
       }
 
-      // Determine service payload based on issue type
-      let service = '';
-      let serviceData = {};
-
-      if (['device_id_in_trigger', 'device_id_in_action', 'device_id_in_target', 'device_trigger_platform', 'device_id_in_condition', 'device_condition_platform'].includes(issue.type)) {
-        service = 'preview_device_id';
-
-        // Extract automation_id from entity_id
-        // Try multiple strategies to find the automation ID
-        let automation_id = null;
-
-        // Strategy 1: Get from state attributes
-        const state = this.hass.states[issue.entity_id];
-        if (state && state.attributes.id) {
-          automation_id = state.attributes.id;
-        }
-
-        // Strategy 2: Extract from entity_id (automation.xxx -> xxx)
-        if (!automation_id && issue.entity_id && issue.entity_id.startsWith('automation.')) {
-          const entity_name = issue.entity_id.replace('automation.', '');
-          // Try to find automation by alias that matches the entity name
-          automation_id = entity_name;
-        }
-
-        // Strategy 3: Use the entity_id itself as fallback
-        if (!automation_id) {
-          automation_id = issue.entity_id;
-        }
-
-        if (automation_id) {
-          serviceData = { automation_id: automation_id };
-        } else {
-          console.warn("Could not find automation ID for", issue.entity_id);
-          this.showHANotification(this.t('fix.cannot_find_automation'), issue.entity_id || '', 'haca_error');
-          return;
-        }
-
-      } else if (issue.type === 'incorrect_mode_motion_single') {
-        service = 'preview_mode';
-        const state = this.hass.states[issue.entity_id];
-        if (state && state.attributes.id) {
-          serviceData = { automation_id: state.attributes.id, mode: 'restart' };
-        } else {
-          this.showHANotification(this.t('fix.cannot_find_automation'), issue.entity_id || '', 'haca_error');
-          return;
-        }
-      } else if (issue.type === 'template_simple_state') {
-        service = 'preview_template';
-        const state = this.hass.states[issue.entity_id];
-        if (state && state.attributes.id) {
-          serviceData = { automation_id: state.attributes.id };
-        } else {
-          this.showHANotification(this.t('fix.cannot_find_automation'), issue.entity_id || '', 'haca_error');
-          return;
-        }
+    } else if (issue.type === 'incorrect_mode_motion_single') {
+      service = 'preview_mode';
+      const state = this.hass.states[issue.entity_id];
+      if (state && state.attributes.id) {
+        serviceData = { automation_id: state.attributes.id, mode: 'restart' };
+      } else {
+        this.showHANotification(this.t('fix.cannot_find_automation'), issue.entity_id || '', 'haca_error');
+        return;
       }
-
-      // Show loading modal
-      const modal = this.createModal(this.t('reports.loading_proposal'));
-
-      try {
-        const result = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: service,
-          service_data: serviceData,
-          return_response: true
-        });
-
-        const response = result.response || result;
-
-        if (response.success) {
-          this.renderDiffModal(modal, response, issue, service, serviceData);
-        } else {
-          modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${response.error || this.t('fix.error_unknown')}</div>`);
-          setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
-        }
-      } catch (e) {
-        modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${e.message}</div>`);
-        setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
+    } else if (issue.type === 'template_simple_state') {
+      service = 'preview_template';
+      const state = this.hass.states[issue.entity_id];
+      if (state && state.attributes.id) {
+        serviceData = { automation_id: state.attributes.id };
+      } else {
+        this.showHANotification(this.t('fix.cannot_find_automation'), issue.entity_id || '', 'haca_error');
+        return;
       }
     }
 
-    createModal(content) {
-      // Append to document.body — Shadow DOM rend le Light DOM du host invisible,
-      // donc tout appendChild(this) serait invisible. document.body est toujours visible.
-      const existing = document.body.querySelector('.haca-modal');
-      if (existing) existing.remove();
+    // Show loading modal
+    const modal = this.createModal(this.t('reports.loading_proposal'));
 
-      const modal = document.createElement('div');
-      modal.className = 'haca-modal';
-      const _isMobile = window.innerWidth <= 600;
-      modal.style.cssText = `
+    try {
+      const result = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: service,
+        service_data: serviceData,
+        return_response: true
+      });
+
+      const response = result.response || result;
+
+      if (response.success) {
+        this.renderDiffModal(modal, response, issue, service, serviceData);
+      } else {
+        modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${response.error || this.t('fix.error_unknown')}</div>`);
+        setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
+      }
+    } catch (e) {
+      modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${e.message}</div>`);
+      setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
+    }
+  }
+
+  createModal(content) {
+    // Append to document.body — Shadow DOM rend le Light DOM du host invisible,
+    // donc tout appendChild(this) serait invisible. document.body est toujours visible.
+    const existing = document.body.querySelector('.haca-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'haca-modal';
+    const _isMobile = window.innerWidth <= 600;
+    modal.style.cssText = `
         position: fixed; top: 0; left: 0; right: 0; bottom: 0;
         background: rgba(0,0,0,0.8); z-index: 9999;
         display: flex; justify-content: center; align-items: ${_isMobile ? 'flex-end' : 'center'};
       `;
 
-      const card = document.createElement('div');
-      card.className = 'haca-modal-card';
-      const _mobile = window.innerWidth <= 600;
-      card.style.cssText = _mobile
-        ? `background: var(--card-background-color); width: 100%; max-width: 100%;
+    const card = document.createElement('div');
+    card.className = 'haca-modal-card';
+    const _mobile = window.innerWidth <= 600;
+    card.style.cssText = _mobile
+      ? `background: var(--card-background-color); width: 100%; max-width: 100%;
          max-height: 95vh; overflow: hidden; border-radius: 16px 16px 0 0; padding: 0;
          box-shadow: 0 -4px 24px rgba(0,0,0,0.3); display: flex; flex-direction: column; position: relative;`
-        : `background: var(--card-background-color); width: 92%; max-width: 1000px;
+      : `background: var(--card-background-color); width: 92%; max-width: 1000px;
          max-height: 90vh; overflow: hidden; border-radius: 16px; padding: 0;
          box-shadow: 0 4px 20px rgba(0,0,0,0.5); display: flex; flex-direction: column; position: relative;`;
 
-      // Add close button absolutely positioned in top right of modal card
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'modal-close-btn';
-      closeBtn.innerHTML = '<ha-icon icon="mdi:close"></ha-icon>';
-      closeBtn.style.cssText = `
+    // Add close button absolutely positioned in top right of modal card
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'modal-close-btn';
+    closeBtn.innerHTML = '<ha-icon icon="mdi:close"></ha-icon>';
+    closeBtn.style.cssText = `
         position: absolute;
         top: 14px;
         right: 9px;
@@ -5578,96 +5648,97 @@ function _updateTypeCounts(el) {
         flex-shrink: 0;
       `;
 
-      // Function to close modal
-      const closeModal = () => {
-        modal.remove();
-      };
+    // Function to close modal
+    const closeModal = () => {
+      modal.remove();
+      // Toujours retirer le listener keydown, quelle que soit la méthode de fermeture
+      document.removeEventListener('keydown', handleEscape);
+    };
 
-      closeBtn.addEventListener('click', closeModal);
-      closeBtn.addEventListener('mouseenter', () => {
-        closeBtn.style.background = 'var(--error-color, #ef5350)';
-        closeBtn.style.color = 'white';
-      });
-      closeBtn.addEventListener('mouseleave', () => {
-        closeBtn.style.background = 'var(--secondary-background-color)';
-        closeBtn.style.color = 'black';
-      });
+    closeBtn.addEventListener('click', closeModal);
+    closeBtn.addEventListener('mouseenter', () => {
+      closeBtn.style.background = 'var(--error-color, #ef5350)';
+      closeBtn.style.color = 'white';
+    });
+    closeBtn.addEventListener('mouseleave', () => {
+      closeBtn.style.background = 'var(--secondary-background-color)';
+      closeBtn.style.color = 'black';
+    });
 
-      card.appendChild(closeBtn);
+    card.appendChild(closeBtn);
 
-      const contentWrapper = document.createElement('div');
-      contentWrapper.className = 'modal-content-wrapper';
-      contentWrapper.style.cssText = 'flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;';
-      contentWrapper.innerHTML = typeof content === 'string' ? content : '';
-      if (typeof content !== 'string') contentWrapper.appendChild(content);
-      card.appendChild(contentWrapper);
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'modal-content-wrapper';
+    contentWrapper.style.cssText = 'flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;';
+    contentWrapper.innerHTML = typeof content === 'string' ? content : '';
+    if (typeof content !== 'string') contentWrapper.appendChild(content);
+    card.appendChild(contentWrapper);
 
-      modal.appendChild(card);
-      document.body.appendChild(modal);
+    modal.appendChild(card);
+    document.body.appendChild(modal);
 
-      // Close on background click
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal();
-      });
+    // Close on background click
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
 
-      // Close on Escape key
-      const handleEscape = (e) => {
-        if (e.key === 'Escape') {
-          closeModal();
-          document.removeEventListener('keydown', handleEscape);
-        }
-      };
-      document.addEventListener('keydown', handleEscape);
+    // Close on Escape key
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        closeModal(); // closeModal retire lui-même le listener
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
 
-      // Store reference to closeModal function and closeBtn on the card
-      card._closeModal = closeModal;
-      card._closeBtn = closeBtn;
+    // Store reference to closeModal function and closeBtn on the card
+    card._closeModal = closeModal;
+    card._closeBtn = closeBtn;
 
-      // Helper method to update content while preserving close button
-      card._updateContent = (html) => {
-        contentWrapper.innerHTML = html;
-      };
+    // Helper method to update content while preserving close button
+    card._updateContent = (html) => {
+      contentWrapper.innerHTML = html;
+    };
 
-      return card;
-    }
+    return card;
+  }
 
-    /**
-     * Ouvre le modal diff/dry-run depuis un événement HA Repairs.
-     *
-     * Appelé par _subscribeToRepairsFix() quand le backend fire
-     * "haca_open_fix_modal". Crée le modal au niveau document.body
-     * pour qu'il soit visible depuis n'importe quel panneau HA
-     * (l'utilisateur est probablement sur la page HA Repairs).
-     *
-     * @param {Object} data  Données de l'event : automation_id, fix_type,
-     *                       issue_type, entity_id, alias, mode, message...
-     */
-    async showZombieEntityFix(issue) {
-      const zombieId = issue.entity_id;
-      const automationIds = issue.automation_ids || (issue.automation_id ? [issue.automation_id] : []);
+  /**
+   * Ouvre le modal diff/dry-run depuis un événement HA Repairs.
+   *
+   * Appelé par _subscribeToRepairsFix() quand le backend fire
+   * "haca_open_fix_modal". Crée le modal au niveau document.body
+   * pour qu'il soit visible depuis n'importe quel panneau HA
+   * (l'utilisateur est probablement sur la page HA Repairs).
+   *
+   * @param {Object} data  Données de l'event : automation_id, fix_type,
+   *                       issue_type, entity_id, alias, mode, message...
+   */
+  async showZombieEntityFix(issue) {
+    const zombieId = issue.entity_id;
+    const automationIds = issue.automation_ids || (issue.automation_id ? [issue.automation_id] : []);
 
-      // Show loading modal while fetching fuzzy suggestions
-      const card = this.createModal(`
+    // Show loading modal while fetching fuzzy suggestions
+    const card = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;">
         <div class="loader"></div>
         <div style="margin-top:20px;font-size:18px;font-weight:500;">🔍 ${this.t('zombie.searching')}</div>
       </div>
     `);
 
-      let suggestions = [];
-      try {
-        const resp = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'get_fuzzy_suggestions',
-          service_data: { entity_id: zombieId },
-          return_response: true
-        });
-        suggestions = resp?.response?.suggestions || resp?.suggestions || [];
-      } catch (e) { /* no suggestions available */ }
+    let suggestions = [];
+    try {
+      const resp = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'get_fuzzy_suggestions',
+        service_data: { entity_id: zombieId },
+        return_response: true
+      });
+      suggestions = resp?.response?.suggestions || resp?.suggestions || [];
+    } catch (e) { /* no suggestions available */ }
 
-      const suggestionsHtml = suggestions.length > 0
-        ? `<div style="margin-bottom:16px;">
+    const suggestionsHtml = suggestions.length > 0
+      ? `<div style="margin-bottom:16px;">
           <div style="font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
             <ha-icon icon="mdi:lightbulb-on-outline" style="color:var(--warning-color);--mdc-icon-size:18px;"></ha-icon>
             ${this.t('zombie.similar_detected')}
@@ -5682,19 +5753,19 @@ function _updateTypeCounts(el) {
               </button>`).join('')}
           </div>
         </div>`
-        : `<div style="margin-bottom:16px;color:var(--secondary-text-color);font-size:13px;">
+      : `<div style="margin-bottom:16px;color:var(--secondary-text-color);font-size:13px;">
            ${this.t('misc.no_similar_entity')}
          </div>`;
 
-      const automationsHtml = automationIds.length > 0
-        ? automationIds.map(aid => {
+    const automationsHtml = automationIds.length > 0
+      ? automationIds.map(aid => {
           const state = this.hass.states[aid];
           const label = state?.attributes?.friendly_name || aid;
           return `<li style="padding:4px 0;"><code style="font-size:12px;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${label}</code></li>`;
         }).join('')
-        : `<li>${this.t('zombie.unknown_automation')}</li>`;
+      : `<li>${this.t('zombie.unknown_automation')}</li>`;
 
-      card._updateContent(`
+    card._updateContent(`
       <div style="padding:24px;max-height:80vh;overflow-y:auto;">
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;border-bottom:1px solid var(--divider-color);padding-bottom:16px;">
           <ha-icon icon="mdi:ghost-outline" style="--mdc-icon-size:42px;color:var(--error-color);"></ha-icon>
@@ -5706,7 +5777,7 @@ function _updateTypeCounts(el) {
 
         <div style="background:rgba(239,83,80,0.08);padding:14px 18px;border-radius:10px;border-left:4px solid var(--error-color);margin-bottom:20px;font-size:14px;">
           ${issue.message}<br>
-          <div style="margin-top:6px;opacity:0.8;font-size:13px;">${this.t('zombie.referenced_in', { count: automationIds.length })}</div>
+          <div style="margin-top:6px;opacity:0.8;font-size:13px;">${this.t('zombie.referenced_in', {count: automationIds.length})}</div>
           <ul style="margin:6px 0 0 0;padding-left:20px;">${automationsHtml}</ul>
         </div>
 
@@ -5735,88 +5806,88 @@ function _updateTypeCounts(el) {
               <ha-icon icon="mdi:magic-staff"></ha-icon> ${this.t('zombie.fix_this')}
             </button>
             <button id="apply-zombie-btn" style="background:var(--error-color);color:white;font-weight:600;" ${automationIds.length <= 1 ? '' : ''}>
-              <ha-icon icon="mdi:magic-staff"></ha-icon> ${automationIds.length > 1 ? this.t('zombie.fix_all', { count: automationIds.length }) : this.t('modals.apply_correction')}
+              <ha-icon icon="mdi:magic-staff"></ha-icon> ${automationIds.length > 1 ? this.t('zombie.fix_all', {count: automationIds.length}) : this.t('modals.apply_correction')}
             </button>
           </div>
         </div>
       </div>
     `);
 
-      // Suggestion chips fill the input
-      card.querySelectorAll('.suggestion-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          card.querySelector('#new-entity-input').value = btn.dataset.value;
-          card.querySelectorAll('.suggestion-btn').forEach(b => b.style.borderColor = 'var(--primary-color)');
-          btn.style.borderColor = 'var(--success-color, #4caf50)';
-          btn.style.background = 'rgba(76,175,80,0.12)';
-        });
+    // Suggestion chips fill the input
+    card.querySelectorAll('.suggestion-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        card.querySelector('#new-entity-input').value = btn.dataset.value;
+        card.querySelectorAll('.suggestion-btn').forEach(b => b.style.borderColor = 'var(--primary-color)');
+        btn.style.borderColor = 'var(--success-color, #4caf50)';
+        btn.style.background = 'rgba(76,175,80,0.12)';
       });
+    });
 
-      card.querySelector('.close-btn').addEventListener('click', () => {
-        if (card._closeModal) card._closeModal();
-      });
+    card.querySelector('.close-btn').addEventListener('click', () => {
+      if (card._closeModal) card._closeModal();
+    });
 
-      // "Modifier manuellement" — open HA editor for the first impacted automation
-      const zombieEditorContainer = card.querySelector('#zombie-editor-btn');
-      if (zombieEditorContainer && automationIds.length > 0) {
-        const firstAutomationId = automationIds[0];
-        const editorUrl = this.getHAEditUrl(firstAutomationId);
-        if (editorUrl) {
-          zombieEditorContainer.innerHTML = `
+    // "Modifier manuellement" — open HA editor for the first impacted automation
+    const zombieEditorContainer = card.querySelector('#zombie-editor-btn');
+    if (zombieEditorContainer && automationIds.length > 0) {
+      const firstAutomationId = automationIds[0];
+      const editorUrl = this.getHAEditUrl(firstAutomationId);
+      if (editorUrl) {
+        zombieEditorContainer.innerHTML = `
           <a href="${editorUrl}" target="_blank" style="text-decoration:none;">
             <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
               <ha-icon icon="mdi:pencil"></ha-icon> ${this.t('zombie.edit_manual')}
             </button>
           </a>`;
-        }
       }
-
-      // Helper: apply fix to a subset of automations
-      const applyZombieFix = async (targetIds, btn) => {
-        const newEntityId = card.querySelector('#new-entity-input').value.trim();
-        btn.disabled = true;
-        btn.innerHTML = `<span class="btn-loader"></span> ${this.t('zombie.applying')}`;
-        let successCount = 0;
-        let errors = [];
-        for (const automationId of targetIds) {
-          try {
-            const resp = await this.hass.callWS({
-              type: 'call_service',
-              domain: 'config_auditor',
-              service: 'apply_zombie_fix',
-              service_data: { automation_id: automationId, old_entity_id: zombieId, new_entity_id: newEntityId },
-              return_response: true
-            });
-            const result = resp?.response || resp;
-            if (result?.success) successCount++;
-            else errors.push(result?.error || this.t('fix.error_unknown'));
-          } catch (e) { errors.push(e.message); }
-        }
-        if (card._closeModal) card._closeModal();
-        if (errors.length === 0) {
-          this.showToastNotification({ title: this.t('zombie.fix_success_title'), message: this.t('zombie.fix_success_msg', { entity: zombieId, count: successCount }), type: 'success' });
-        } else {
-          this.showToastNotification({ title: this.t('zombie.errors_partial_title'), message: this.t('misc.errors_partial', { ok: successCount, errors: errors.length }), type: 'warning' });
-        }
-        setTimeout(() => this.loadData(), 1500);
-      };
-
-      // "Corriger cette automation" — applies only to first (the issue clicked)
-      const singleBtn = card.querySelector('#apply-zombie-single-btn');
-      if (singleBtn) {
-        if (automationIds.length <= 1) singleBtn.style.display = 'none';
-        singleBtn.addEventListener('click', () => applyZombieFix([automationIds[0]], singleBtn));
-      }
-
-      // "Corriger toutes" — applies to all referencing automations
-      card.querySelector('#apply-zombie-btn').addEventListener('click', async (e) => {
-        applyZombieFix(automationIds, e.currentTarget);
-      });
     }
 
+    // Helper: apply fix to a subset of automations
+    const applyZombieFix = async (targetIds, btn) => {
+      const newEntityId = card.querySelector('#new-entity-input').value.trim();
+      btn.disabled = true;
+      btn.innerHTML = `<span class="btn-loader"></span> ${this.t('zombie.applying')}`;
+      let successCount = 0;
+      let errors = [];
+      for (const automationId of targetIds) {
+        try {
+          const resp = await this.hass.callWS({
+            type: 'call_service',
+            domain: 'config_auditor',
+            service: 'apply_zombie_fix',
+            service_data: { automation_id: automationId, old_entity_id: zombieId, new_entity_id: newEntityId },
+            return_response: true
+          });
+          const result = resp?.response || resp;
+          if (result?.success) successCount++;
+          else errors.push(result?.error || this.t('fix.error_unknown'));
+        } catch (e) { errors.push(e.message); }
+      }
+      if (card._closeModal) card._closeModal();
+      if (errors.length === 0) {
+        this.showToastNotification({ title: this.t('zombie.fix_success_title'), message: this.t('zombie.fix_success_msg', {entity: zombieId, count: successCount}), type: 'success' });
+      } else {
+        this.showToastNotification({ title: this.t('zombie.errors_partial_title'), message: this.t('misc.errors_partial', {ok: successCount, errors: errors.length}), type: 'warning' });
+      }
+      setTimeout(() => this.loadData(), 1500);
+    };
 
-    async fixDescriptionAI(issue) {
-      const card = this.createModal(`
+    // "Corriger cette automation" — applies only to first (the issue clicked)
+    const singleBtn = card.querySelector('#apply-zombie-single-btn');
+    if (singleBtn) {
+      if (automationIds.length <= 1) singleBtn.style.display = 'none';
+      singleBtn.addEventListener('click', () => applyZombieFix([automationIds[0]], singleBtn));
+    }
+
+    // "Corriger toutes" — applies to all referencing automations
+    card.querySelector('#apply-zombie-btn').addEventListener('click', async (e) => {
+      applyZombieFix(automationIds, e.currentTarget);
+    });
+  }
+
+
+  async fixDescriptionAI(issue) {
+    const card = this.createModal(`
         <div style="padding: 40px; text-align: center; display: flex; flex-direction: column; align-items: center;">
             <div class="loader"></div>
             <div style="margin-top: 20px; font-size: 18px; font-weight: 500; color: var(--primary-text-color);">🤖 ${this.t('ai.generating')}</div>
@@ -5824,19 +5895,19 @@ function _updateTypeCounts(el) {
         </div>
     `);
 
-      try {
-        const result = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'suggest_description_ai',
-          service_data: { entity_id: issue.entity_id || issue.alias },
-          return_response: true
-        });
+    try {
+      const result = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'suggest_description_ai',
+        service_data: { entity_id: issue.entity_id || issue.alias },
+        return_response: true
+      });
 
-        const response = result.response || result;
-        if (!response.success) throw new Error(response.error || this.t('ai.no_explanation'));
+      const response = result.response || result;
+      if (!response.success) throw new Error(response.error || this.t('ai.no_explanation'));
 
-        card._updateContent(`
+      card._updateContent(`
             <div style="padding: 24px;">
                 <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px; border-bottom: 1px solid var(--divider-color); padding-bottom: 16px;">
                     <ha-icon icon="mdi:robot-confused-outline" style="--mdc-icon-size: 40px; color: var(--primary-color);"></ha-icon>
@@ -5857,43 +5928,43 @@ function _updateTypeCounts(el) {
             </div>
         `);
 
-        card.querySelector('.close-btn')?.addEventListener('click', () => { if (card._closeModal) card._closeModal(); else card.parentElement?.remove(); });
-        card.querySelector('.apply-btn').addEventListener('click', async () => {
-          const desc = card.querySelector('#desc-input').value;
-          card._updateContent(`
+      card.querySelector('.close-btn')?.addEventListener('click', () => { if (card._closeModal) card._closeModal(); else card.parentElement?.remove(); });
+      card.querySelector('.apply-btn').addEventListener('click', async () => {
+        const desc = card.querySelector('#desc-input').value;
+        card._updateContent(`
                 <div style="padding: 40px; text-align: center;">
                     <div class="loader"></div>
                     <p style="margin-top: 20px;">${this.t('messages.yaml_updating')}</p>
                 </div>`);
 
-          try {
-            await this.hass.callService('config_auditor', 'fix_description', {
-              entity_id: issue.entity_id || issue.alias,
-              description: desc
-            });
+        try {
+          await this.hass.callService('config_auditor', 'fix_description', {
+            entity_id: issue.entity_id || issue.alias,
+            description: desc
+          });
 
-            // Trigger a new scan so the issue disappears from the list
-            await this.hass.callService('config_auditor', 'scan_automations');
+          // Trigger a new scan so the issue disappears from the list
+          await this.hass.callService('config_auditor', 'scan_automations');
 
-            // Wait for backend processing and sensor updates
-            setTimeout(() => {
-              this.updateFromHass();
-              card.parentElement.remove();
-            }, 1500);
+          // Wait for backend processing and sensor updates
+          setTimeout(() => {
+            this.updateFromHass();
+            card.parentElement.remove();
+          }, 1500);
 
-          } catch (err) {
-            this.showHANotification(
-              '❌ ' + this.t('notifications.error'),
-              err.message,
-              'haca_error'
-            );
-            if (card._closeModal) card._closeModal();
-            else card.parentElement?.remove();
-          }
-        });
+        } catch (err) {
+          this.showHANotification(
+            '❌ ' + this.t('notifications.error'),
+            err.message,
+            'haca_error'
+          );
+          if (card._closeModal) card._closeModal();
+          else card.parentElement?.remove();
+        }
+      });
 
-      } catch (e) {
-        card._updateContent(`
+    } catch (e) {
+      card._updateContent(`
             <div style="padding: 24px;">
                 <h2 style="color: var(--error-color);">❌ ${this.t('notifications.error')}</h2>
                 <p>${e.message}</p>
@@ -5902,12 +5973,12 @@ function _updateTypeCounts(el) {
                 </div>
             </div>
         `);
-        card.querySelector('.close-btn')?.addEventListener('click', () => { if (card._closeModal) card._closeModal(); else card.parentElement?.remove(); });
-      }
+      card.querySelector('.close-btn')?.addEventListener('click', () => { if (card._closeModal) card._closeModal(); else card.parentElement?.remove(); });
     }
+  }
 
-    renderDiffModal(card, result, issue, previewService, serviceData) {
-      card._updateContent(`
+  renderDiffModal(card, result, issue, previewService, serviceData) {
+    card._updateContent(`
         <div class="section-header" style="background: var(--secondary-background-color); border-bottom: 1px solid var(--divider-color); padding: 20px 24px; padding-right: 48px; flex-shrink: 0;">
             <h2 style="margin:0; font-size: 20px; display: flex; align-items: center; gap: 12px;">
                 <ha-icon icon="mdi:magic-staff"></ha-icon> ${this.t('modals.correction_proposal')}
@@ -5961,48 +6032,48 @@ function _updateTypeCounts(el) {
         </div>
       `);
 
-      // "Modifier manuellement" button — open HA editor for this automation/script
-      const editUrl = this.getHAEditUrl(issue.entity_id);
-      const editContainer = card.querySelector('#edit-btn-container');
-      if (editUrl && editContainer) {
-        editContainer.innerHTML = `
+    // "Modifier manuellement" button — open HA editor for this automation/script
+    const editUrl = this.getHAEditUrl(issue.entity_id);
+    const editContainer = card.querySelector('#edit-btn-container');
+    if (editUrl && editContainer) {
+      editContainer.innerHTML = `
         <a href="${editUrl}" target="_blank" style="text-decoration:none;">
           <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
             <ha-icon icon="mdi:pencil"></ha-icon> ${this.t('zombie.edit_manual')}
           </button>
         </a>`;
-      }
-
-      card.querySelector('#apply-fix-btn').addEventListener('click', () => {
-        this.applyFix(issue, previewService, serviceData, card);
-      });
     }
 
-    async applyFix(issue, previewService, serviceData, card) {
-      const btn = card.querySelector('#apply-fix-btn');
-      btn.disabled = true;
-      btn.innerHTML = `<span class="btn-loader"></span> ${this.t('fix.applying')}`;
+    card.querySelector('#apply-fix-btn').addEventListener('click', () => {
+      this.applyFix(issue, previewService, serviceData, card);
+    });
+  }
 
-      // Determine apply service based on preview service
-      let applyService = '';
-      if (previewService === 'preview_device_id') applyService = 'fix_device_id';
-      else if (previewService === 'preview_mode') applyService = 'fix_mode';
-      else if (previewService === 'preview_template') applyService = 'fix_template';
+  async applyFix(issue, previewService, serviceData, card) {
+    const btn = card.querySelector('#apply-fix-btn');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="btn-loader"></span> ${this.t('fix.applying')}`;
+
+    // Determine apply service based on preview service
+    let applyService = '';
+    if (previewService === 'preview_device_id') applyService = 'fix_device_id';
+    else if (previewService === 'preview_mode') applyService = 'fix_mode';
+    else if (previewService === 'preview_template') applyService = 'fix_template';
 
 
-      try {
-        const result = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: applyService,
-          service_data: serviceData,
-          return_response: true
-        });
+    try {
+      const result = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: applyService,
+        service_data: serviceData,
+        return_response: true
+      });
 
-        const response = result.response || result;
+      const response = result.response || result;
 
-        if (response.success) {
-          card._updateContent(`
+      if (response.success) {
+        card._updateContent(`
                 <div style="padding: 48px 32px; text-align: center; animation: fadeIn 0.4s ease-out;">
                     <div style="font-size: 64px; margin-bottom: 24px; filter: drop-shadow(0 4px 12px rgba(76, 175, 80, 0.4));">✅</div>
                     <h2 style="font-size: 24px; font-weight: 700; margin-bottom: 12px; color: var(--primary-text-color);">${this.t('fix.success')}</h2>
@@ -6019,230 +6090,230 @@ function _updateTypeCounts(el) {
                 </div>
               `);
 
-          // Refresh data
-          setTimeout(() => this.scanAutomations(), 1000);
-        } else {
-          this.showHANotification('❌ ' + this.t('notifications.error'), response.error || this.t('fix.error_unknown'), 'haca_error');
-          btn.disabled = false;
-          btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('modals.apply_correction')}`;
-        }
-      } catch (e) {
-        this.showHANotification('❌ ' + this.t('notifications.error'), e.message, 'haca_error');
+        // Refresh data
+        setTimeout(() => this.scanAutomations(), 1000);
+      } else {
+        this.showHANotification('❌ ' + this.t('notifications.error'), response.error || this.t('fix.error_unknown'), 'haca_error');
         btn.disabled = false;
         btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('modals.apply_correction')}`;
       }
+    } catch (e) {
+      this.showHANotification('❌ ' + this.t('notifications.error'), e.message, 'haca_error');
+      btn.disabled = false;
+      btn.innerHTML = `<ha-icon icon="mdi:check-circle-outline"></ha-icon> ${this.t('modals.apply_correction')}`;
     }
+  }
 
-    escapeHtml(text) {
-      if (!text) return '';
-      return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-    }
+  escapeHtml(text) {
+    if (!text) return '';
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
 
-    highlightDiff(newText, oldText) {
-      // Real line-by-line diff implementation
-      const oldLines = oldText.split('\n');
-      const newLines = newText.split('\n');
+  highlightDiff(newText, oldText) {
+    // Real line-by-line diff implementation
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
 
-      // Build LCS (Longest Common Subsequence) matrix
-      const lcs = this._buildLCSMatrix(oldLines, newLines);
+    // Build LCS (Longest Common Subsequence) matrix
+    const lcs = this._buildLCSMatrix(oldLines, newLines);
 
-      // Generate diff output
-      const diffLines = [];
-      this._generateDiffLines(oldLines, newLines, lcs, oldLines.length, newLines.length, diffLines);
+    // Generate diff output
+    const diffLines = [];
+    this._generateDiffLines(oldLines, newLines, lcs, oldLines.length, newLines.length, diffLines);
 
-      // Format diff with colors
-      return diffLines.map(line => {
-        const escapedLine = this.escapeHtml(line.text);
-        if (line.type === 'added') {
-          return `<div style="background: rgba(76, 175, 80, 0.15); border-left: 3px solid #4caf50; padding-left: 8px; margin-left: -3px;"><span style="color: #4caf50; font-weight: bold;">+</span> ${escapedLine}</div>`;
-        } else if (line.type === 'removed') {
-          return `<div style="background: rgba(244, 67, 54, 0.15); border-left: 3px solid #f44336; padding-left: 8px; margin-left: -3px;"><span style="color: #f44336; font-weight: bold;">-</span> ${escapedLine}</div>`;
-        } else {
-          return `<div style="padding-left: 11px;"><span style="color: var(--secondary-text-color);"> </span> ${escapedLine}</div>`;
-        }
-      }).join('');
-    }
-
-    // Build LCS matrix for diff algorithm
-    _buildLCSMatrix(oldLines, newLines) {
-      const m = oldLines.length;
-      const n = newLines.length;
-      const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
-
-      for (let i = 1; i <= m; i++) {
-        for (let j = 1; j <= n; j++) {
-          if (oldLines[i - 1] === newLines[j - 1]) {
-            dp[i][j] = dp[i - 1][j - 1] + 1;
-          } else {
-            dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-          }
-        }
-      }
-
-      return dp;
-    }
-
-    // Generate diff lines by backtracking through LCS matrix
-    _generateDiffLines(oldLines, newLines, lcs, i, j, result) {
-      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-        this._generateDiffLines(oldLines, newLines, lcs, i - 1, j - 1, result);
-        result.push({ type: 'unchanged', text: oldLines[i - 1] });
-      } else if (j > 0 && (i === 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
-        this._generateDiffLines(oldLines, newLines, lcs, i, j - 1, result);
-        result.push({ type: 'added', text: newLines[j - 1] });
-      } else if (i > 0 && (j === 0 || lcs[i][j - 1] < lcs[i - 1][j])) {
-        this._generateDiffLines(oldLines, newLines, lcs, i - 1, j, result);
-        result.push({ type: 'removed', text: oldLines[i - 1] });
-      }
-    }
-
-    updateFromHass() {
-      // Conservé pour compatibilité avec les appels internes (scan buttons, fix callbacks, etc.)
-      this.loadData();
-    }
-
-    // Helper method to show loader on a button
-    _setButtonLoading(btn, loading, originalContent) {
-      if (!btn) return;
-
-      if (loading) {
-        btn.classList.add('scanning');
-        btn.disabled = true;
-        btn.innerHTML = `<span class="btn-loader"></span> ${this.t('messages.scan_in_progress')}`;
+    // Format diff with colors
+    return diffLines.map(line => {
+      const escapedLine = this.escapeHtml(line.text);
+      if (line.type === 'added') {
+        return `<div style="background: rgba(76, 175, 80, 0.15); border-left: 3px solid #4caf50; padding-left: 8px; margin-left: -3px;"><span style="color: #4caf50; font-weight: bold;">+</span> ${escapedLine}</div>`;
+      } else if (line.type === 'removed') {
+        return `<div style="background: rgba(244, 67, 54, 0.15); border-left: 3px solid #f44336; padding-left: 8px; margin-left: -3px;"><span style="color: #f44336; font-weight: bold;">-</span> ${escapedLine}</div>`;
       } else {
-        btn.classList.remove('scanning');
-        btn.disabled = false;
-        btn.innerHTML = originalContent;
+        return `<div style="padding-left: 11px;"><span style="color: var(--secondary-text-color);"> </span> ${escapedLine}</div>`;
+      }
+    }).join('');
+  }
+
+  // Build LCS matrix for diff algorithm
+  _buildLCSMatrix(oldLines, newLines) {
+    const m = oldLines.length;
+    const n = newLines.length;
+    const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (oldLines[i - 1] === newLines[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
       }
     }
 
-    async scanAll() {
-      if (this._scanAllInProgress) return;
-      this._scanAllInProgress = true;
-      const btn = this.shadowRoot.querySelector('#scan-all');
-      const originalContent = `<ha-icon icon="mdi:magnify-scan"></ha-icon> ${this.t('buttons.scan_all')}`;
-      this._setButtonLoading(btn, true, originalContent);
+    return dp;
+  }
 
-      // Timeout de sécurité : si haca_scan_complete n'arrive pas en 5 min,
-      // on déverrouille quand même le bouton
-      const SCAN_TIMEOUT_MS = 5 * 60 * 1000;
-      let scanTimeoutId = null;
-      let unsubScanComplete = null;
+  // Generate diff lines by backtracking through LCS matrix
+  _generateDiffLines(oldLines, newLines, lcs, i, j, result) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      this._generateDiffLines(oldLines, newLines, lcs, i - 1, j - 1, result);
+      result.push({ type: 'unchanged', text: oldLines[i - 1] });
+    } else if (j > 0 && (i === 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
+      this._generateDiffLines(oldLines, newLines, lcs, i, j - 1, result);
+      result.push({ type: 'added', text: newLines[j - 1] });
+    } else if (i > 0 && (j === 0 || lcs[i][j - 1] < lcs[i - 1][j])) {
+      this._generateDiffLines(oldLines, newLines, lcs, i - 1, j, result);
+      result.push({ type: 'removed', text: oldLines[i - 1] });
+    }
+  }
 
-      const _cleanup = () => {
-        if (scanTimeoutId) { clearTimeout(scanTimeoutId); scanTimeoutId = null; }
-        if (unsubScanComplete) { try { unsubScanComplete(); } catch (_) { } unsubScanComplete = null; }
-        this._scanAllInProgress = false;
-        this._setButtonLoading(btn, false, originalContent);
-      };
+  updateFromHass() {
+    // Conservé pour compatibilité avec les appels internes (scan buttons, fix callbacks, etc.)
+    this.loadData();
+  }
 
-      try {
-        // S'abonner à haca_scan_complete AVANT de lancer le scan
-        // pour ne manquer aucun événement (race condition impossible)
-        if (this.hass?.connection) {
-          unsubScanComplete = await this.hass.connection.subscribeEvents((event) => {
-            _cleanup();
-            this.loadData();
-          }, 'haca_scan_complete');
-        }
+  // Helper method to show loader on a button
+  _setButtonLoading(btn, loading, originalContent) {
+    if (!btn) return;
 
-        // Timeout de sécurité
-        scanTimeoutId = setTimeout(() => {
-          console.warn('[HACA] Scan timeout — forcing UI unlock');
+    if (loading) {
+      btn.classList.add('scanning');
+      btn.disabled = true;
+      btn.innerHTML = `<span class="btn-loader"></span> ${this.t('messages.scan_in_progress')}`;
+    } else {
+      btn.classList.remove('scanning');
+      btn.disabled = false;
+      btn.innerHTML = originalContent;
+    }
+  }
+
+  async scanAll() {
+    if (this._scanAllInProgress) return;
+    this._scanAllInProgress = true;
+    const btn = this.shadowRoot.querySelector('#scan-all');
+    const originalContent = `<ha-icon icon="mdi:magnify-scan"></ha-icon> ${this.t('buttons.scan_all')}`;
+    this._setButtonLoading(btn, true, originalContent);
+
+    // Timeout de sécurité : si haca_scan_complete n'arrive pas en 5 min,
+    // on déverrouille quand même le bouton
+    const SCAN_TIMEOUT_MS = 5 * 60 * 1000;
+    let scanTimeoutId = null;
+    this._unsubScanAll = null; // stocké sur this pour nettoyage dans disconnectedCallback
+
+    const _cleanup = () => {
+      if (scanTimeoutId) { clearTimeout(scanTimeoutId); scanTimeoutId = null; }
+      if (this._unsubScanAll) { try { this._unsubScanAll(); } catch (_) {} this._unsubScanAll = null; }
+      this._scanAllInProgress = false;
+      this._setButtonLoading(btn, false, originalContent);
+    };
+
+    try {
+      // S'abonner à haca_scan_complete AVANT de lancer le scan
+      // pour ne manquer aucun événement (race condition impossible)
+      if (this.hass?.connection) {
+        this._unsubScanAll = await this.hass.connection.subscribeEvents((event) => {
           _cleanup();
           this.loadData();
-        }, SCAN_TIMEOUT_MS);
+        }, 'haca_scan_complete');
+      }
 
-        // Lancer le scan (fire-and-forget côté backend, répond immédiatement)
-        const result = await this.hass.callWS({ type: 'haca/scan_all' });
-        if (result && result.accepted === false) {
-          // Scan déjà en cours côté backend
-          _cleanup();
-        }
-      } catch (error) {
-        console.error('[HACA] Scan error:', error);
-        this.showHANotification('❌ ' + this.t('notifications.error'), error.message, 'haca_error');
+      // Timeout de sécurité
+      scanTimeoutId = setTimeout(() => {
+        console.warn('[HACA] Scan timeout — forcing UI unlock');
+        _cleanup();
+        this.loadData();
+      }, SCAN_TIMEOUT_MS);
+
+      // Lancer le scan (fire-and-forget côté backend, répond immédiatement)
+      const result = await this.hass.callWS({ type: 'haca/scan_all' });
+      if (result && result.accepted === false) {
+        // Scan déjà en cours côté backend
         _cleanup();
       }
+    } catch (error) {
+      console.error('[HACA] Scan error:', error);
+      this.showHANotification('❌ ' + this.t('notifications.error'), error.message, 'haca_error');
+      _cleanup();
     }
+  }
 
-    async scanAutomations() {
-      if (this._scanAutoInProgress) return;
-      this._scanAutoInProgress = true;
-      const btn = this.shadowRoot.querySelector('#scan-auto');
-      const originalContent = `<ha-icon icon="mdi:robot"></ha-icon> ${this.t('buttons.automations')}`;
-      this._setButtonLoading(btn, true, originalContent);
-      let unsubDone = null;
-      let tid = null;
-      const _done = () => {
-        if (tid) { clearTimeout(tid); tid = null; }
-        if (unsubDone) { try { unsubDone(); } catch (_) { } unsubDone = null; }
-        this._scanAutoInProgress = false;
-        this._setButtonLoading(btn, false, originalContent);
-      };
-      try {
-        if (this.hass?.connection) {
-          unsubDone = await this.hass.connection.subscribeEvents(() => {
-            _done(); this.loadData();
-          }, 'haca_scan_complete');
-        }
-        tid = setTimeout(() => { _done(); this.loadData(); }, 5 * 60 * 1000);
-        await this.hass.callService('config_auditor', 'scan_automations');
-      } catch (error) {
-        this.showHANotification('❌ ' + this.t('notifications.error'), error.message, 'haca_error');
-        _done();
+  async scanAutomations() {
+    if (this._scanAutoInProgress) return;
+    this._scanAutoInProgress = true;
+    const btn = this.shadowRoot.querySelector('#scan-auto');
+    const originalContent = `<ha-icon icon="mdi:robot"></ha-icon> ${this.t('buttons.automations')}`;
+    this._setButtonLoading(btn, true, originalContent);
+    this._unsubScanAuto = null; // stocké sur this pour nettoyage dans disconnectedCallback
+    let tid = null;
+    const _done = () => {
+      if (tid) { clearTimeout(tid); tid = null; }
+      if (this._unsubScanAuto) { try { this._unsubScanAuto(); } catch (_) {} this._unsubScanAuto = null; }
+      this._scanAutoInProgress = false;
+      this._setButtonLoading(btn, false, originalContent);
+    };
+    try {
+      if (this.hass?.connection) {
+        this._unsubScanAuto = await this.hass.connection.subscribeEvents(() => {
+          _done(); this.loadData();
+        }, 'haca_scan_complete');
       }
+      tid = setTimeout(() => { _done(); this.loadData(); }, 5 * 60 * 1000);
+      await this.hass.callService('config_auditor', 'scan_automations');
+    } catch (error) {
+      this.showHANotification('❌ ' + this.t('notifications.error'), error.message, 'haca_error');
+      _done();
     }
+  }
 
-    async scanEntities() {
-      if (this._scanEntityInProgress) return;
-      this._scanEntityInProgress = true;
-      const btn = this.shadowRoot.querySelector('#scan-entity');
-      const originalContent = `<ha-icon icon="mdi:lightning-bolt"></ha-icon> ${this.t('buttons.entities')}`;
-      this._setButtonLoading(btn, true, originalContent);
-      let unsubDone = null;
-      let tid = null;
-      const _done = () => {
-        if (tid) { clearTimeout(tid); tid = null; }
-        if (unsubDone) { try { unsubDone(); } catch (_) { } unsubDone = null; }
-        this._scanEntityInProgress = false;
-        this._setButtonLoading(btn, false, originalContent);
-      };
-      try {
-        if (this.hass?.connection) {
-          unsubDone = await this.hass.connection.subscribeEvents(() => {
-            _done(); this.loadData();
-          }, 'haca_scan_complete');
-        }
-        tid = setTimeout(() => { _done(); this.loadData(); }, 5 * 60 * 1000);
-        await this.hass.callService('config_auditor', 'scan_entities');
-      } catch (error) {
-        this.showHANotification('❌ ' + this.t('notifications.error'), error.message, 'haca_error');
-        _done();
+  async scanEntities() {
+    if (this._scanEntityInProgress) return;
+    this._scanEntityInProgress = true;
+    const btn = this.shadowRoot.querySelector('#scan-entity');
+    const originalContent = `<ha-icon icon="mdi:lightning-bolt"></ha-icon> ${this.t('buttons.entities')}`;
+    this._setButtonLoading(btn, true, originalContent);
+    this._unsubScanEntity = null; // stocké sur this pour nettoyage dans disconnectedCallback
+    let tid = null;
+    const _done = () => {
+      if (tid) { clearTimeout(tid); tid = null; }
+      if (this._unsubScanEntity) { try { this._unsubScanEntity(); } catch (_) {} this._unsubScanEntity = null; }
+      this._scanEntityInProgress = false;
+      this._setButtonLoading(btn, false, originalContent);
+    };
+    try {
+      if (this.hass?.connection) {
+        this._unsubScanEntity = await this.hass.connection.subscribeEvents(() => {
+          _done(); this.loadData();
+        }, 'haca_scan_complete');
       }
+      tid = setTimeout(() => { _done(); this.loadData(); }, 5 * 60 * 1000);
+      await this.hass.callService('config_auditor', 'scan_entities');
+    } catch (error) {
+      this.showHANotification('❌ ' + this.t('notifications.error'), error.message, 'haca_error');
+      _done();
     }
+  }
 
-    showToastNotification(options = {}) {
-      const {
-        title = 'Notification',
-        message = '',
-        icon = 'mdi:information',
-        iconColor = 'var(--primary-color, #03a9f4)',
-        iconBg = 'linear-gradient(135deg, var(--primary-color, #03a9f4) 0%, #0288d1 100%)',
-        autoDismiss = 5000,
-        actionButton = null
-      } = options;
+  showToastNotification(options = {}) {
+    const {
+      title = 'Notification',
+      message = '',
+      icon = 'mdi:information',
+      iconColor = 'var(--primary-color, #03a9f4)',
+      iconBg = 'linear-gradient(135deg, var(--primary-color, #03a9f4) 0%, #0288d1 100%)',
+      autoDismiss = 5000,
+      actionButton = null
+    } = options;
 
-      // Add animation keyframes if not exists
-      if (!document.querySelector('#haca-toast-styles')) {
-        const style = document.createElement('style');
-        style.id = 'haca-toast-styles';
-        style.textContent = `
+    // Add animation keyframes if not exists
+    if (!document.querySelector('#haca-toast-styles')) {
+      const style = document.createElement('style');
+      style.id = 'haca-toast-styles';
+      style.textContent = `
         @keyframes slideInRight {
           from { transform: translateX(100%); opacity: 0; }
           to { transform: translateX(0); opacity: 1; }
@@ -6252,12 +6323,12 @@ function _updateTypeCounts(el) {
           to { transform: translateX(100%); opacity: 0; }
         }
       `;
-        document.head.appendChild(style);
-      }
+      document.head.appendChild(style);
+    }
 
-      const toast = document.createElement('div');
-      toast.className = 'haca-toast';
-      toast.style.cssText = `
+    const toast = document.createElement('div');
+    toast.className = 'haca-toast';
+    toast.style.cssText = `
       position: fixed;
       bottom: 24px;
       right: 24px;
@@ -6275,7 +6346,7 @@ function _updateTypeCounts(el) {
       min-width: 320px;
     `;
 
-      toast.innerHTML = `
+    toast.innerHTML = `
       <div style="display: flex; align-items: center; gap: 12px;">
         <div style="background: ${iconBg}; padding: 10px; border-radius: 12px; box-shadow: 0 4px 12px rgba(3, 169, 244, 0.3);">
           <ha-icon icon="${icon}" style="--mdc-icon-size: 24px; color: ${iconColor};"></ha-icon>
@@ -6304,115 +6375,115 @@ function _updateTypeCounts(el) {
       `}
     `;
 
-      document.body.appendChild(toast);
+    document.body.appendChild(toast);
 
-      // Close button
-      toast.querySelector('.close-toast').addEventListener('click', () => {
+    // Close button
+    toast.querySelector('.close-toast').addEventListener('click', () => {
+      toast.style.animation = 'slideOutRight 0.3s ease-out forwards';
+      setTimeout(() => toast.remove(), 300);
+    });
+
+    // Auto-dismiss
+    setTimeout(() => {
+      if (toast.parentElement) {
         toast.style.animation = 'slideOutRight 0.3s ease-out forwards';
         setTimeout(() => toast.remove(), 300);
+      }
+    }, autoDismiss);
+
+    return toast;
+  }
+
+  async generateReport() {
+    try {
+      await this.hass.callService('config_auditor', 'generate_report');
+
+      // Use Home Assistant persistent notification system with enhanced message
+      this.showHANotification(
+        this.t('notifications.report_generated'),
+        this.t('notifications.report_generated_full'),
+        'haca_report_generated'
+      );
+
+      if (this.shadowRoot.querySelector('.tab[data-tab="reports"]')?.classList.contains('active')) {
+        this.loadReports();
+      }
+    } catch (error) {
+      this.showHANotification(
+        this.t('notifications.error'),
+        error.message,
+        'haca_error'
+      );
+    }
+  }
+
+  async loadReports() {
+    const container = this.shadowRoot.querySelector('#reports-list');
+    container.innerHTML = this.t('reports.loading');
+    try {
+      const result = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'list_reports',
+        service_data: {},
+        return_response: true
       });
 
-      // Auto-dismiss
-      setTimeout(() => {
-        if (toast.parentElement) {
-          toast.style.animation = 'slideOutRight 0.3s ease-out forwards';
-          setTimeout(() => toast.remove(), 300);
-        }
-      }, autoDismiss);
+      let data = result.response || result;
+      let rawReports = data.reports || [];
 
-      return toast;
-    }
+      // Fallback grouping (if backend hasn't been restarted/updated yet)
+      // If the first item has 'format' instead of 'formats', it's the old format
+      if (rawReports.length > 0 && rawReports[0].format && !rawReports[0].formats) {
+        const sessions = {};
+        const pattern = /report_(\d{8}_\d{6})/;
 
-    async generateReport() {
-      try {
-        await this.hass.callService('config_auditor', 'generate_report');
-
-        // Use Home Assistant persistent notification system with enhanced message
-        this.showHANotification(
-          this.t('notifications.report_generated'),
-          this.t('notifications.report_generated_full'),
-          'haca_report_generated'
-        );
-
-        if (this.shadowRoot.querySelector('.tab[data-tab="reports"]')?.classList.contains('active')) {
-          this.loadReports();
-        }
-      } catch (error) {
-        this.showHANotification(
-          this.t('notifications.error'),
-          error.message,
-          'haca_error'
-        );
-      }
-    }
-
-    async loadReports() {
-      const container = this.shadowRoot.querySelector('#reports-list');
-      container.innerHTML = this.t('reports.loading');
-      try {
-        const result = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'list_reports',
-          service_data: {},
-          return_response: true
-        });
-
-        let data = result.response || result;
-        let rawReports = data.reports || [];
-
-        // Fallback grouping (if backend hasn't been restarted/updated yet)
-        // If the first item has 'format' instead of 'formats', it's the old format
-        if (rawReports.length > 0 && rawReports[0].format && !rawReports[0].formats) {
-          const sessions = {};
-          const pattern = /report_(\d{8}_\d{6})/;
-
-          rawReports.forEach(r => {
-            const match = r.name.match(pattern);
-            if (!match) return;
-            const sessionId = match[1];
-            if (!sessions[sessionId]) {
-              sessions[sessionId] = {
-                session_id: sessionId,
-                created: r.created,
-                formats: {}
-              };
-            }
-            sessions[sessionId].formats[r.format] = {
-              name: r.name,
-              size: r.size
+        rawReports.forEach(r => {
+          const match = r.name.match(pattern);
+          if (!match) return;
+          const sessionId = match[1];
+          if (!sessions[sessionId]) {
+            sessions[sessionId] = {
+              session_id: sessionId,
+              created: r.created,
+              formats: {}
             };
-          });
-          rawReports = Object.values(sessions).sort((a, b) => b.session_id.localeCompare(a.session_id));
-        }
-
-        this.renderReports(rawReports);
-      } catch (error) {
-        container.innerHTML = `<div class="empty-state">❌ ${this.t('notifications.error')}: ${error.message}</div>`;
+          }
+          sessions[sessionId].formats[r.format] = {
+            name: r.name,
+            size: r.size
+          };
+        });
+        rawReports = Object.values(sessions).sort((a, b) => b.session_id.localeCompare(a.session_id));
       }
+
+      this.renderReports(rawReports);
+    } catch (error) {
+      container.innerHTML = `<div class="empty-state">❌ ${this.t('notifications.error')}: ${error.message}</div>`;
     }
+  }
 
-    renderReports(reports) {
-      const container = this.shadowRoot.querySelector('#reports-list');
-      const PAG_ID = 'reports-list';
+  renderReports(reports) {
+    const container = this.shadowRoot.querySelector('#reports-list');
+    const PAG_ID = 'reports-list';
 
-      if (!reports || !Array.isArray(reports) || reports.length === 0) {
-        container.innerHTML = `
+    if (!reports || !Array.isArray(reports) || reports.length === 0) {
+      container.innerHTML = `
         <div class="empty-state">
             <ha-icon icon="mdi:file-search-outline"></ha-icon>
             <p>${this.t('messages.no_reports')}</p>
         </div>`;
-        return;
-      }
+      return;
+    }
 
-      // Store full list and apply pagination
-      container._allReports = reports;
-      const valid = reports.filter(s => s && s.formats);
-      const st = this._pagState(PAG_ID);
-      const paged = this._pagSlice(valid, st.page, st.pageSize);
+    // Store full list and apply pagination
+    container._allReports = reports;
+    const valid = reports.filter(s => s && s.formats);
+    const st = this._pagState(PAG_ID);
+    const paged = this._pagSlice(valid, st.page, st.pageSize);
 
-      try {
-        container.innerHTML = `
+    try {
+      container.innerHTML = `
         <!-- Desktop table -->
         <div class="table-wrap">
           <table class="data-table">
@@ -6496,37 +6567,37 @@ function _updateTypeCounts(el) {
           `).join('')}
         </div>      `;
 
-        container.querySelectorAll('.view-report-btn').forEach(btn => {
-          btn.addEventListener('click', (e) => this.viewReport(e.currentTarget.dataset.name));
-        });
-        container.querySelectorAll('.dl-report-btn').forEach(btn => {
-          btn.addEventListener('click', (e) => this.downloadReport(e.currentTarget.dataset.name));
-        });
-        container.querySelectorAll('.delete-report-btn').forEach(btn => {
-          btn.addEventListener('click', (e) => this.deleteReport(e.currentTarget.dataset.session));
-        });
+      container.querySelectorAll('.view-report-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => this.viewReport(e.currentTarget.dataset.name));
+      });
+      container.querySelectorAll('.dl-report-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => this.downloadReport(e.currentTarget.dataset.name));
+      });
+      container.querySelectorAll('.delete-report-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => this.deleteReport(e.currentTarget.dataset.session));
+      });
 
-        // Barre de pagination
-        container.insertAdjacentHTML('beforeend',
-          this._pagHTML(PAG_ID, valid.length, st.page, st.pageSize)
-        );
-        this._pagWire(container, () => this.renderReports(container._allReports));
-      } catch (err) {
-        console.error('[HACA] Error rendering reports:', err);
-        container.innerHTML = `<div class="empty-state">❌ ${this.t('reports.error_display')}: ${err.message}</div>`;
-      }
+      // Barre de pagination
+      container.insertAdjacentHTML('beforeend',
+        this._pagHTML(PAG_ID, valid.length, st.page, st.pageSize)
+      );
+      this._pagWire(container, () => this.renderReports(container._allReports));
+    } catch (err) {
+      console.error('[HACA] Error rendering reports:', err);
+      container.innerHTML = `<div class="empty-state">❌ ${this.t('reports.error_display')}: ${err.message}</div>`;
     }
+  }
 
-    async viewReport(name) {
-      if (name.endsWith('.pdf')) {
-        const card = this.createModal('');
-        // Enlarge modal for PDF to almost full screen
-        card.style.width = '95%';
-        card.style.height = '95%';
-        card.style.maxWidth = '1600px';
-        card.style.maxHeight = '95vh';
+  async viewReport(name) {
+    if (name.endsWith('.pdf')) {
+      const card = this.createModal('');
+      // Enlarge modal for PDF to almost full screen
+      card.style.width = '95%';
+      card.style.height = '95%';
+      card.style.maxWidth = '1600px';
+      card.style.maxHeight = '95vh';
 
-        card._updateContent(`
+      card._updateContent(`
           <div style="padding: 16px 70px 16px 20px; border-bottom: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center; background: var(--secondary-background-color); gap: 12px; flex-wrap: wrap;">
               <h2 style="margin:0; font-size: 16px; display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;">
                 <ha-icon icon="mdi:file-pdf-box" style="color: var(--error-color); flex-shrink: 0;"></ha-icon>
@@ -6544,22 +6615,22 @@ function _updateTypeCounts(el) {
               <iframe src="/haca_reports/${name}" style="width: 100%; height: 85vh; border: none;"></iframe>
           </div>
       `);
-        return;
-      }
+      return;
+    }
 
-      const card = this.createModal(this.t('reports.loading_report'));
-      try {
-        const result = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'get_report_content',
-          service_data: { filename: name },
-          return_response: true
-        });
+    const card = this.createModal(this.t('reports.loading_report'));
+    try {
+      const result = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'get_report_content',
+        service_data: { filename: name },
+        return_response: true
+      });
 
-        const data = result.response || result;
-        if (data.success) {
-          card._updateContent(`
+      const data = result.response || result;
+      if (data.success) {
+        card._updateContent(`
             <div style="padding: 16px 60px 16px 16px; border-bottom: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center;">
                 <h2 style="margin:0">${name}</h2>
             </div>
@@ -6567,97 +6638,97 @@ function _updateTypeCounts(el) {
                 ${data.type === 'json' ? JSON.stringify(data.content, null, 2) : data.content}
             </div>
         `);
-        } else {
-          card._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${data.error}</div>`);
-        }
-      } catch (e) {
-        card._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${e.message}</div>`);
+      } else {
+        card._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${data.error}</div>`);
       }
+    } catch (e) {
+      card._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${e.message}</div>`);
     }
+  }
 
-    async downloadReport(name) {
-      const a = document.createElement('a');
-      a.href = `/haca_reports/${name}`;
-      a.download = name;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-      }, 100);
-    }
+  async downloadReport(name) {
+    const a = document.createElement('a');
+    a.href = `/haca_reports/${name}`;
+    a.download = name;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 100);
+  }
 
-    async deleteReport(sessionId) {
-      if (!confirm(this.t('report.confirm_delete') + '\n\nID: ' + sessionId)) return;
+  async deleteReport(sessionId) {
+    if (!confirm(this.t('report.confirm_delete') + '\n\nID: ' + sessionId)) return;
 
-      try {
-        const result = await this.hass.callWS({
-          type: 'call_service',
-          domain: 'config_auditor',
-          service: 'delete_report',
-          service_data: { session_id: sessionId },
-          return_response: true
-        });
+    try {
+      const result = await this.hass.callWS({
+        type: 'call_service',
+        domain: 'config_auditor',
+        service: 'delete_report',
+        service_data: { session_id: sessionId },
+        return_response: true
+      });
 
-        const response = result.response || result;
+      const response = result.response || result;
 
-        if (response.success) {
-          this.showHANotification(
-            this.t('notifications.report_deleted'),
-            `${response.deleted_count} ${this.t('notifications.files_deleted')}`,
-            'haca_report_deleted'
-          );
-          // Refresh the reports list
-          this.loadReports();
-        } else {
-          this.showHANotification(
-            this.t('notifications.error'),
-            response.error || this.t('fix.error_unknown'),
-            'haca_error'
-          );
-        }
-      } catch (error) {
+      if (response.success) {
+        this.showHANotification(
+          this.t('notifications.report_deleted'),
+          `${response.deleted_count} ${this.t('notifications.files_deleted')}`,
+          'haca_report_deleted'
+        );
+        // Refresh the reports list
+        this.loadReports();
+      } else {
         this.showHANotification(
           this.t('notifications.error'),
-          error.message,
+          response.error || this.t('fix.error_unknown'),
           'haca_error'
         );
       }
+    } catch (error) {
+      this.showHANotification(
+        this.t('notifications.error'),
+        error.message,
+        'haca_error'
+      );
     }
-
-    exportCSV(issues, containerId) {
-      if (!issues || issues.length === 0) {
-        this.showHANotification(
-          this.t('notifications.error'),
-          this.t('messages.no_issues'),
-          'haca_csv_empty'
-        );
-        return;
-      }
-      const headers = ['entity_id', 'alias', 'type', 'severity', 'message', 'location', 'recommendation'];
-      const rows = [headers];
-      issues.forEach(i => {
-        rows.push(headers.map(h => {
-          const val = String(i[h] || '');
-          return '"' + val.replace(/"/g, '""') + '"';
-        }));
-      });
-      const csv = rows.map(r => r.join(',')).join('\n');
-      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      const date = new Date().toISOString().slice(0, 10);
-      a.download = `haca-${containerId}-${date}.csv`;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 200);
-    }
-
-
-
   }
 
-  customElements.define('haca-panel', HacaPanel);
+  exportCSV(issues, containerId) {
+    if (!issues || issues.length === 0) {
+      this.showHANotification(
+        this.t('notifications.error'),
+        this.t('messages.no_issues'),
+        'haca_csv_empty'
+      );
+      return;
+    }
+    const headers = ['entity_id', 'alias', 'type', 'severity', 'message', 'location', 'recommendation'];
+    const rows = [headers];
+    issues.forEach(i => {
+      rows.push(headers.map(h => {
+        const val = String(i[h] || '');
+        return '"' + val.replace(/"/g, '""') + '"';
+      }));
+    });
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `haca-${containerId}-${date}.csv`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 200);
+  }
+
+
+
+}
+
+customElements.define('haca-panel', HacaPanel);
 
 })();
