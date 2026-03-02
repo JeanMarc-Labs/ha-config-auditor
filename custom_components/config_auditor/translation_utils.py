@@ -54,6 +54,6 @@ class TranslationHelper:
             try:
                 return template.format(**kwargs)
             except (KeyError, ValueError) as e:
-                _LOGGER.debug("Error formatting translation key '%s': %s", key, e)
+                _LOGGER.debug("Error formatting translation key '%s': %s", msg_key, e)
                 return template
         return template
