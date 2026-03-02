@@ -284,7 +284,7 @@ class ReportGenerator:
         report += f"## 💡 {self._t('recommendations')}\n\n"
         report += self._generate_recommendations(health_score, automation_issues, entity_issues)
         
-        report += f"\n\n---\n\n*{self._t('report_generated_by')} v1.0.2 - {timestamp_display}*\n"
+        report += f"\n\n---\n\n*{self._t('report_generated_by')} v1.0.3 - {timestamp_display}*\n"
         
         # Save report with provided timestamp
         filename = f"report_{timestamp_str}.md"
@@ -329,7 +329,7 @@ class ReportGenerator:
 
         report_data = {
             "timestamp": timestamp.isoformat(),
-            "version": "1.0.2",
+            "version": "1.0.3",
             "language": self._translations.get("title", "H.A.C.A Configuration Report"),
             "summary": summary,
             "issues": {
@@ -505,7 +505,7 @@ class ReportGenerator:
         # Footer
         pdf.ln(10)
         pdf.set_font("helvetica", "I", 9)
-        pdf.cell(0, 8, f"{t('report_generated_by')} v1.0.2 - {timestamp_display}", ln=1)
+        pdf.cell(0, 8, f"{t('report_generated_by')} v1.0.3 - {timestamp_display}", ln=1)
 
         filename = f"report_{timestamp_str}.pdf"
         filepath = self._reports_dir / filename
