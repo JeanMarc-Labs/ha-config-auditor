@@ -47,9 +47,9 @@ class TranslationHelper:
             _LOGGER.warning("Error loading translations from %s: %s", translation_file, e)
             self._translations = {}
     
-    def t(self, key: str, **kwargs) -> str:
+    def t(self, msg_key: str, **kwargs) -> str:
         """Get translation with parameter substitution."""
-        template = self._translations.get(key, key)
+        template = self._translations.get(msg_key, msg_key)
         if kwargs:
             try:
                 return template.format(**kwargs)
