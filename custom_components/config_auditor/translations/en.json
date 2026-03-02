@@ -92,7 +92,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant Config Auditor",
-    "version": "V1.0.2",
+    "version": "V1.0.3",
     "buttons": {
       "scan_all": "Full Scan",
       "automations": "Automations",
@@ -248,7 +248,9 @@
       "states": "States",
       "triggers": "Triggers",
       "actions_recursive": "Actions",
-      "full_view": "Full view"
+      "full_view": "Full view",
+      "stats": "Stats",
+      "actions": "Actions"
     },
     "backup": {
       "loading": "Loading...",
@@ -369,7 +371,11 @@
       "filter_critical": "🔴 Critical (<5%)",
       "filter_low": "🟡 Low (5–15%)",
       "filter_watch": "🔵 Watch (15–25%)",
-      "filter_ok": "✅ OK (≥25%)"
+      "filter_ok": "✅ OK (≥25%)",
+      "title": "Battery Monitor",
+      "device": "Device",
+      "level": "Level",
+      "status": "Status"
     },
     "issues": {
       "open_dashboard": "Open dashboard",
@@ -416,7 +422,8 @@
       "scene": "Scenes",
       "entity": "Entities",
       "blueprint": "Blueprints",
-      "device": "Devices"
+      "device": "Devices",
+      "issues_only": "Issues only"
     },
     "recorder": {
       "unavailable_badge": "Unavailable",
@@ -436,7 +443,8 @@
       "db_clean_rescanning": "Clean database (rescanning…)",
       "select_all": "Select all",
       "purge_success": "✅ {count} entity/entities purged from Recorder.",
-      "purge_estimated": "Estimated total: ~{mb} MB on {count} entity/entities"
+      "purge_estimated": "Estimated total: ~{mb} MB on {count} entity/entities",
+      "purge_button_alone": "🗑 Purge"
     },
     "graph": {
       "title": "Dependency Graph",
@@ -472,7 +480,11 @@
     "misc": {
       "chat_greeting": "Hello! I can help you analyze your automations, explain configuration errors, or suggest improvements. How can I help you?",
       "history_sparkline": "History…",
-      "ai_context": "HACA context: {total} issues found ({automations} automations, {scripts} scripts). "
+      "ai_context": "HACA context: {total} issues found ({automations} automations, {scripts} scripts). ",
+      "chat_assistant": "Chat with AI assistant",
+      "chat_assistant_desc": "Ask questions about your Home Assistant configuration, automations, and HACA issues.",
+      "chat_input_placeholder": "Ask your question…",
+      "chat_send": "Send"
     },
     "config": {
       "reset_confirm": "Reset all settings to default values?",

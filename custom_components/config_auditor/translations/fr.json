@@ -92,7 +92,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant Config Auditor",
-    "version": "V1.0.2",
+    "version": "V1.0.3",
     "buttons": {
       "scan_all": "Scan Complet",
       "automations": "Automatisations",
@@ -249,7 +249,9 @@
       "states": "États",
       "triggers": "Déclencheurs",
       "actions_recursive": "Actions",
-      "full_view": "Vue complète"
+      "full_view": "Vue complète",
+      "stats": "Stats",
+      "actions": "Actions"
     },
     "backup": {
       "loading": "Chargement...",
@@ -370,7 +372,11 @@
       "filter_critical": "🔴 Critique (<5 %)",
       "filter_low": "🟡 Faible (5–15 %)",
       "filter_watch": "🔵 À surveiller (15–25 %)",
-      "filter_ok": "✅ OK (≥25 %)"
+      "filter_ok": "✅ OK (≥25 %)",
+      "title": "Surveillance des batteries",
+      "device": "Appareil",
+      "level": "Niveau",
+      "status": "Statut"
     },
     "issues": {
       "open_dashboard": "Ouvrir le dashboard",
@@ -417,7 +423,8 @@
       "scene": "Scènes",
       "entity": "Entités",
       "blueprint": "Blueprints",
-      "device": "Appareils"
+      "device": "Appareils",
+      "issues_only": "Issues uniquement"
     },
     "recorder": {
       "unavailable_badge": "Indisponible",
@@ -437,7 +444,8 @@
       "db_clean_rescanning": "Base propre (rescan en cours…)",
       "select_all": "Tout sélectionner",
       "purge_success": "✅ {count} entité(s) purgée(s) de la base Recorder.",
-      "purge_estimated": "Total estimé : ~{mb} MB sur {count} entité(s)"
+      "purge_estimated": "Total estimé : ~{mb} MB sur {count} entité(s)",
+      "purge_button_alone": "🗑 Purger"
     },
     "graph": {
       "title": "Graphe de Dépendances",
@@ -473,7 +481,11 @@
     "misc": {
       "chat_greeting": "Bonjour ! Je peux vous aider à analyser vos automations, expliquer des erreurs de configuration, ou suggérer des améliorations. Comment puis-je vous aider ?",
       "history_sparkline": "Historique…",
-      "ai_context": "Contexte HACA: {total} issues trouvées ({automations} automations, {scripts} scripts). "
+      "ai_context": "Contexte HACA: {total} issues trouvées ({automations} automations, {scripts} scripts). ",
+      "chat_assistant": "Chat avec l'assistant IA",
+      "chat_assistant_desc": "Posez des questions sur votre configuration Home Assistant, vos automations et les issues HACA.",
+      "chat_input_placeholder": "Posez votre question…",
+      "chat_send": "Envoyer"
     },
     "config": {
       "reset_confirm": "Réinitialiser tous les paramètres aux valeurs par défaut ?",
