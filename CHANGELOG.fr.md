@@ -6,6 +6,25 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.3/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ---
+## [1.1.0] - 2026-03-04 - Réecriture du système d'internationnalisation et ajout de fonctionnalités
+
+### Ajouté
+
+- **Système d'internationnalisation** — refonte complète
+- **Support de 13 langues** — français, anglais, espagnol, allemand, italien, portugais, néerlandais, russe, chinois, japonais, polonais, suédois, danois
+- **Nouvelle fonctionnalité** - Possibilité pour tous les éléments sur lesquels peuvent être ajouté un label d'être ignorés par le scan de H.A.C.A.
+                                en leur ajoutant le label:    `haca_ignore`
+
+### Corrigé
+
+- **Bug** - corrige le retour d'erreur en pourcentage de la puissance d'une batterie au lieu de watts
+
+### Améliorations UI
+
+- **Amélioration de l'interface utilisateur** - amélioration de l'interface utilisateur
+    
+---
+
 ## [1.0.3] — 2026-03-03 — Internationnalisation de textes en dur et fixation de bugs
 
 ## [1.0.2] — 2026-03-02 — Internationnalisation de textes en dur et fixation de bugs
@@ -23,15 +42,15 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 - **Refactoring Assistant** (Module 5) — correction automatique `device_id → entity_id`, modes, templates simples ; sauvegarde YAML avant chaque correction
 - **Assistant IA** (Module 6) — explication des issues et suggestions via OpenAI / Google Generative AI
 - **Analyseur de sécurité** (Module 7) — détection d'expositions et mauvaises pratiques
-- **Analyseur de dashboards** (Module 9) — entités manquantes dans les vues Lovelace
-- **Monitoring événementiel** (Module 10) — scan automatique debounced sur modification de config HA
-- **Analyseur Recorder** (Module 11) — entités orphelines en SQLite, estimation espace gaspillé, purge en un clic
-- **Historique d'audit** (Module 12) — snapshots horodatés, courbe de score de santé, suppression individuelle/groupée
+- **Analyseur de dashboards** (Module 8) — entités manquantes dans les vues Lovelace
+- **Monitoring événementiel** (Module 9) — scan automatique debounced sur modification de config HA
+- **Analyseur Recorder** (Module 10) — entités orphelines en SQLite, estimation espace gaspillé, purge en un clic
+- **Historique d'audit** (Module 11) — snapshots horodatés, courbe de score de santé, suppression individuelle/groupée
 - **Graphe de dépendances** — visualisation D3.js force-directed, filtres par type/issues, export SVG et PNG
 - **Moniteur de batteries** — tableau de toutes les batteries, alertes par sévérité
 - **Score de santé global** — score 0-100 calculé sur l'ensemble des issues, affiché avec tendance
 - **Complexité d'automations** — classement par score de complexité avec métriques détaillées
-- Panel personnalisé HA avec 8 onglets principaux et sous-onglets par catégorie
+- Panel personnalisé HA avec 9 onglets principaux et sous-onglets par catégorie
 - Filtres par sévérité (HIGH / MEDIUM / LOW) et export CSV sur chaque liste d'issues
 - Recherche textuelle dans le graphe de dépendances
 - Notifications persistantes HA pour les nouvelles issues HIGH détectées
