@@ -1,10 +1,12 @@
-"""Tests for health_score.calculate_health_score() — v2 formula.
+"""Tests for health_score.calculate_health_score() — v1.1.0.
 
 Formula: ratio-based with per-category caps and a floor of 20.
 denominator = max(total_entities + total_automations, 10)
 penalty_c = min((weighted_sum_c / denominator) × 100, cap_c)
 score = max(20, round(100 - Σ penalty_c))
 """
+from __future__ import annotations
+
 import pytest
 import sys
 from pathlib import Path
@@ -37,48 +39,41 @@ class TestHealthScorePerfect:
 
 
 class TestHealthScoreWeights:
-    """Verify severity ordering and relative magnitudes."""
-
     def test_high_worse_than_medium(self):
-        score_high = calculate_health_score(make_issues({"high": 1}), [], total_entities=100)
-        score_med  = calculate_health_score(make_issues({"medium": 1}), [], total_entities=100)
-        assert score_high < score_med
+        s_h = calculate_health_score(make_issues({"high": 1}), [], total_entities=100)
+        s_m = calculate_health_score(make_issues({"medium": 1}), [], total_entities=100)
+        assert s_h < s_m
 
     def test_medium_worse_than_low(self):
-        score_med = calculate_health_score(make_issues({"medium": 1}), [], total_entities=100)
-        score_low = calculate_health_score(make_issues({"low": 1}), [], total_entities=100)
-        assert score_med < score_low
+        s_m = calculate_health_score(make_issues({"medium": 1}), [], total_entities=100)
+        s_l = calculate_health_score(make_issues({"low": 1}), [], total_entities=100)
+        assert s_m < s_l
 
     def test_more_issues_always_worse(self):
-        scores = [
-            calculate_health_score(make_issues({"high": n}), [], total_entities=100)
-            for n in range(0, 8)
-        ]
+        scores = [calculate_health_score(make_issues({"high": n}), [], total_entities=100)
+                  for n in range(0, 8)]
         assert scores == sorted(scores, reverse=True)
 
 
 class TestHealthScoreHalfWeight:
-    """Performance and security are half-weight vs automation/entity."""
-
     def test_perf_costs_less_than_automation(self):
-        score_auto = calculate_health_score(make_issues({"high": 3}), [], total_entities=100)
-        score_perf = calculate_health_score([], [], make_issues({"high": 3}), total_entities=100)
-        assert score_perf > score_auto
+        s_a = calculate_health_score(make_issues({"high": 3}), [], total_entities=100)
+        s_p = calculate_health_score([], [], make_issues({"high": 3}), total_entities=100)
+        assert s_p > s_a
 
     def test_security_costs_less_than_automation(self):
-        score_auto = calculate_health_score(make_issues({"high": 3}), [], total_entities=100)
-        score_sec  = calculate_health_score([], [], None, make_issues({"high": 3}), total_entities=100)
-        assert score_sec > score_auto
+        s_a = calculate_health_score(make_issues({"high": 3}), [], total_entities=100)
+        s_s = calculate_health_score([], [], None, make_issues({"high": 3}), total_entities=100)
+        assert s_s > s_a
 
     def test_dashboard_costs_less_than_automation(self):
-        score_auto = calculate_health_score(make_issues({"high": 3}), [], total_entities=100)
-        score_dash = calculate_health_score([], [], None, None, make_issues({"high": 3}), total_entities=100)
-        assert score_dash > score_auto
+        s_a = calculate_health_score(make_issues({"high": 3}), [], total_entities=100)
+        s_d = calculate_health_score([], [], None, None, make_issues({"high": 3}), total_entities=100)
+        assert s_d > s_a
 
 
 class TestHealthScoreBoundaries:
     def test_floor_is_20(self):
-        """Even 200 high-severity issues stay >= 20."""
         massive = make_issues({"high": 200})
         assert calculate_health_score(massive, massive, massive, massive, massive) >= 20
 
@@ -97,42 +92,32 @@ class TestHealthScoreBoundaries:
 
 
 class TestHealthScoreRatioAwareness:
-    """Large installs should be penalized less for the same issue count."""
-
     def test_large_install_scores_higher_than_small(self):
         issues = make_issues({"high": 5})
-        score_small = calculate_health_score(issues, [], total_entities=10,   total_automations=5)
-        score_large = calculate_health_score(issues, [], total_entities=1000, total_automations=500)
-        assert score_large > score_small
+        s_small = calculate_health_score(issues, [], total_entities=10, total_automations=5)
+        s_large = calculate_health_score(issues, [], total_entities=1000, total_automations=500)
+        assert s_large > s_small
 
     def test_ratio_denominator_floor(self):
-        """Empty config (0 entities) should not crash or produce > 100."""
         issues = make_issues({"high": 1})
         score = calculate_health_score(issues, [], total_entities=0, total_automations=0)
         assert 20 <= score <= 100
 
 
 class TestHealthScoreCaps:
-    """Each category is capped so no single category can exceed its max penalty."""
-
     def test_automation_cap_at_30(self):
-        """1000 automation issues should not push auto penalty beyond 30."""
         huge = make_issues({"high": 1000})
-        # Without entity issues, max penalty from automations is 30
         score = calculate_health_score(huge, [], total_entities=10, total_automations=5)
-        assert score >= 100 - 30  # at least 70
+        assert score >= 100 - 30
 
     def test_dashboard_cap_at_10(self):
-        """Even enormous dashboard issue list stays within 10 pts penalty."""
         huge = make_issues({"high": 1000})
         score = calculate_health_score([], [], None, None, huge, total_entities=10)
-        assert score >= 100 - 10  # at least 90
+        assert score >= 100 - 10
 
 
 class TestHealthScoreMonotonicity:
     def test_more_issues_lower_score(self):
-        scores = [
-            calculate_health_score(make_issues({"high": n}), [], total_entities=100)
-            for n in range(0, 20, 3)
-        ]
+        scores = [calculate_health_score(make_issues({"high": n}), [], total_entities=100)
+                  for n in range(0, 20, 3)]
         assert scores == sorted(scores, reverse=True)

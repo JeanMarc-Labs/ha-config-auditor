@@ -1,32 +1,36 @@
-"""Shared pytest fixtures for H.A.C.A tests.
+"""Shared pytest fixtures for H.A.C.A v1.1.0 tests.
 
 Run with:
-    pip install pytest pytest-asyncio pytest-homeassistant-custom-component
+    pip install pytest pytest-asyncio
     pytest tests/ -v
+
+No real HA installation required — all HA dependencies are stubbed here.
 """
 from __future__ import annotations
 
 import sys
-import os
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
-# Make the custom component importable without a real HA installation
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# ── Make custom_components importable ────────────────────────────────────────
+_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_ROOT))
 
-# ── Minimal HA stubs (used when pytest-homeassistant-custom-component not available) ──
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Minimal HA object stubs
+# ═══════════════════════════════════════════════════════════════════════════
 
 class MockState:
-    def __init__(self, entity_id, state="on", attributes=None):
+    def __init__(self, entity_id: str, state: str = "on", attributes: dict | None = None):
         self.entity_id = entity_id
         self.state = state
         self.attributes = attributes or {}
 
 
 class _MockStatesProxy:
-    """Proxy that lets tests call hass.states.get(), hass.states.async_all(), etc."""
-
     def __init__(self, store: dict):
         self._store = store
 
@@ -40,14 +44,54 @@ class _MockStatesProxy:
         return list(self._store.values())
 
 
-class MockHass:
-    """Minimal HomeAssistant mock sufficient for unit-testing analysers."""
+class MockRegistryEntry:
+    """Minimal entity registry entry with label support (v1.1.0: haca_ignore)."""
 
-    def __init__(self, config_dir="/tmp/haca_test"):
+    def __init__(
+        self,
+        entity_id: str,
+        *,
+        labels: set | None = None,
+        disabled_by=None,
+        device_id: str | None = None,
+        platform: str = "test",
+        unique_id: str | None = None,
+    ):
+        self.entity_id = entity_id
+        self.labels: set = labels or set()
+        self.disabled_by = disabled_by
+        self.device_id = device_id
+        self.platform = platform
+        self.unique_id = unique_id or entity_id
+
+
+class MockEntityRegistry:
+    """Minimal entity registry mock."""
+
+    def __init__(self, entries: list | None = None):
+        self._entries: dict = {}
+        for e in (entries or []):
+            self._entries[e.entity_id] = e
+
+    @property
+    def entities(self):
+        return self._entries
+
+    def async_get(self, entity_id: str):
+        return self._entries.get(entity_id)
+
+    def add(self, entry) -> None:
+        self._entries[entry.entity_id] = entry
+
+
+class MockHass:
+    """Minimal HomeAssistant mock sufficient for all HACA unit tests."""
+
+    def __init__(self, config_dir: str = "/tmp/haca_test"):
         self.config = MagicMock()
         self.config.config_dir = config_dir
         self.config.language = "en"
-        self._states: dict[str, MockState] = {}
+        self._states: dict = {}
         self.states = _MockStatesProxy(self._states)
         self.loop = MagicMock()
         self.bus = MagicMock()
@@ -55,21 +99,29 @@ class MockHass:
         self.config_entries = MagicMock()
         self.config_entries.async_entries = MagicMock(return_value=[])
         self.services = MagicMock()
-        self.services.async_call = MagicMock(return_value=None)
-        self.services = MagicMock()
+        self.services.async_call = AsyncMock(return_value=None)
+        self._entity_registry = MockEntityRegistry()
 
-    def add_state(self, entity_id: str, state: str = "on", attributes: dict = None):
+    def add_state(self, entity_id: str, state: str = "on", attributes: dict | None = None):
         self._states[entity_id] = MockState(entity_id, state, attributes or {})
+
+    def add_registry_entry(self, entry) -> None:
+        self._entity_registry.add(entry)
+        if entry.entity_id not in self._states:
+            self._states[entry.entity_id] = MockState(entry.entity_id)
 
     async def async_add_executor_job(self, func, *args):
         return func(*args)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Pytest fixtures
+# ═══════════════════════════════════════════════════════════════════════════
+
 @pytest.fixture
 def mock_hass(tmp_path):
-    """Provide a MockHass instance with a temporary config directory."""
+    """MockHass with a temporary config directory and standard YAML stubs."""
     hass = MockHass(config_dir=str(tmp_path))
-    # Create minimal automations.yaml and scripts.yaml
     (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
     (tmp_path / "scripts.yaml").write_text("{}", encoding="utf-8")
     (tmp_path / "scenes.yaml").write_text("[]", encoding="utf-8")
@@ -77,8 +129,36 @@ def mock_hass(tmp_path):
 
 
 @pytest.fixture
+def mock_hass_fr(tmp_path):
+    """French-language MockHass."""
+    hass = MockHass(config_dir=str(tmp_path))
+    hass.config.language = "fr"
+    hass.data["config_auditor"] = {"user_language": "fr"}
+    (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
+    (tmp_path / "scripts.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "scenes.yaml").write_text("[]", encoding="utf-8")
+    return hass
+
+
+@pytest.fixture
+def translations_dir():
+    return Path(__file__).parent.parent / "translations"
+
+
+@pytest.fixture
+def en_translations(translations_dir):
+    with open(translations_dir / "en.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@pytest.fixture
+def fr_translations(translations_dir):
+    with open(translations_dir / "fr.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@pytest.fixture
 def sample_automation():
-    """Return a well-formed automation config dict."""
     return {
         "id": "test_auto_001",
         "alias": "Test Automation",
@@ -92,9 +172,8 @@ def sample_automation():
 
 @pytest.fixture
 def god_automation():
-    """Return a complex 'God automation' config for complexity testing."""
     actions = [
-        {"service": f"light.turn_on", "target": {"entity_id": f"light.room_{i}"}}
+        {"service": "light.turn_on", "target": {"entity_id": f"light.room_{i}"}}
         for i in range(20)
     ]
     actions += [
