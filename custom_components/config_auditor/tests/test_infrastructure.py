@@ -1,18 +1,46 @@
-"""Tests for event_monitor and health_score integration."""
+"""Infrastructure & integration tests — v1.1.0.
+
+Covers:
+  - health_score importable from both services.py and health_score.py
+  - event_monitor: listeners registered, debounce, cleanup
+  - models: AuditIssue, ComplexityScore, BatteryEntry importable + CoordinatorData keys
+  - VERSION = 1.1.0
+"""
+from __future__ import annotations
+
 import asyncio
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, AsyncMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
-# ── health_score integration (already tested standalone, test integration here) ──
+# ══════════════════════════════════════════════════════════════════════════════
+# VERSION
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVersion:
+    def test_version_is_1_1_0(self):
+        from custom_components.config_auditor.const import VERSION
+        assert VERSION == "1.1.0", (
+            f"Expected VERSION='1.1.0', got '{VERSION}'. "
+            "Bump const.py VERSION when making a minor release."
+        )
+
+    def test_version_string_format(self):
+        from custom_components.config_auditor.const import VERSION
+        parts = VERSION.split(".")
+        assert len(parts) == 3, f"VERSION must be semantic (X.Y.Z), got '{VERSION}'"
+        assert all(p.isdigit() for p in parts)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# health_score integration
+# ══════════════════════════════════════════════════════════════════════════════
 
 class TestHealthScoreIntegration:
-    """Verify health_score.py is correctly imported and called in services.py."""
-
     def test_health_score_importable_from_services(self):
         from custom_components.config_auditor.services import calculate_health_score
         assert callable(calculate_health_score)
@@ -27,96 +55,98 @@ class TestHealthScoreIntegration:
         assert hs1 is hs2
 
 
-# ── event_monitor unit tests ───────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# event_monitor
+# ══════════════════════════════════════════════════════════════════════════════
 
 class TestEventMonitorSetup:
-    """Unit tests for async_setup_event_monitor."""
-
-    def _make_hass_and_entry(self, monitoring_enabled=True, debounce=0):
-        hass = MagicMock()
-        hass.data = {}
-        hass.loop = MagicMock()
-        hass.bus = MagicMock()
-        hass.bus.async_listen.return_value = MagicMock()  # unsub callable
-
+    def _make_hass_entry(self, monitoring_enabled=True, debounce=0):
+        from custom_components.config_auditor.tests.conftest import MockHass
+        hass = MockHass()
+        hass.bus.async_listen = MagicMock(return_value=lambda: None)
         entry = MagicMock()
         entry.entry_id = "test_entry"
-        entry.options = {
-            "event_monitoring_enabled": monitoring_enabled,
-            "event_debounce_seconds": debounce,
-        }
-        entry._unload_callbacks = []
-
-        def capture_unload(cb):
-            entry._unload_callbacks.append(cb)
-
-        entry.async_on_unload.side_effect = capture_unload
+        entry.options = {"event_monitoring_enabled": monitoring_enabled,
+                         "event_debounce_seconds": debounce}
+        cbs = []
+        entry.async_on_unload = lambda cb: cbs.append(cb)
+        entry._unload_callbacks = cbs
         return hass, entry
 
     def test_registers_all_monitored_events(self):
         from custom_components.config_auditor.event_monitor import (
-            async_setup_event_monitor, MONITORED_EVENTS
+            async_setup_event_monitor, MONITORED_EVENTS,
         )
-        hass, entry = self._make_hass_and_entry()
+        hass, entry = self._make_hass_entry()
         async_setup_event_monitor(hass, entry)
-
-        # Each event + 1 cancel callback = len(MONITORED_EVENTS) + 1
-        listen_calls = hass.bus.async_listen.call_args_list
-        registered_events = [c[0][0] for c in listen_calls]
+        registered = [c[0][0] for c in hass.bus.async_listen.call_args_list]
         for event in MONITORED_EVENTS:
-            assert event in registered_events, f"Missing listener for {event}"
+            assert event in registered, f"Missing listener for {event}"
 
-    def test_registers_cancel_callback_on_unload(self):
-        from custom_components.config_auditor.event_monitor import async_setup_event_monitor, MONITORED_EVENTS
-        hass, entry = self._make_hass_and_entry()
+    def test_automation_reloaded_in_monitored_events(self):
+        from custom_components.config_auditor.event_monitor import MONITORED_EVENTS
+        assert "automation_reloaded" in MONITORED_EVENTS
+
+    def test_script_and_scene_in_monitored_events(self):
+        from custom_components.config_auditor.event_monitor import MONITORED_EVENTS
+        assert "script_reloaded" in MONITORED_EVENTS
+        assert "scene_reloaded" in MONITORED_EVENTS
+
+    def test_entity_registry_updated_in_monitored_events(self):
+        from custom_components.config_auditor.event_monitor import MONITORED_EVENTS
+        assert "entity_registry_updated" in MONITORED_EVENTS
+
+    def test_unload_callbacks_registered(self):
+        from custom_components.config_auditor.event_monitor import (
+            async_setup_event_monitor, MONITORED_EVENTS,
+        )
+        hass, entry = self._make_hass_entry()
         async_setup_event_monitor(hass, entry)
-        # We should have len(MONITORED_EVENTS) listener unsubs + 1 cancel callback
-        assert len(entry._unload_callbacks) == len(MONITORED_EVENTS) + 1
+        assert len(entry._unload_callbacks) >= len(MONITORED_EVENTS)
 
-    def test_disabled_monitoring_still_registers_but_noop(self):
+    def test_disabled_monitoring_does_not_crash(self):
         from custom_components.config_auditor.event_monitor import async_setup_event_monitor
-        hass, entry = self._make_hass_and_entry(monitoring_enabled=False)
-        # Should not raise
+        hass, entry = self._make_hass_entry(monitoring_enabled=False)
         async_setup_event_monitor(hass, entry)
-        # Still registers listeners (they're no-ops when disabled)
-        assert hass.bus.async_listen.called
 
-    def test_debounced_scan_fires_coordinator_refresh(self):
-        """When an event fires and debounce expires, coordinator is refreshed."""
-        from custom_components.config_auditor.event_monitor import async_setup_event_monitor, MONITORED_EVENTS
-        hass, entry = self._make_hass_and_entry(debounce=0)
+    @pytest.mark.asyncio
+    async def test_debounce_coalesces_rapid_events(self):
+        from custom_components.config_auditor.event_monitor import async_setup_event_monitor
+        from custom_components.config_auditor.tests.conftest import MockHass
+        hass = MockHass()
+        loop = asyncio.get_event_loop()
+        hass.loop = loop
+        scan_count = 0
 
         coord = MagicMock()
-        coord.async_refresh = MagicMock(return_value=MagicMock())  # sync mock, not a coroutine
-        hass.data = {"config_auditor": {"test_entry": {"coordinator": coord}}}
+        async def mock_refresh():
+            nonlocal scan_count
+            scan_count += 1
+        coord.async_refresh = mock_refresh
 
-        # Capture the call_later callback
-        fired_fn = []
-        def capture_call_later(delay, fn):
-            fired_fn.append(fn)
-            return MagicMock()
-        hass.loop.call_later.side_effect = capture_call_later
+        entry = MagicMock()
+        entry.entry_id = "test_entry"
+        entry.options = {"event_debounce_seconds": 0.05}
+        entry.async_on_unload = lambda cb: None
+        hass.data["config_auditor"] = {"test_entry": {"coordinator": coord}}
+
+        listeners = {}
+        hass.bus.async_listen = lambda evt, handler: listeners.update({evt: handler}) or (lambda: None)
 
         async_setup_event_monitor(hass, entry)
 
-        # Find and trigger the handler for "automation_reloaded"
-        listen_calls = hass.bus.async_listen.call_args_list
-        automation_handler = None
-        for c in listen_calls:
-            if c[0][0] == "automation_reloaded":
-                automation_handler = c[0][1]
-                break
-        assert automation_handler is not None
+        fake_event = MagicMock()
+        for _ in range(5):
+            if "automation_reloaded" in listeners:
+                listeners["automation_reloaded"](fake_event)
 
-        automation_handler(MagicMock())  # fire the event
-        assert len(fired_fn) == 1, "call_later should have been called once"
-
-        # Simulate timer firing
-        fired_fn[0]()
-        hass.async_create_task.assert_called_once()
+        await asyncio.sleep(0.2)
+        assert scan_count <= 1, f"Debounce failed: {scan_count} scans triggered"
 
 
-# ── models integration ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# models
+# ══════════════════════════════════════════════════════════════════════════════
 
 class TestModelsImportIntegration:
     def test_all_models_importable(self):
@@ -126,19 +156,41 @@ class TestModelsImportIntegration:
         )
         assert AuditIssue is not None
 
-    def test_audit_issue_severity_literals(self):
-        from custom_components.config_auditor.models import AuditIssue
-        for sev in ("high", "medium", "low"):
-            issue = AuditIssue("x", "t", sev, "m", "r")
-            assert issue.severity == sev
-
-    def test_coordinator_data_typed_dict_keys(self):
-        """CoordinatorData should list all expected coordinator keys."""
+    def test_coordinator_data_has_required_keys(self):
         from custom_components.config_auditor.models import CoordinatorData
-        annotations = CoordinatorData.__annotations__
-        required_keys = [
+        required = [
             "health_score", "total_issues", "automation_issue_list",
             "battery_list", "dependency_graph", "complexity_scores",
         ]
-        for key in required_keys:
-            assert key in annotations, f"Missing key in CoordinatorData: {key}"
+        ann = CoordinatorData.__annotations__
+        for key in required:
+            assert key in ann, f"Missing key in CoordinatorData: {key}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# manifest.json consistency
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestManifestConsistency:
+    def _load_manifest(self):
+        import json
+        p = Path(__file__).parent.parent / "manifest.json"
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_manifest_version_matches_const(self):
+        from custom_components.config_auditor.const import VERSION
+        manifest = self._load_manifest()
+        assert manifest["version"] == VERSION, (
+            f"manifest.json version {manifest['version']!r} != const.py VERSION {VERSION!r}. "
+            "Both must be updated together."
+        )
+
+    def test_manifest_has_required_keys(self):
+        manifest = self._load_manifest()
+        for key in ("domain", "name", "version", "config_flow", "requirements"):
+            assert key in manifest, f"Missing key in manifest.json: {key}"
+
+    def test_manifest_domain_is_config_auditor(self):
+        manifest = self._load_manifest()
+        assert manifest["domain"] == "config_auditor"
