@@ -9,7 +9,7 @@
     const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;">
         <div class="loader"></div>
-        <div style="margin-top:20px;font-size:18px;font-weight:500;">🤖 Analyse de complexité en cours…</div>
+        <div style="margin-top:20px;font-size:18px;font-weight:500;">${this.t('ai_explain.analyzing')}</div>
         <div style="margin-top:8px;font-size:13px;color:var(--secondary-text-color);">
           ${this.escapeHtml(row.alias)} — Score ${row.score}
         </div>
@@ -58,7 +58,7 @@
 
           <!-- Score breakdown pills -->
           <div style="padding:12px 24px;border-bottom:1px solid var(--divider-color);display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;background:var(--secondary-background-color);">
-            ${row.triggers  !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔀 ${row.triggers} déclencheurs</span>` : ''}
+            ${row.triggers  !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">${this.t('ai_explain.triggers_label', {n: row.triggers})}</span>` : ''}
             ${row.conditions !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">🔍 ${row.conditions} conditions</span>` : ''}
             ${row.actions   !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">▶ ${row.actions} actions</span>` : ''}
             ${row.templates !== undefined ? `<span style="background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:2px 10px;font-size:12px;">📝 ${row.templates} templates</span>` : ''}
@@ -85,14 +85,14 @@
               </div>
               <div style="background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:12px;overflow:hidden;">
                 <div style="padding:8px 14px;background:rgba(var(--rgb-primary-color,33,150,243),0.07);font-size:12px;color:var(--secondary-text-color);border-bottom:1px solid var(--divider-color);">
-                  ⚠️ Prévisualisation uniquement — aucune modification n'est appliquée tant que vous ne cliquez pas sur Appliquer
+                  ${this.t('ai_explain.preview_only')}
                 </div>
                 <pre id="split-proposal-pre" style="margin:0;padding:16px;font-size:12px;overflow-x:auto;max-height:320px;line-height:1.5;">${this.escapeHtml(splitProposal)}</pre>
               </div>
             </div>
             ` : `
             <div style="padding:16px;background:var(--secondary-background-color);border-radius:12px;font-size:13px;color:var(--secondary-text-color);text-align:center;">
-              Aucune proposition de refactoring générée (automation trop simple ou IA non disponible).
+              ${this.t('ai_explain.no_proposal')}
             </div>
             `}
           </div>
@@ -143,10 +143,10 @@
             modal._updateContent(`
               <div style="padding:48px 32px;text-align:center;">
                 <div style="font-size:56px;margin-bottom:20px;">✅</div>
-                <h2 style="margin-bottom:12px;">Refactoring appliqué</h2>
+                <h2 style="margin-bottom:12px;">${this.t('ai_explain.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.6;">
-                  Les scripts ont été extraits et l'automation simplifiée.<br>
-                  Un backup a été créé avant la modification.
+                  ${this.t('ai_explain.applied_desc')}<br>
+                  ${this.t('ai_explain.applied_backup')}
                 </p>
                 <button onclick="this.closest('.haca-modal').remove()"
                   style="margin-top:24px;background:var(--primary-color);color:white;padding:10px 28px;border-radius:10px;">

@@ -636,8 +636,6 @@
     // Function to close modal
     const closeModal = () => {
       modal.remove();
-      // Toujours retirer le listener keydown, quelle que soit la méthode de fermeture
-      document.removeEventListener('keydown', handleEscape);
     };
 
     closeBtn.addEventListener('click', closeModal);
@@ -670,7 +668,8 @@
     // Close on Escape key
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
-        closeModal(); // closeModal retire lui-même le listener
+        closeModal();
+        document.removeEventListener('keydown', handleEscape);
       }
     };
     document.addEventListener('keydown', handleEscape);
@@ -773,7 +772,7 @@
             ${this.t('zombie.replace_with')}
           </label>
           <input id="new-entity-input" type="text"
-            placeholder="ex: light.evier_new"
+            placeholder="${this.t('battery.entity_placeholder')}"
             style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--divider-color);
                    background:var(--card-background-color);color:var(--primary-text-color);font-size:14px;box-sizing:border-box;">
         </div>
@@ -1188,11 +1187,11 @@
     // on déverrouille quand même le bouton
     const SCAN_TIMEOUT_MS = 5 * 60 * 1000;
     let scanTimeoutId = null;
-    this._unsubScanAll = null; // stocké sur this pour nettoyage dans disconnectedCallback
+    let unsubScanComplete = null;
 
     const _cleanup = () => {
       if (scanTimeoutId) { clearTimeout(scanTimeoutId); scanTimeoutId = null; }
-      if (this._unsubScanAll) { try { this._unsubScanAll(); } catch (_) {} this._unsubScanAll = null; }
+      if (unsubScanComplete) { try { unsubScanComplete(); } catch (_) {} unsubScanComplete = null; }
       this._scanAllInProgress = false;
       this._setButtonLoading(btn, false, originalContent);
     };
@@ -1201,7 +1200,7 @@
       // S'abonner à haca_scan_complete AVANT de lancer le scan
       // pour ne manquer aucun événement (race condition impossible)
       if (this.hass?.connection) {
-        this._unsubScanAll = await this.hass.connection.subscribeEvents((event) => {
+        unsubScanComplete = await this.hass.connection.subscribeEvents((event) => {
           _cleanup();
           this.loadData();
         }, 'haca_scan_complete');
@@ -1233,17 +1232,17 @@
     const btn = this.shadowRoot.querySelector('#scan-auto');
     const originalContent = `<ha-icon icon="mdi:robot"></ha-icon> ${this.t('buttons.automations')}`;
     this._setButtonLoading(btn, true, originalContent);
-    this._unsubScanAuto = null; // stocké sur this pour nettoyage dans disconnectedCallback
+    let unsubDone = null;
     let tid = null;
     const _done = () => {
       if (tid) { clearTimeout(tid); tid = null; }
-      if (this._unsubScanAuto) { try { this._unsubScanAuto(); } catch (_) {} this._unsubScanAuto = null; }
+      if (unsubDone) { try { unsubDone(); } catch (_) {} unsubDone = null; }
       this._scanAutoInProgress = false;
       this._setButtonLoading(btn, false, originalContent);
     };
     try {
       if (this.hass?.connection) {
-        this._unsubScanAuto = await this.hass.connection.subscribeEvents(() => {
+        unsubDone = await this.hass.connection.subscribeEvents(() => {
           _done(); this.loadData();
         }, 'haca_scan_complete');
       }
@@ -1261,17 +1260,17 @@
     const btn = this.shadowRoot.querySelector('#scan-entity');
     const originalContent = `<ha-icon icon="mdi:lightning-bolt"></ha-icon> ${this.t('buttons.entities')}`;
     this._setButtonLoading(btn, true, originalContent);
-    this._unsubScanEntity = null; // stocké sur this pour nettoyage dans disconnectedCallback
+    let unsubDone = null;
     let tid = null;
     const _done = () => {
       if (tid) { clearTimeout(tid); tid = null; }
-      if (this._unsubScanEntity) { try { this._unsubScanEntity(); } catch (_) {} this._unsubScanEntity = null; }
+      if (unsubDone) { try { unsubDone(); } catch (_) {} unsubDone = null; }
       this._scanEntityInProgress = false;
       this._setButtonLoading(btn, false, originalContent);
     };
     try {
       if (this.hass?.connection) {
-        this._unsubScanEntity = await this.hass.connection.subscribeEvents(() => {
+        unsubDone = await this.hass.connection.subscribeEvents(() => {
           _done(); this.loadData();
         }, 'haca_scan_complete');
       }
@@ -1380,10 +1379,15 @@
   }
 
   async generateReport() {
+    const btn = this.shadowRoot.querySelector('#create-report');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="btn-loader"></span> ${this.t('reports.generating')}`;
+    }
     try {
       await this.hass.callService('config_auditor', 'generate_report');
 
-      // Use Home Assistant persistent notification system with enhanced message
       this.showHANotification(
         this.t('notifications.report_generated'),
         this.t('notifications.report_generated_full'),
@@ -1399,6 +1403,11 @@
         error.message,
         'haca_error'
       );
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+      }
     }
   }
 

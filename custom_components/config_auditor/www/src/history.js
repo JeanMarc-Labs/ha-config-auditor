@@ -142,6 +142,23 @@
     // Tooltip on dot hover
     const tooltip = this.shadowRoot.querySelector('#history-tooltip');
     svg.querySelectorAll('.hist-dot').forEach(dot => {
+      const _posTooltip = (e) => {
+        const tipW = tooltip.offsetWidth || 180;
+        const tipH = tooltip.offsetHeight || 64;
+        // e.offsetX/Y gives coordinates relative to the SVG element — no getBoundingClientRect needed
+        const mx = e.offsetX;
+        const my = e.offsetY;
+        const svgW = svg.clientWidth  || 600;
+        const svgH = svg.clientHeight || 300;
+        let left = mx + 14;
+        if (left + tipW > svgW - 4) left = mx - tipW - 14;
+        left = Math.max(4, left);
+        let top = my - tipH - 8;
+        if (top < 4) top = my + 18;
+        top = Math.min(svgH - tipH - 4, Math.max(4, top));
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top  = `${top}px`;
+      };
       dot.addEventListener('mouseenter', (e) => {
         const idx = parseInt(dot.dataset.idx);
         const entry = history[idx];
@@ -149,17 +166,11 @@
         tooltip.style.display = 'block';
         tooltip.innerHTML = `
           <div style="font-weight:700;margin-bottom:4px;">${entry.date} ${entry.time}</div>
-          <div>Score : <strong style="color:${scores[idx] >= 80 ? '#4caf50' : scores[idx] >= 50 ? '#ffa726' : '#ef5350'}">${entry.score}%</strong></div>
+          <div>${this.t('history.score_tooltip')} <strong style="color:${scores[idx] >= 80 ? '#4caf50' : scores[idx] >= 50 ? '#ffa726' : '#ef5350'}">${entry.score}%</strong></div>
           <div style="color:var(--secondary-text-color);font-size:11px;margin-top:2px;">${this.t('history.issues_total').replace('{total}', entry.total)}</div>`;
-        // Position tooltip
-        const svgRect = svg.getBoundingClientRect();
-        const cx = parseFloat(dot.getAttribute('cx'));
-        const cy = parseFloat(dot.getAttribute('cy'));
-        const left = cx + 8;
-        const top  = Math.max(0, cy - 40);
-        tooltip.style.left = `${left}px`;
-        tooltip.style.top  = `${top}px`;
+        _posTooltip(e);
       });
+      dot.addEventListener('mousemove', (e) => { if (tooltip.style.display !== 'none') _posTooltip(e); });
       dot.addEventListener('mouseleave', () => {
         if (tooltip) tooltip.style.display = 'none';
       });

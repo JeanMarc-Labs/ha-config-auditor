@@ -45,7 +45,7 @@
                  border:1px solid var(--divider-color);cursor:pointer;
                  background:${pageSize===n?'var(--primary-color)':'var(--secondary-background-color)'};
                  color:${pageSize===n?'#fff':'var(--primary-text-color)'};">${n}</button>`).join('')}
-        <span style="font-size:12px;color:var(--secondary-text-color);margin-left:auto;">0 élément</span>
+        <span style="font-size:12px;color:var(--secondary-text-color);margin-left:auto;">${this.t('pagination.empty')}</span>
       </div>`;
     }
     const totalPages = Math.ceil(total / pageSize);
@@ -75,7 +75,7 @@
         style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
                gap:8px;padding:12px 4px 4px;border-top:1px solid var(--divider-color);margin-top:8px;">
         <div style="display:flex;align-items:center;gap:6px;">
-          <span style="font-size:12px;color:var(--secondary-text-color);">Afficher :</span>
+          <span style="font-size:12px;color:var(--secondary-text-color);">${this.t('pagination.show')}</span>
           ${sizeBtn(10)}${sizeBtn(50)}${sizeBtn(100)}
         </div>
         <span style="font-size:12px;color:var(--secondary-text-color);">
