@@ -22,6 +22,23 @@ class TranslationHelper:
         """Load translations asynchronously (runs file I/O in executor to avoid blocking)."""
         await self.hass.async_add_executor_job(self.load_language, language)
 
+    async def async_load_language_section(self, language: str, section: str) -> None:
+        """Load a specific top-level JSON section (e.g. 'ai_prompts') instead of 'analyzer'."""
+        await self.hass.async_add_executor_job(self._load_section, language, section)
+
+    def _load_section(self, language: str, section: str) -> None:
+        """Synchronously load a named section from the JSON translation file."""
+        import json as _json
+        from pathlib import Path as _Path
+        base = _Path(__file__).parent / "translations"
+        path = base / f"{language}.json"
+        if not path.exists():
+            path = base / "en.json"
+        try:
+            self._translations = _json.loads(path.read_text(encoding="utf-8")).get(section, {})
+        except Exception:
+            self._translations = {}
+
     def load_language(self, language: str) -> None:
         """Load translations for the specified language from JSON files (sync, for executor use only)."""
         self._language = language
@@ -47,9 +64,9 @@ class TranslationHelper:
             _LOGGER.warning("Error loading translations from %s: %s", translation_file, e)
             self._translations = {}
     
-    def t(self, msg_key: str, **kwargs) -> str:
+    def t(self, key: str, **kwargs) -> str:
         """Get translation with parameter substitution."""
-        template = self._translations.get(msg_key, msg_key)
+        template = self._translations.get(key, key)
         if kwargs:
             try:
                 return template.format(**kwargs)

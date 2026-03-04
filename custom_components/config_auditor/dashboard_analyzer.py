@@ -21,10 +21,12 @@ from typing import Any
 import yaml
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 # Note: entity_registry intentionally NOT used here.
 # Lovelace shows "Entity not found" when the entity has no state in hass.states,
 # regardless of whether it exists in the registry (disabled, ghost entries, etc.).
 
+from .translation_utils import TranslationHelper
 _LOGGER = logging.getLogger(__name__)
 
 # Keys whose string value is directly an entity_id
@@ -65,11 +67,21 @@ class DashboardAnalyzer:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self.issues: list[dict[str, Any]] = []
+        self._translator = TranslationHelper(hass)
 
     # ── Public API ────────────────────────────────────────────────────────
 
     async def analyze_all(self) -> list[dict[str, Any]]:
         self.issues = []
+        language = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
+        await self._translator.async_load_language(language)
+        # Load haca_ignore label (store as instance attr so _add_issue can access it)
+        self._haca_ignored = set()
+        try:
+            for entry in er.async_get(self.hass).entities.values():
+                if "haca_ignore" in entry.labels: self._haca_ignored.add(entry.entity_id)
+        except Exception: pass
+
         known = await self._build_known_entities()
         _LOGGER.warning(
             "[HACA Dashboard] analyze_all() START — %d known entities", len(known)
@@ -385,16 +397,18 @@ class DashboardAnalyzer:
                 if card_path not in locs:
                     locs.append(card_path)
                 existing["locations"] = locs
-                existing["message"] = f"Référencée dans {len(locs)} carte(s) mais n'existe pas"
+                existing["message"] = self._translator.t("dashboard_referenced_in_n_cards", count=len(locs))
                 return
 
+        if entity_id in getattr(self, "_haca_ignored", set()):
+            return
         self.issues.append({
             "entity_id":      entity_id,
             "alias":          entity_id,
             "type":           "dashboard_missing_entity",
             "severity":       "high",
-            "message":        "Référencée dans 1 carte mais n'existe pas",
-            "recommendation": "Éditez le tableau de bord et corrigez ou supprimez la référence à cette entité.",
+            "message":        self._translator.t("dashboard_referenced_in_1_card"),
+            "recommendation": self._translator.t("dashboard_edit_fix_reference"),
             "location":       card_path,
             "locations":      [card_path],
             "source_name":    dashboard_title,

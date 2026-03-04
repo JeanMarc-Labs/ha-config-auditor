@@ -47,7 +47,7 @@ class EntityAnalyzer:
         self.issues = []
         
         # Load language for translations
-        language = self.hass.config.language or "en"
+        language = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
         await self._translator.async_load_language(language)
         
         # Build entity reference map (automations + scripts)
@@ -57,6 +57,9 @@ class EntityAnalyzer:
         # Analyze entity states
         await self._analyze_entity_states()
         
+        # Load ignored entities (haca_ignore label)
+        self._ignored_entity_ids = await self._load_ignored_entity_ids()
+
         # Analyze zombie entities
         await self._analyze_zombie_entities()
         
@@ -245,6 +248,17 @@ class EntityAnalyzer:
             
             if idx % 50 == 0: await asyncio.sleep(0)
 
+    async def _load_ignored_entity_ids(self) -> set:
+        """Return entity_ids that carry the haca_ignore label."""
+        ignored = set()
+        try:
+            for entry in er.async_get(self.hass).entities.values():
+                if "haca_ignore" in entry.labels:
+                    ignored.add(entry.entity_id)
+        except Exception as e:
+            _LOGGER.debug("haca_ignore: %s", e)
+        return ignored
+
     async def _analyze_zombie_entities(self) -> None:
         """Detect zombie entities - referenced but don't exist."""
         all_entities = self.hass.states.async_all()
@@ -252,6 +266,8 @@ class EntityAnalyzer:
         t = self._translator.t
 
         for idx, (entity_id, automations) in enumerate(self._entity_references.items()):
+            if entity_id in self._ignored_entity_ids:
+                continue
             if entity_id not in existing_entities:
                 automation_ids = list(dict.fromkeys(automations))  # deduplicate, keep order
                 # Resolve human-readable names for each referencing automation
@@ -282,7 +298,8 @@ class EntityAnalyzer:
         
         for idx, entry in enumerate(entity_reg.entities.values()):
             entity_id = entry.entity_id
-            
+            if entity_id in self._ignored_entity_ids:
+                continue
             # Check for disabled entities that are referenced
             if entry.disabled_by is not None:
                 referencing_automations = self._entity_references.get(entity_id, [])

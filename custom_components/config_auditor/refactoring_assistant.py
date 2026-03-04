@@ -1194,146 +1194,37 @@ class RefactoringAssistant:
             actions_part = "Actions (YAML) :"
             actions_yaml = yaml.dump(config.get("action", []) or config.get("actions", []), default_flow_style=False, allow_unicode=True)
 
-        prompt = f"""
-        En tant qu'expert Home Assistant, suggère une courte description (une seule phrase claire, maximum 150 caractères) pour cette configuration :
-        Nom : {alias}
-        {triggers_part}
-        {triggers_yaml}
-        {actions_part}
-        {actions_yaml}
-        
-        Réponds UNIQUEMENT par la description suggérée en français, sans guillemets.
-        """
-        
+        # Build the full YAML block from triggers + actions parts
+        yaml_block = (triggers_yaml + "\n" + actions_yaml).strip()[:4000] or "(YAML non disponible)"
+
+        _lang = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
+        import json as _j; from pathlib import Path as _pp
+        try:
+            _ap = _j.loads((_pp(__file__).parent / "translations" / f"{_lang}.json").read_text(encoding="utf-8")).get("ai_prompts", {})
+        except Exception:
+            _ap = {}
+        prompt = _ap.get("description_suggest_system", "Suggest a short description for: {yaml}").format(yaml=yaml_block)
+
+        # ── Call AI ────────────────────────────────────────────────────────────
+        suggestion = ""
         try:
             from .conversation import _async_call_ai
-            reply = await _async_call_ai(self.hass, prompt, "HACA Description Fix")
-            if reply:
-                return {"success": True, "suggestion": reply.strip().strip('"').strip("'")}
-            # AI unavailable or quota exceeded — generate a rule-based suggestion
-            _LOGGER.warning("[HACA] AI unavailable for description suggestion, using rule-based fallback")
-        except Exception as e:
-            _LOGGER.warning("[HACA] AI suggestion failed (%s), using rule-based fallback", e)
+            raw = await _async_call_ai(self.hass, prompt, "HACA Description Suggest")
+            if raw:
+                # Extract content from ```suggestion ... ``` block if present, else use raw
+                import re as _re
+                m = _re.search(r"```suggestion\s*(.*?)\s*```", raw, _re.DOTALL)
+                suggestion = m.group(1).strip() if m else raw.strip()
+        except Exception as ai_err:
+            _LOGGER.warning("suggest_description_ai AI call failed: %s", ai_err)
 
-        # ── Rule-based fallback ──────────────────────────────────────────────
-        # Build a meaningful description from the alias and config structure
-        suggestion = _build_description_fallback(alias, config, is_script)
-        return {"success": True, "suggestion": suggestion}
+        if not suggestion:
+            # Fallback: use alias as base suggestion
+            suggestion = alias
 
-    async def apply_description_fix(self, entity_id: str, description: str) -> dict[str, Any]:
-        """Apply a description to an automation or script."""
-        is_script = entity_id.startswith("script.")
-        target_file = self._scripts_file if is_script else self._automations_file
-        
-        if not target_file.exists():
-            return {"success": False, "error": f"File {target_file} not found"}
-            
-        # Create backup
-        backup_path = await self._create_backup_file(target_file)
-        
-        # Resolve automation_id if not a script
-        resolved_id = None
-        if not is_script:
-            registry = er.async_get(self.hass)
-            entry = registry.async_get(entity_id)
-            if entry and entry.unique_id:
-                resolved_id = entry.unique_id
-            else:
-                resolved_id = entity_id.replace("automation.", "")
-
-        try:
-            def update_description():
-                with open(target_file, "r", encoding="utf-8") as f:
-                    config = yaml.safe_load(f)
-                
-                found = False
-                if is_script:
-                    # Scripts are a dict: { slug: config }
-                    script_slug = entity_id.replace("script.", "")
-                    if isinstance(config, dict) and script_slug in config:
-                        config[script_slug]["description"] = description
-                        found = True
-                else:
-                    # Automations are a list of dicts
-                    if isinstance(config, list):
-                        for item in config:
-                            if item.get("id") == resolved_id:
-                                item["description"] = description
-                                found = True
-                                break
-                        
-                        # Fallback to slug-based ID if not found and was originally slug-like
-                        if not found:
-                            slug_id = entity_id.replace("automation.", "")
-                            for item in config:
-                                if item.get("id") == slug_id:
-                                    item["description"] = description
-                                    found = True
-                                    break
-                        
-                        # Fallback to alias matching if still not found
-                        if not found:
-                            slug_id = entity_id.replace("automation.", "")
-                            for item in config:
-                                alias = item.get("alias")
-                                if alias and (alias == slug_id or alias.lower().replace(" ", "_").replace(".", "_") == slug_id):
-                                    item["description"] = description
-                                    found = True
-                                    break
-                                
-                if not found:
-                    return False
-                    
-                with open(target_file, "w", encoding="utf-8") as f:
-                    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-                return True
-
-            success = await self.hass.async_add_executor_job(update_description)
-            
-            if not success:
-                return {"success": False, "error": "Entity not found in configuration file"}
-                
-            # Trigger reload of automations/scripts so changes take effect
-            try:
-                domain = "script" if is_script else "automation"
-                await self.hass.services.async_call(domain, "reload", blocking=False)
-                _LOGGER.info("Triggered %s reload after description fix", domain)
-            except Exception as re:
-                _LOGGER.warning("Failed to trigger %s reload: %s", domain, re)
-
-            return {
-                "success": True,
-                "message": f"Description applied to {entity_id}.",
-                "backup_path": str(backup_path)
-            }
-        except Exception as e:
-            _LOGGER.error("Error applying description fix: %s", e)
-            return {"success": False, "error": str(e)}
-
-    async def _load_script_by_entity_id(self, entity_id: str) -> dict | None:
-        """Load a specific script configuration."""
-        if not self._scripts_file.exists(): return None
-        
-        def read_scripts():
-            with open(self._scripts_file, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-                
-        try:
-            scripts = await self.hass.async_add_executor_job(read_scripts)
-            slug = entity_id.replace("script.", "")
-            return scripts.get(slug)
-        except Exception:
-            return None
-
-    async def _create_backup_file(self, target: Path) -> Path:
-        """Create backup of a specific file."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        suffix = target.stem # automations or scripts
-        backup_file = self._backup_dir / f"{suffix}_{timestamp}.yaml"
-        
-        def create_backup():
-            import shutil
-            shutil.copy2(target, backup_file)
-        
-        await self.hass.async_add_executor_job(create_backup)
-        return backup_file
+        return {
+            "success": True,
+            "entity_id": entity_id,
+            "alias": alias,
+            "suggestion": suggestion,
+        }

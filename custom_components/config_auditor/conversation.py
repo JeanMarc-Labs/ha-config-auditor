@@ -1,5 +1,6 @@
 """Conversation integration for H.A.C.A - AI Assist."""
 from __future__ import annotations
+from .translation_utils import TranslationHelper
 
 import logging
 from typing import Any
@@ -124,46 +125,51 @@ async def explain_issue_ai(hass: HomeAssistant, issue_data: dict[str, Any]) -> s
 
     Falls back to a local rule-based explanation if no ai_task entity is configured.
     """
-    prompt = (
-        "Tu es un expert Home Assistant. Explique ce problème détecté par l'auditeur HACA "
-        "et donne des conseils concrets pour le résoudre en français.\n\n"
-        f"Problème : {issue_data.get('message', '')}\n"
-        f"Type : {issue_data.get('type', '')}\n"
-        f"Sévérité : {issue_data.get('severity', '')}\n"
-        f"Source : {issue_data.get('entity_id') or issue_data.get('alias', '')}\n"
-        f"Recommandation HACA : {issue_data.get('recommendation', '')}\n\n"
-        "Réponds de manière pédagogique et concise (5-8 phrases maximum)."
+    import json as _json
+    # Load AI prompt from JSON (fully i18n — no hardcoded text)
+    _lang = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
+    _th = TranslationHelper(hass)
+    await _th.async_load_language_section(_lang, "ai_prompts")
+    prompt = _th.t("explain_issue_system").format(
+        message=issue_data.get("message", ""),
+        type=issue_data.get("type", ""),
+        severity=issue_data.get("severity", ""),
+        entity=issue_data.get("entity_id") or issue_data.get("alias", ""),
+        recommendation=issue_data.get("recommendation", ""),
     )
 
     reply = await _async_call_ai(hass, prompt, "HACA Issue Explanation")
     if reply:
         return reply
-    return _get_local_fallback_explanation(issue_data)
-
-def _get_local_fallback_explanation(issue_data: dict[str, Any]) -> str:
-    """Provide a rule-based explanation when AI is not available."""
+    return _get_local_fallback_explanation(hass, issue_data)
+def _get_local_fallback_explanation(hass, issue_data: dict) -> str:
+    """Provide a rule-based explanation when AI is not available — text from JSON."""
+    import asyncio, json as _json
+    from pathlib import Path as _Path
+    _lang = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
+    try:
+        p = _Path(__file__).parent / "translations" / f"{_lang}.json"
+        if not p.exists(): p = _Path(__file__).parent / "translations" / "en.json"
+        _t = _json.loads(p.read_text(encoding="utf-8")).get("ai_prompts", {})
+    except Exception:
+        _t = {}
     issue_type = issue_data.get("type", "")
-    message = issue_data.get("message", "Problème inconnu")
-    entity = issue_data.get("entity_id") or issue_data.get("alias", "inconnu")
-    
-    explanation = f"Je n'ai pas pu contacter un assistant IA avancé (OpenAI/Gemini), voici donc une analyse locale : \n\n"
-    explanation += f"**Problème détecté :** {message}\n"
-    explanation += f"**Impact :** "
-    
-    if "device_id" in issue_type:
-        explanation += "L'utilisation de 'device_id' au lieu d'entités fragilise votre automation car le remplacement du matériel cassera le lien."
-    elif "unavailable" in issue_type or "zombie" in issue_type:
-        explanation += "Cette entité n'existe plus ou est hors-ligne, ce qui peut paralyser vos dashboards ou automations."
-    elif "mode" in issue_type:
-        explanation += "Le mode d'exécution ('single') risque d'ignorer des déclenchements importants si l'automation est déjà en cours."
-    elif "secret" in issue_type or "security" in issue_type:
-        explanation += "Des données sensibles sont exposées en clair, ce qui représente un risque de sécurité."
-    else:
-        explanation += "Ce problème peut affecter la stabilité ou les performances de votre système."
-        
-    explanation += f"\n\n**Recommandation :** {issue_data.get('recommendation', 'Vérifiez la configuration manuellement.')}"
-    
-    return explanation
+    message = issue_data.get("message", "")
+    impact_map = [
+        ("device_id",  _t.get("fallback_impact_device_id", "")),
+        ("unavailable",_t.get("fallback_impact_unavailable", "")),
+        ("zombie",     _t.get("fallback_impact_unavailable", "")),
+        ("mode",       _t.get("fallback_impact_mode", "")),
+        ("secret",     _t.get("fallback_impact_security", "")),
+        ("security",   _t.get("fallback_impact_security", "")),
+    ]
+    impact = next((v for k, v in impact_map if k in issue_type and v), _t.get("fallback_impact_default", ""))
+    intro   = _t.get("fallback_intro", "")
+    l_issue = _t.get("fallback_issue_label", "")
+    l_imp   = _t.get("fallback_impact_label", "")
+    l_rec   = _t.get("fallback_rec_label", "")
+    rec     = issue_data.get("recommendation", _t.get("fallback_default_rec", ""))
+    return f"{intro}{l_issue} {message}\n{l_imp} {impact}\n\n{l_rec} {rec}"
 
 
 async def analyze_complexity_ai(hass, row):
@@ -212,29 +218,21 @@ async def analyze_complexity_ai(hass, row):
         + " | TOTAL=" + str(score)
     )
 
-    yaml_section = ("**YAML complet:**\n" + yaml_config[:3000]) if yaml_config else "(YAML non disponible)"
-
-    prompt = (
-        "Tu es un expert Home Assistant. Analyse la complexite de cette " + kind + ".\n\n"
-        "** " + kind.upper() + " :** " + alias + "\n"
-        "**Entity ID :** " + entity_id + "\n"
-        "**Score HACA :** " + str(score) + "\n"
-        "**Score detail :** " + score_line + "\n\n"
-        + yaml_section + "\n\n"
-        "MISSION EN 2 PARTIES :\n"
-        "PARTIE 1 - EXPLICATION (3-5 phrases en francais) :\n"
-        "Explique pourquoi cette " + kind + " est complexe, quelles parties "
-        "contribuent le plus au score, et les risques (maintenance, debogage).\n\n"
-        "PARTIE 2 - PROPOSITION YAML :\n"
-        "Propose un decoupage concret : extrais les blocs d'actions repetitifs en "
-        "scripts separes, simplifie le fichier principal. Fournis le YAML complet.\n\n"
-        "REPONDS STRICTEMENT AVEC CE FORMAT :\n"
-        "```explanation\n"
-        "[ton explication ici]\n"
-        "```\n\n"
-        "```yaml_proposal\n"
-        "[yaml propose ici]\n"
-        "```"
+    # Load prompts from JSON
+    _cplx_lang = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
+    import json as _cjson
+    from pathlib import Path as _cpath
+    try:
+        _cp = _cpath(__file__).parent / "translations" / f"{_cplx_lang}.json"
+        if not _cp.exists(): _cp = _cpath(__file__).parent / "translations" / "en.json"
+        _at = _cjson.loads(_cp.read_text(encoding="utf-8")).get("ai_prompts", {})
+    except Exception:
+        _at = {}
+    yaml_key = "complexity_yaml_section" if yaml_config else "complexity_yaml_unavailable"
+    yaml_section = _at.get(yaml_key, "").format(yaml=yaml_config[:3000]) if yaml_config else _at.get(yaml_key, "")
+    prompt = _at.get("complexity_prompt", "").format(
+        kind=kind, kind_upper=kind.upper(), alias=alias, entity_id=entity_id,
+        score=score, score_line=score_line, yaml_section=yaml_section
     )
 
     explanation = ""
@@ -251,11 +249,10 @@ async def analyze_complexity_ai(hass, row):
         _LOGGER.error("analyze_complexity_ai failed: %s", exc)
 
     if not explanation:
-        explanation = (
-            "Score de complexite : " + str(score) + ". Cette " + kind + " contient "
-            + str(n_triggers) + " declencheur(s), " + str(n_conds) + " condition(s), "
-            + str(n_actions) + " action(s) recursives et " + str(n_tpl) + " template(s). "
-            "Envisagez d'extraire les blocs d'actions repetitifs en scripts reutilisables."
+        explanation = _at.get("complexity_fallback", "").format(
+            score=score, kind=kind,
+            triggers=n_triggers, conditions=n_conds,
+            actions=n_actions, templates=n_tpl
         )
 
     return {

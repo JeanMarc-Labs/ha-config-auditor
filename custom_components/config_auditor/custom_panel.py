@@ -28,7 +28,15 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     le panel frontend à chaque setup via update=True.
     """
     from .const import VERSION as _VERSION
-    cache_bust = _VERSION.replace(".", "_")
+    # Use build hash as cache buster — changes with every JS rebuild.
+    # Must use executor to avoid blocking the event loop (HA asyncio requirement).
+    try:
+        _hash_path = Path(__file__).parent / "www" / "haca-panel.hash"
+        cache_bust = await hass.async_add_executor_job(
+            lambda: _hash_path.read_text(encoding="utf-8").strip()
+        ) or _VERSION.replace(".", "_")
+    except Exception:
+        cache_bust = _VERSION.replace(".", "_")
 
     try:
         integration_dir = Path(__file__).parent
@@ -51,11 +59,16 @@ async def async_register_panel(hass: HomeAssistant) -> None:
             reports_dir.mkdir(exist_ok=True)
 
             static_paths = [
-                StaticPathConfig(f"/{DOMAIN}", str(www_dir), False),
-                StaticPathConfig("/haca_reports", str(reports_dir), False),
+                StaticPathConfig(f"/{DOMAIN}_static", str(www_dir), cache_headers=True),
+                StaticPathConfig("/haca_reports", str(reports_dir), cache_headers=True),
             ]
-            await hass.http.async_register_static_paths(static_paths)
-            hass.data[_STATIC_PATHS_KEY] = True
+            try:
+                await hass.http.async_register_static_paths(static_paths)
+                hass.data[_STATIC_PATHS_KEY] = True
+            except Exception as static_err:
+                # Route already registered in this aiohttp process — safe to ignore
+                _LOGGER.debug("Static path already registered (safe): %s", static_err)
+                hass.data[_STATIC_PATHS_KEY] = True
             _LOGGER.info(
                 "✅ Static paths registered: /%s, /haca_reports (js?v=%s)",
                 DOMAIN, cache_bust,
@@ -78,7 +91,7 @@ async def async_register_panel(hass: HomeAssistant) -> None:
             config={
                 "_panel_custom": {
                     "name": "haca-panel",
-                    "js_url": f"/{DOMAIN}/haca-panel.js?v={cache_bust}",
+                    "js_url": f"/{DOMAIN}_static/haca-panel.js?v={cache_bust}",
                     "embed_iframe": False,
                     "trust_external": False,
                 }
