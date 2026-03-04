@@ -8,6 +8,9 @@ which is called once from async_setup_entry.
 """
 from __future__ import annotations
 
+
+from .translation_utils import TranslationHelper
+
 import asyncio
 import logging
 from typing import Any
@@ -41,7 +44,7 @@ from .const import (
     SERVICE_FUZZY_SUGGESTIONS,
 )
 from .health_score import calculate_health_score
-from .conversation import explain_issue_ai
+from .conversation import explain_issue_ai, analyze_complexity_ai
 
 # ═══════════════════════════════════════════════════════════════════════
 # Helper : notifications HACA uniformes, riches et signées
@@ -91,6 +94,22 @@ async def _haca_notify(
 
 
 _LOGGER = logging.getLogger(__name__)
+
+import json as _json
+from pathlib import Path as _Path
+
+def _ts(hass, section: str, key: str) -> str:
+    """Synchronously get a translation string from the JSON files."""
+    lang = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
+    try:
+        p = _Path(__file__).parent / "translations" / f"{lang}.json"
+        if not p.exists():
+            p = _Path(__file__).parent / "translations" / "en.json"
+        data = _json.loads(p.read_text(encoding="utf-8"))
+        return data.get(section, {}).get(key, key)
+    except Exception:
+        return key
+
 
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Setup all services."""
@@ -244,7 +263,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             report_gen = data["report_generator"]
             
             # Get the current language from Home Assistant
-            language = hass.config.language or "en"
+            language = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
             
             summary = {
                 "health_score": coordinator.data.get("health_score", 0),
@@ -304,9 +323,9 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await _haca_notify(
                     hass,
                     notification_id="haca_report_deleted",
-                    title="🗑️ Rapport supprimé",
+                    title=_ts(hass, "services_notif", "report_deleted_title"),
                     summary="Suppression du rapport",
-                    detail=f"**{result.get('deleted_count', 0)} fichier(s) supprimé(s)** avec succès.",
+                    detail=_ts(hass, "services_notif", "report_deleted_detail").format(count=result.get("deleted_count", 0)),
                     status="success",
                 )
             
@@ -326,8 +345,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             await _haca_notify(
                 hass,
                 notification_id="haca_preview",
-                title="🔍 Aperçu — Correction device_id",
-                summary=f"Aperçu pour : {result.get('alias', automation_id)}",
+                title=_ts(hass, "services_notif", "preview_device_id_title"),
+                summary=_ts(hass, "services_notif", "preview_for").format(alias=result.get("alias", automation_id)),
                 detail=(
                     f"**Modifications détectées :** {result.get('changes_count', 0)}\n\n"
                     + "\n".join(f"- {c.get('description', str(c))}" for c in result.get("changes", [])[:10])
@@ -352,8 +371,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await _haca_notify(
                     hass,
                     notification_id="haca_fix",
-                    title="✅ Correction device_id appliquée" if not dry_run else "🔍 Dry Run device_id",
-                    summary=("Correction appliquée avec sauvegarde" if not dry_run else "Simulation — aucune modification"),
+                    title=_ts(hass, "services_notif", "fix_device_id_title_applied") if not dry_run else _ts(hass, "services_notif", "fix_device_id_title_dry"),
+                    summary=(_ts(hass, "services_notif", "fix_applied_with_backup") if not dry_run else _ts(hass, "services_notif", "dry_run_no_changes")),
                     detail=result.get("message", ""),
                     status="success" if not dry_run else "info",
                     extra=f"**Automation :** `{automation_id}`",
@@ -374,7 +393,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             await _haca_notify(
                 hass,
                 notification_id="haca_preview",
-                title="🔍 Aperçu — Changement de mode",
+                title=_ts(hass, "services_notif", "preview_mode_title"),
                 summary=f"Aperçu pour : {result.get('alias', automation_id)}",
                 detail=f"**Nouveau mode :** `{new_mode}`\n\n**Modifications :** {result.get('changes_count', 0)}",
                 status="info",
@@ -397,8 +416,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await _haca_notify(
                     hass,
                     notification_id="haca_fix",
-                    title="✅ Mode corrigé" if not dry_run else "🔍 Dry Run — mode",
-                    summary=("Mode de l'automation corrigé avec sauvegarde" if not dry_run else "Simulation — aucune modification"),
+                    title=_ts(hass, "services_notif", "fix_mode_title_applied") if not dry_run else _ts(hass, "services_notif", "fix_mode_title_dry"),
+                    summary=(_ts(hass, "services_notif", "mode_fixed_with_backup") if not dry_run else _ts(hass, "services_notif", "dry_run_no_changes")),
                     detail=result.get("message", ""),
                     status="success" if not dry_run else "info",
                     extra=f"**Automation :** `{automation_id}` → mode `{new_mode}`",
@@ -446,8 +465,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await _haca_notify(
                     hass,
                     notification_id="haca_backup",
-                    title="✅ Sauvegarde créée",
-                    summary="Sauvegarde automatique réalisée",
+                    title=_ts(hass, "services_notif", "backup_created_title"),
+                    summary=_ts(hass, "services_notif", "backup_created_summary"),
                     detail=result.get("message", ""),
                     status="success",
                 )
@@ -466,11 +485,11 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await _haca_notify(
                     hass,
                     notification_id="haca_restore",
-                    title="✅ Sauvegarde restaurée",
-                    summary="Restauration effectuée avec succès",
+                    title=_ts(hass, "services_notif", "backup_restored_title"),
+                    summary=_ts(hass, "services_notif", "backup_restored_summary"),
                     detail=result.get("message", ""),
                     status="success",
-                    extra="⚠️ Redémarrez Home Assistant si des configurations ont changé.",
+                    extra=_ts(hass, "services_notif", "backup_restored_extra"),
                 )
             
             return result
@@ -488,7 +507,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await _haca_notify(
                     hass,
                     notification_id="haca_backup_deleted",
-                    title="🗑️ Sauvegarde supprimée",
+                    title=_ts(hass, "services_notif", "backup_deleted_title"),
                     summary="Suppression de la sauvegarde",
                     detail=result.get("message", ""),
                     status="success",

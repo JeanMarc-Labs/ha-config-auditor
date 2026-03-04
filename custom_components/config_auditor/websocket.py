@@ -718,9 +718,11 @@ async def handle_get_translations(
 ) -> None:
     """Handle get translations request for the panel."""
     try:
-        # Priorité : langue envoyée par le frontend (profil utilisateur HA)
-        # Fallback : langue système HA (hass.config.language)
-        language = msg.get("language") or hass.config.language
+        # Language comes from the frontend (= user profile language, not system language)
+        language = msg.get("language") or hass.config.language or "en"
+        # Store so all backend components use the same language
+        hass.data.setdefault(DOMAIN, {})["user_language"] = language
+        _LOGGER.debug("HACA: user language = %s", language)
         
         # Build path to translations file
         integration_path = Path(__file__).parent

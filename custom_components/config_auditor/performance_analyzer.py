@@ -36,7 +36,7 @@ class PerformanceAnalyzer:
         self.issues = []
         
         # Load language for translations
-        language = self.hass.config.language or "en"
+        language = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
         await self._translator.async_load_language(language)
         
         automation_configs = automation_configs or {}

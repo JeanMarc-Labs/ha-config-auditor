@@ -281,42 +281,14 @@ class AutomationOptimizer:
             for bp in blueprints
         ) if blueprints else "  (aucun blueprint installé)"
 
-        return (
-            "Tu es un expert Home Assistant chargé d'OPTIMISER activement cette automation.\n\n"
-            "=== AUTOMATION ===\n"
-            "Nom  : " + alias + "\n"
-            "ID   : " + entity_id + "\n"
-            "Score de complexite HACA : " + str(score) + "/100\n\n"
-            "=== PROBLEMES DEJA DETECTES PAR HACA ===\n" + issues_block + "\n\n"
-            "=== PATTERNS DEPRECIES DETECTES ===\n" + patterns_block + "\n\n"
-            "=== YAML ACTUEL ===\n" + yaml_block + "\n\n"
-            "=== BLUEPRINTS INSTALLES (pour suggestion) ===\n" + bp_lines + "\n\n"
-            "=== TA MISSION EN 4 PARTIES ===\n\n"
-            "PARTIE 1 — DIAGNOSTIC (5-8 phrases en francais)\n"
-            "Explique precisement ce qui ne va pas : complexite, patterns deprecies, "
-            "logique redondante, problemes de mode, triggers/conditions ameliorables. "
-            "Sois specifique et pedagogique.\n\n"
-            "PARTIE 2 — DECOUPAGE (si score >= 20 OU logique multiple detectee)\n"
-            "Propose un decoupage en automations specialisees. Chaque automation doit "
-            "avoir un seul but. Separe les YAML par ---.\n"
-            "Si le decoupage n'est pas pertinent, ecris: DECOUPAGE_NON_PERTINENT\n\n"
-            "PARTIE 3 — MODERNISATION (toujours)\n"
-            "Recris l'automation en corrigeant : templates deprecies, device_id → entity_id, "
-            "mode incorrect, conditions simplifiables, syntaxe HA moderne (triggers/actions "
-            "au pluriel, use_blueprint si applicable). Fournis le YAML complet.\n\n"
-            "PARTIE 4 — BLUEPRINT (si un blueprint installe correspond)\n"
-            "Si un des blueprints listes peut remplacer cette automation, indique :\n"
-            "  - Le chemin exact du blueprint\n"
-            "  - Pourquoi il correspond\n"
-            "  - Le YAML d'utilisation du blueprint avec les bons inputs\n"
-            "Si aucun ne correspond, ecris: BLUEPRINT_NON_APPLICABLE\n\n"
-            "=== FORMAT DE REPONSE STRICT ===\n\n"
-            "```analysis\n[PARTIE 1 ici]\n```\n\n"
-            "```split_automations\n[PARTIE 2 ici — YAML ou DECOUPAGE_NON_PERTINENT]\n```\n\n"
-            "```modernised_yaml\n[PARTIE 3 ici — YAML complet]\n```\n\n"
-            "```blueprint_suggestion\n[PARTIE 4 ici — ou BLUEPRINT_NON_APPLICABLE]\n```"
-        )
-
+        _lang = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
+        import json as _j; from pathlib import Path as _pp
+        try:
+            _ap = _j.loads((_pp(__file__).parent / "translations" / f"{_lang}.json").read_text(encoding="utf-8")).get("ai_prompts", {})
+        except Exception:
+            _ap = {}
+        _tmpl = _ap.get("optimizer_system", "Optimise this automation:\n\n{content}")
+        return _tmpl.format(content=self._build_content(automations, blueprints))
     async def _call_ai(self, prompt: str) -> str:
         """Call AI with automatic provider fallback via shared _async_call_ai."""
         from .conversation import _async_call_ai

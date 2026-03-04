@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from .translation_utils import TranslationHelper
 
@@ -40,11 +41,19 @@ class BatteryMonitor:
         self.battery_list = []
 
         # Load language-appropriate translations once per scan
-        language = self.hass.config.language or "en"
+        language = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
         await self._translator.async_load_language(language)
+
+        # Load haca_ignore label
+        _ignored = set()
+        try:
+            for _e in er.async_get(self.hass).entities.values():
+                if "haca_ignore" in _e.labels: _ignored.add(_e.entity_id)
+        except Exception: pass
 
         for state in self.hass.states.async_all():
             entity_id = state.entity_id
+            if entity_id in _ignored: continue
             # Match sensor.*battery* — case-insensitive on the slug
             slug = entity_id.lower()
             if not (slug.startswith("sensor.") and "battery" in slug):
@@ -52,9 +61,24 @@ class BatteryMonitor:
             if state.state in ("unavailable", "unknown", "none", ""):
                 continue
 
+            # Skip power sensors (W, kW) — battery_power ≠ battery_level
+            unit_raw = state.attributes.get("unit_of_measurement", "")
+            device_class = state.attributes.get("device_class", "")
+            if unit_raw.strip().lower() in ("w", "kw", "mw") or device_class == "power":
+                continue
+            # Also skip if entity name contains 'power' but not 'level'
+            slug_lower = entity_id.lower()
+            if "battery_power" in slug_lower or "_power" in slug_lower:
+                if "battery_level" not in slug_lower and "battery_percent" not in slug_lower:
+                    continue
+
             try:
                 level = float(state.state)
             except (ValueError, TypeError):
+                continue
+
+            # Only accept % unit or no unit — not Watts/kWh etc.
+            if unit_raw.strip() and unit_raw.strip() not in ("%", "pct", "percent"):
                 continue
 
             # Filter out spurious values (e.g. 200 % from some integrations)

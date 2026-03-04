@@ -1,5 +1,6 @@
-"""H.A.C.A — Home Assistant Config Auditor v1.0.3"""
+"""H.A.C.A — Home Assistant Config Auditor v1.1.0"""
 from __future__ import annotations
+
 import asyncio
 
 import logging
@@ -71,6 +72,23 @@ if MODULE_4_COMPLIANCE_REPORT:
 
 if MODULE_5_REFACTORING_ASSISTANT:
     from .refactoring_assistant import RefactoringAssistant
+
+
+import json as _json
+from pathlib import Path as _Path
+
+def _ts(hass, section: str, key: str, **kwargs) -> str:
+    """Get a translation string from JSON files using user_language."""
+    lang = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
+    try:
+        p = _Path(__file__).parent / "translations" / f"{lang}.json"
+        if not p.exists():
+            p = _Path(__file__).parent / "translations" / "en.json"
+        data = _json.loads(p.read_text(encoding="utf-8"))
+        val = data.get(section, {}).get(key, key)
+        return val.format(**kwargs) if kwargs else val
+    except Exception:
+        return key
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -471,37 +489,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             msg  = (iss.get("message") or "")[:120]
             lines.append(f"- **{name}** : {msg}")
         if count > 8:
-            lines.append(f"- *… et {count - 8} autre(s) issue(s)*")
+            lines.append(_ts(hass, "notifications", "more_issues", count=count - 8))
 
         body = "\n".join(lines)
 
-        # Use the translation system for title
-        lang = hass.config.language or "en"
-        is_fr = lang.startswith("fr")
-        if is_fr:
-            title = f"⚠️ H.A.C.A — {count} nouvelle(s) issue(s) HIGH détectée(s)"
-            header = (
-                f"## ⚠️ Nouvelles issues détectées\n\n"
-                f"Score de santé actuel : **{score}/100**\n\n"
-                f"Les éléments suivants ont été modifiés récemment et présentent des problèmes :\n\n"
-            )
-            footer = (
-                "\n\n---\n"
-                "Ouvrez le **panel H.A.C.A** pour voir les détails et appliquer les corrections.\n\n"
-                "*H.A.C.A — Home Assistant Config Auditor*"
-            )
-        else:
-            title = f"⚠️ H.A.C.A — {count} new HIGH issue(s) detected"
-            header = (
-                f"## ⚠️ New issues detected\n\n"
-                f"Current health score: **{score}/100**\n\n"
-                f"The following items were recently modified and have issues:\n\n"
-            )
-            footer = (
-                "\n\n---\n"
-                "Open the **H.A.C.A panel** to see details and apply fixes.\n\n"
-                "*H.A.C.A — Home Assistant Config Auditor*"
-            )
+        # Single translation system — reads from JSON using user_language
+        title   = _ts(hass, "notifications", "new_issues_title", count=count)
+        header  = _ts(hass, "notifications", "new_issues_header", score=score)
+        footer  = _ts(hass, "notifications", "new_issues_footer")
 
         message = header + body + footer
 
@@ -601,14 +596,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "persistent_notification",
         "create",
         {
-            "title": f"🗑️ {NAME} désinstallé",
-            "message": (
-                "## 🗑️ Désinstallation terminée\n\n"
-                "L'intégration **H.A.C.A** et toutes ses données (rapports, sauvegardes, historique) "
-                "ont été supprimées proprement.\n\n"
-                "⚠️ **Redémarrez Home Assistant** pour finaliser la désinstallation.\n\n"
-                "---\n*H.A.C.A — Home Assistant Config Auditor*"
-            ),
+            "title": _ts(hass, "notifications", "uninstalled_title", name=NAME),
+            "message": _ts(hass, "notifications", "uninstalled_body"),
             "notification_id": "haca_uninstall_notice"
         }
     )

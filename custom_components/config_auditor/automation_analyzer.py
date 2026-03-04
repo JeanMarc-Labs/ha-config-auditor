@@ -41,6 +41,7 @@ class AutomationAnalyzer:
         self._registered_area_ids: set[str] = set()
         self._registered_floor_ids: set[str] = set()
         self._registered_label_ids: set[str] = set()
+        self._ignored_entity_ids: set[str] = set()
         # complexity_scores: one entry per automation, all of them (score 0 included)
         self.complexity_scores: list[dict] = []
         # script_complexity_scores: one entry per script
@@ -77,12 +78,13 @@ class AutomationAnalyzer:
         self.blueprint_stats = []
         
         # Load language for translations
-        language = self.hass.config.language or "en"
+        language = self.hass.data.get("config_auditor", {}).get("user_language") or self.hass.config.language or "en"
         await self._translator.async_load_language(language)
         
         # P0: pre-load registries for service / area / floor / label checks
         await self._load_registered_services()
         await self._load_registered_areas_floors_labels()
+        await self._load_ignored_entities()
         
         # Load configurations
         await self._load_automation_configs()
@@ -94,16 +96,19 @@ class AutomationAnalyzer:
         
         # Analyze each automation
         for idx, (entity_id, config) in enumerate(self._automation_configs.items()):
+            if self._is_ignored(entity_id): continue
             self._analyze_automation(entity_id, config)
             if idx % 10 == 0: await asyncio.sleep(0)
             
         # Analyze each script
         for idx, (entity_id, config) in enumerate(self._script_configs.items()):
+            if self._is_ignored(entity_id): continue
             self._analyze_script(entity_id, config)
             if idx % 10 == 0: await asyncio.sleep(0)
             
         # Analyze each scene
         for idx, (entity_id, config) in enumerate(self._scene_configs.items()):
+            if self._is_ignored(entity_id): continue
             self._analyze_scene(entity_id, config)
             if idx % 10 == 0: await asyncio.sleep(0)
         
@@ -158,7 +163,7 @@ class AutomationAnalyzer:
         self._check_excessive_delays()
         
         # Check for malformed blueprints
-        self._check_blueprint_issues()
+        await self._check_blueprint_issues()
         
         # Separate issues by entity_id prefix and issue type
         self.automation_issues = []
@@ -243,6 +248,22 @@ class AutomationAnalyzer:
             len(self._registered_floor_ids),
             len(self._registered_label_ids),
         )
+
+    async def _load_ignored_entities(self) -> None:
+        """Cache entity_ids that have the haca_ignore label."""
+        self._ignored_entity_ids = set()
+        try:
+            ent_reg = er.async_get(self.hass)
+            for entry in ent_reg.entities.values():
+                if "haca_ignore" in entry.labels:
+                    self._ignored_entity_ids.add(entry.entity_id)
+        except Exception as e:
+            _LOGGER.debug("haca_ignore: error loading entity labels: %s", e)
+        _LOGGER.debug("haca_ignore: %d entities ignored", len(self._ignored_entity_ids))
+
+    def _is_ignored(self, entity_id: str) -> bool:
+        """Return True if this entity should be skipped (has haca_ignore label)."""
+        return entity_id in self._ignored_entity_ids
 
     async def _load_automation_configs(self) -> None:
         """Load automation configurations from automations.yaml."""
@@ -1286,7 +1307,7 @@ class AutomationAnalyzer:
         
         return None
 
-    def _check_blueprint_issues(self) -> None:
+    async def _check_blueprint_issues(self) -> None:
         """Check for malformed or incomplete blueprint configurations."""
         t = self._translator.t
         config_dir = Path(self.hass.config.config_dir)
@@ -1313,11 +1334,10 @@ class AutomationAnalyzer:
                     })
                     continue
 
-                # --- NEW: verify the blueprint file actually exists on disk ---
-                # Blueprints live in <config>/blueprints/automation/<path>
-                # The path stored in YAML may already include subdirectories.
+                # Verify blueprint file exists on disk (via executor — non-blocking)
                 blueprint_file = config_dir / "blueprints" / "automation" / blueprint_path
-                if not blueprint_file.exists():
+                _file_exists = await self.hass.async_add_executor_job(blueprint_file.exists)
+                if not _file_exists:
                     self.issues.append({
                         "entity_id": entity_id,
                         "alias": alias,
@@ -1329,11 +1349,56 @@ class AutomationAnalyzer:
                         "fix_available": False,
                     })
                     continue
-                # ---------------------------------------------------------------
 
-                # Check for missing or empty inputs
+                # ── Blueprint input validation ────────────────────────────────────────
+                # Original strict logic: flag any null/"" input (medium).
+                # Added: detect unknown entity_id in entity selectors (high),
+                #        flag falsy values [] / False / 0 as low severity.
+                # Blueprint YAML is read via executor to avoid blocking the event loop.
+
                 inputs = blueprint.get("input", {}) if isinstance(blueprint, dict) else {}
-                _LOGGER.info("Blueprints: %s", inputs)
+
+                # Load blueprint definition: resolve nested input groups + detect selectors.
+                # Blueprints use nested groups: blueprint.input.<group>.input.<leaf>
+                # use_blueprint.input is always flat (just leaf key names).
+                # We use a permissive loader that ignores !input tags.
+                _required_inputs: set = set()   # leaf inputs with NO default declared
+                _entity_inputs: set = set()     # leaf inputs with entity/target selector
+
+                def _collect_bp_inputs(d, out_required, out_entity):
+                    for k, v in (d or {}).items():
+                        if not isinstance(v, dict):
+                            continue
+                        if "input" in v:
+                            # input group — recurse into sub-inputs
+                            _collect_bp_inputs(v["input"], out_required, out_entity)
+                        else:
+                            # leaf input
+                            if "default" not in v:
+                                out_required.add(k)
+                            sel = v.get("selector") or {}
+                            if isinstance(sel, dict) and ("entity" in sel or "target" in sel):
+                                out_entity.add(k)
+
+                try:
+                    import yaml as _yaml
+
+                    class _AnyTagLoader(_yaml.SafeLoader):
+                        pass
+                    _AnyTagLoader.add_multi_constructor(
+                        "!", lambda ldr, tag, node: ldr.construct_scalar(node)
+                    )
+
+                    _raw = await self.hass.async_add_executor_job(
+                        lambda: blueprint_file.read_text(encoding="utf-8")
+                    )
+                    _bp_def = _yaml.load(_raw, Loader=_AnyTagLoader) or {}
+                    _bp_inputs_def = _bp_def.get("blueprint", {}).get("input", {})
+                    if isinstance(_bp_inputs_def, dict):
+                        _collect_bp_inputs(_bp_inputs_def, _required_inputs, _entity_inputs)
+                except Exception:
+                    pass  # unreadable — entity/required checks skipped
+
                 if not inputs:
                     self.issues.append({
                         "entity_id": entity_id,
@@ -1346,17 +1411,64 @@ class AutomationAnalyzer:
                         "fix_available": False,
                     })
                 else:
-                    # Check for null or empty input values
                     for input_key, input_value in inputs.items():
-                        if input_value is None or input_value == "":
+                        is_required = input_key in _required_inputs
+                        is_entity   = input_key in _entity_inputs
+
+                        # HIGH — required input is null / empty string
+                        if is_required and (input_value is None or input_value == ""):
                             self.issues.append({
                                 "entity_id": entity_id,
                                 "alias": alias,
                                 "type": "blueprint_empty_input",
-                                "severity": "medium",
+                                "severity": "high",
                                 "message": t("blueprint_empty_input", key=input_key),
                                 "location": f"use_blueprint.input.{input_key}",
                                 "recommendation": t("set_blueprint_input", key=input_key),
+                                "fix_available": False,
+                            })
+
+                        # MEDIUM — optional entity/target input references an unknown entity
+                        elif is_entity and not is_required:
+                            _to_check = input_value if isinstance(input_value, list) else [input_value]
+                            for _eid in _to_check:
+                                if isinstance(_eid, str) and _eid and self.hass.states.get(_eid) is None:
+                                    self.issues.append({
+                                        "entity_id": entity_id,
+                                        "alias": alias,
+                                        "type": "blueprint_empty_input",
+                                        "severity": "medium",
+                                        "message": f"Blueprint input '{input_key}' references unknown entity: {_eid}",
+                                        "location": f"use_blueprint.input.{input_key}",
+                                        "recommendation": f"Update blueprint input '{input_key}' with a valid entity",
+                                        "fix_available": False,
+                                    })
+                            # Also flag if the entity input itself is empty (no entity configured)
+                            if not _to_check or all(not isinstance(e, str) or not e for e in _to_check):
+                                self.issues.append({
+                                    "entity_id": entity_id,
+                                    "alias": alias,
+                                    "type": "blueprint_empty_input",
+                                    "severity": "low",
+                                    "message": f"Blueprint input '{input_key}' has no entity configured",
+                                    "location": f"use_blueprint.input.{input_key}",
+                                    "recommendation": f"Verify that leaving '{input_key}' empty is intentional",
+                                    "fix_available": False,
+                                })
+
+                        # LOW — falsy value ([], False, 0, "") on a non-required, non-entity input
+                        elif not is_required and (
+                            input_value == [] or input_value is False
+                            or input_value == 0 or input_value == ""
+                        ):
+                            self.issues.append({
+                                "entity_id": entity_id,
+                                "alias": alias,
+                                "type": "blueprint_empty_input",
+                                "severity": "low",
+                                "message": f"Blueprint input '{input_key}' has an empty or disabled value",
+                                "location": f"use_blueprint.input.{input_key}",
+                                "recommendation": f"Verify that leaving '{input_key}' empty/disabled is intentional",
                                 "fix_available": False,
                             })
 
