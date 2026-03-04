@@ -10,10 +10,10 @@
     const modal = this.createModal(`
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px;">
         <div class="loader"></div>
-        <div style="font-size:18px;font-weight:600;">${this.t('optimizer.loading')}</div>
+        <div style="font-size:18px;font-weight:600;">✨ Optimisation en cours…</div>
         <div style="font-size:13px;color:var(--secondary-text-color);">
           ${this.escapeHtml(alias)}<br>
-          <span style="font-size:11px;opacity:0.7;">${this.t('optimizer.loading_sub')}</span>
+          <span style="font-size:11px;opacity:0.7;">${this.t('optimizer.tagline')}</span>
         </div>
       </div>
     `);
@@ -40,7 +40,7 @@
           <div style="font-size:40px;margin-bottom:16px;">❌</div>
           <div style="color:var(--error-color);font-size:15px;">${this.escapeHtml(err.message || this.t('fix.error_unknown'))}</div>
           <button onclick="this.closest('.haca-modal').remove()"
-            style="margin-top:20px;background:var(--primary-color);color:white;padding:8px 20px;border-radius:8px;">Fermer</button>
+            style="margin-top:20px;background:var(--primary-color);color:white;padding:8px 20px;border-radius:8px;">${this.t('optimizer.close')}</button>
         </div>
       `);
     }
@@ -68,16 +68,16 @@
                background:none;color:${i === 0 ? 'var(--primary-color)' : 'var(--secondary-text-color)'};
                font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">
         <ha-icon icon="${t.icon}" style="--mdc-icon-size:15px;"></ha-icon> ${t.label}
-        ${t.id === 'optim-tab-split' ? '<span style="background:#7b68ee;color:white;border-radius:8px;padding:0 6px;font-size:10px;">NOUVEAU</span>' : ''}
+        ${t.id === 'optim-tab-split' ? `<span style="background:#7b68ee;color:white;border-radius:8px;padding:0 6px;font-size:10px;">${this.t('optimizer.new_badge')}</span>` : ''}
         ${t.id === 'optim-tab-blueprint' ? '<span style="background:#e8a838;color:white;border-radius:8px;padding:0 6px;font-size:10px;">MATCH</span>' : ''}
       </button>`).join('');
 
     // ── Score badge ────────────────────────────────────────────────────
     const [scoreColor, levelLabel] =
-      score >= 50 ? ['#ef5350', this.t('complexity.god_automation')] :
-      score >= 30 ? ['#ffa726', this.t('complexity.complex')]       :
-      score >= 15 ? ['#ffd54f', this.t('complexity.medium')]           :
-                    ['#66bb6a', this.t('complexity.simple')];
+      score >= 50 ? ['#ef5350', '🚨 God Automation'] :
+      score >= 30 ? ['#ffa726', '⚠️ Complexe']       :
+      score >= 15 ? ['#ffd54f', '🔶 Moyen']           :
+                    ['#66bb6a', '✅ Simple'];
 
     // ── Patterns pills ─────────────────────────────────────────────────
     const patternPills = patterns.map(p =>
@@ -102,7 +102,7 @@
         ${issues.length ? `
         <div style="margin-top:16px;">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;
-               color:var(--secondary-text-color);margin-bottom:8px;">Issues HACA associées</div>
+               color:var(--secondary-text-color);margin-bottom:8px;">${this.t('optimizer.issues_associated')}</div>
           ${issues.slice(0,8).map(i => `
           <div style="padding:8px 12px;border-left:3px solid #ffa726;background:rgba(255,167,38,0.07);
                border-radius:0 8px 8px 0;margin-bottom:6px;font-size:13px;">
@@ -117,13 +117,13 @@
              font-size:12px;color:var(--secondary-text-color);border-bottom:1px solid var(--divider-color);
              flex-shrink:0;">
           ${this.t('optimizer.preview_warning')}
-          ${isMulti ? ' · YAML contient plusieurs automations séparées par ---' : ''}
+          ${isMulti ? this.t('optimizer.multi_yaml') : ''}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;flex:1;overflow:hidden;">
           <div style="overflow:auto;border-right:1px solid var(--divider-color);">
             <div style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;
                  color:#ef5350;background:rgba(239,83,80,0.05);border-bottom:1px solid var(--divider-color);">
-              ${this.t('optimizer.label_original')}
+              ◀ Original
             </div>
             <pre style="margin:0;padding:14px;font-size:11px;line-height:1.5;overflow:auto;
                  max-height:380px;background:var(--secondary-background-color);">${this.escapeHtml(data.original_yaml || '')}</pre>
@@ -173,7 +173,7 @@
         ${bp.inputs_yaml ? `
         <div>
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;
-               color:var(--secondary-text-color);margin-bottom:8px;">YAML d'utilisation du blueprint</div>
+               color:var(--secondary-text-color);margin-bottom:8px;">${this.t('optimizer.blueprint_yaml')}</div>
           <pre style="background:var(--secondary-background-color);padding:14px;border-radius:10px;
                font-size:11px;overflow:auto;max-height:280px;border:1px solid var(--divider-color);">${this.escapeHtml(bp.inputs_yaml)}</pre>
         </div>
@@ -199,7 +199,7 @@
             <div style="display:flex;align-items:center;gap:10px;">
               <ha-icon icon="mdi:auto-fix" style="--mdc-icon-size:28px;color:#7b68ee;"></ha-icon>
               <div>
-                <div style="font-size:16px;font-weight:700;">${this.t('optimizer.modal_title', {alias: this.escapeHtml(alias)})}</div>
+                <div style="font-size:16px;font-weight:700;">Optimiseur IA — ${this.escapeHtml(alias)}</div>
                 <div style="font-size:11px;color:var(--secondary-text-color);">${this.escapeHtml(entityId)}</div>
               </div>
             </div>
@@ -254,7 +254,7 @@
         if (!yamlText || !eid) return;
 
         btn.disabled = true;
-        btn.innerHTML = `<span class="btn-loader"></span> ${this.t('ai.applying')}`;
+        btn.innerHTML = '<span class="btn-loader"></span> Application…';
 
         try {
           const res = await this.hass.callWS({
@@ -272,7 +272,7 @@
                      filter:drop-shadow(0 4px 12px rgba(123,104,238,0.5));">✅</div>
                 <h2 style="margin-bottom:12px;">${this.t('optimizer.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.7;margin-bottom:8px;">
-                  ${r.message || this.t('optimizer.applied_desc', {result: r.count + ' automation(s) written'})}
+                  ${r.message || this.t('optimizer.automations_written').replace('{count}', r.count)}
                 </p>
                 ${r.backup_path ? `
                 <div style="background:var(--secondary-background-color);padding:10px;border-radius:10px;

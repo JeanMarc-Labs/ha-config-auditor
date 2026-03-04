@@ -79,22 +79,12 @@
     let H = svg.clientHeight || svg.parentElement?.clientHeight || 0;
 
     if (W < 10 || H < 10) {
-      // SVG pas encore layouté ou dans onglet caché.
-      // On incrémente un compteur de tentatives pour éviter une boucle RAF infinie
-      // si le panel reste caché (ex: navigation sur un autre onglet HA).
-      // Max 30 tentatives (~500ms) puis abandon propre.
-      this._graphRafRetries = (this._graphRafRetries || 0) + 1;
-      if (this._graphRafRetries > 30) {
-        this._graphRafRetries = 0;
-        return; // abandon — le graphe sera redessiné au prochain switchTab
-      }
+      // SVG pas encore layouté ou dans onglet caché — on retente dans le prochain frame
       requestAnimationFrame(() => {
-        if (this._connected && this._graphData) this._drawD3Graph(d3, graphData);
-        else this._graphRafRetries = 0; // composant détaché → reset
+        if (this._graphData) this._drawD3Graph(d3, graphData);
       });
       return;
     }
-    this._graphRafRetries = 0; // reset au succès
 
     // Clear previous render
     while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -326,8 +316,8 @@
         .attr('stroke', d => d.id === node.id ? 'var(--primary-color)' : (d.has_issues ? '#b71c1c' : 'rgba(0,0,0,0.15)'));
     }
 
-    const typeLabels = { automation:'Automation', script:'Script', scene: this.t('graph.type_scene'),
-                         entity: this.t('graph.type_entity'), blueprint:'Blueprint', device: this.t('graph.type_device') };
+    const typeLabels = { automation:'Automation', script:'Script', scene: this.t('graph.legend_scene'),
+                         entity: this.t('graph.legend_entity'), blueprint:'Blueprint', device: this.t('graph.legend_device') };
     title.textContent = node.label;
 
     const editUrl = this.getHAEditUrl(node.id);

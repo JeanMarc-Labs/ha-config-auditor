@@ -5,121 +5,104 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 /**
- * Tous les types d'issues, groupés par catégorie.
- * labelFr / labelEn = libellé court dans la checkbox.
- * fixable = true si réparable depuis HA Repairs.
+ * All issue types grouped by category. Labels are loaded from JSON (issue_types.*).
+ * label = resolved from JSON translation key: issue_types.categories.<id> / issue_types.types.<id>
+ * fixable = true if auto-repairable via HA Repairs.
  */
 var ISSUE_TYPES_BY_CATEGORY = [
   {
-    id: 'automations',
-    icon: 'mdi:robot',
-    labelFr: 'Automations',
-    labelEn: 'Automations',
+    id: 'automations', icon: 'mdi:robot',
     types: [
-      { id: 'device_id_in_trigger', fr: 'device_id dans déclencheur', en: 'device_id in trigger', fixable: true },
-      { id: 'device_trigger_platform', fr: 'Plateforme device (déclencheur)', en: 'Device platform (trigger)', fixable: true },
-      { id: 'device_id_in_condition', fr: 'device_id dans condition', en: 'device_id in condition', fixable: true },
-      { id: 'device_condition_platform', fr: 'Plateforme device (condition)', en: 'Device platform (condition)', fixable: true },
-      { id: 'device_id_in_action', fr: 'device_id dans action', en: 'device_id in action', fixable: true },
-      { id: 'device_id_in_target', fr: 'device_id dans cible', en: 'device_id in target', fixable: true },
-      { id: 'template_simple_state', fr: 'Template → condition native', en: 'Template → native condition', fixable: true },
-      { id: 'incorrect_mode_motion_single', fr: 'Mode incorrect (motion)', en: 'Incorrect mode (motion)', fixable: true },
-      { id: 'deprecated_service', fr: 'Service déprécié', en: 'Deprecated service', fixable: false },
-      { id: 'unknown_service', fr: 'Service inconnu', en: 'Unknown service', fixable: false },
-      { id: 'no_description', fr: 'Pas de description', en: 'No description', fixable: false },
-      { id: 'no_alias', fr: "Pas d'alias", en: 'No alias', fixable: false },
-      { id: 'duplicate_automation', fr: 'Automation dupliquée', en: 'Duplicate automation', fixable: false },
-      { id: 'probable_duplicate_automation', fr: 'Probable doublon', en: 'Probable duplicate', fixable: false },
-      { id: 'ghost_automation', fr: 'Automation fantôme', en: 'Ghost automation', fixable: false },
-      { id: 'never_triggered', fr: 'Jamais déclenchée', en: 'Never triggered', fixable: false },
-      { id: 'excessive_delay', fr: 'Délai excessif', en: 'Excessive delay', fixable: false },
-      { id: 'wait_template_vs_wait_for_trigger', fr: 'wait_template → wait_for_trigger', en: 'wait_template → wait_for_trigger', fixable: false },
-      { id: 'zone_no_entity', fr: 'Zone sans entité', en: 'Zone without entity', fixable: false },
-      { id: 'unknown_area_reference', fr: 'Zone inconnue', en: 'Unknown area', fixable: false },
-      { id: 'unknown_floor_reference', fr: 'Étage inconnu', en: 'Unknown floor', fixable: false },
-      { id: 'unknown_label_reference', fr: 'Label inconnu', en: 'Unknown label', fixable: false },
-      { id: 'template_numeric_comparison', fr: 'Comparaison numérique dans template', en: 'Numeric comparison in template', fixable: false },
-      { id: 'template_time_check', fr: 'Vérification heure dans template', en: 'Time check in template', fixable: false },
+      { id: 'device_id_in_trigger',              fixable: true  },
+      { id: 'device_trigger_platform',            fixable: true  },
+      { id: 'device_id_in_condition',             fixable: true  },
+      { id: 'device_condition_platform',          fixable: true  },
+      { id: 'device_id_in_action',                fixable: true  },
+      { id: 'device_id_in_target',                fixable: true  },
+      { id: 'template_simple_state',              fixable: true  },
+      { id: 'incorrect_mode_motion_single',       fixable: true  },
+      { id: 'deprecated_service',                 fixable: false },
+      { id: 'unknown_service',                    fixable: false },
+      { id: 'no_description',                     fixable: false },
+      { id: 'no_alias',                           fixable: false },
+      { id: 'duplicate_automation',               fixable: false },
+      { id: 'probable_duplicate_automation',      fixable: false },
+      { id: 'ghost_automation',                   fixable: false },
+      { id: 'never_triggered',                    fixable: false },
+      { id: 'excessive_delay',                    fixable: false },
+      { id: 'wait_template_vs_wait_for_trigger',  fixable: false },
+      { id: 'zone_no_entity',                     fixable: false },
+      { id: 'unknown_area_reference',             fixable: false },
+      { id: 'unknown_floor_reference',            fixable: false },
+      { id: 'unknown_label_reference',            fixable: false },
+      { id: 'template_numeric_comparison',        fixable: false },
+      { id: 'template_time_check',                fixable: false },
     ]
   },
   {
-    id: 'entities',
-    icon: 'mdi:tag-multiple',
-    labelFr: 'Entités',
-    labelEn: 'Entities',
+    id: 'entities', icon: 'mdi:tag-multiple',
     types: [
-      { id: 'zombie_entity', fr: 'Entité zombie (référencée, supprimée)', en: 'Zombie entity (referenced, removed)', fixable: true },
-      { id: 'broken_device_reference', fr: 'Référence appareil cassée', en: 'Broken device reference', fixable: true },
-      { id: 'unavailable_entity', fr: 'Entité indisponible', en: 'Unavailable entity', fixable: false },
-      { id: 'unknown_state', fr: 'État inconnu', en: 'Unknown state', fixable: false },
-      { id: 'stale_entity', fr: 'Entité obsolète', en: 'Stale entity', fixable: false },
-      { id: 'disabled_but_referenced', fr: 'Désactivée mais référencée', en: 'Disabled but referenced', fixable: false },
-      { id: 'ghost_registry_entry', fr: 'Entrée fantôme dans le registre', en: 'Ghost registry entry', fixable: true },
-      { id: 'unused_input_boolean', fr: 'input_boolean inutilisé', en: 'Unused input_boolean', fixable: false },
+      { id: 'zombie_entity',           fixable: true  },
+      { id: 'broken_device_reference', fixable: true  },
+      { id: 'unavailable_entity',      fixable: false },
+      { id: 'unknown_state',           fixable: false },
+      { id: 'stale_entity',            fixable: false },
+      { id: 'disabled_but_referenced', fixable: false },
+      { id: 'ghost_registry_entry',    fixable: true  },
+      { id: 'unused_input_boolean',    fixable: false },
     ]
   },
   {
-    id: 'security',
-    icon: 'mdi:shield-alert',
-    labelFr: 'Sécurité',
-    labelEn: 'Security',
+    id: 'security', icon: 'mdi:shield-alert',
     types: [
-      { id: 'hardcoded_secret', fr: 'Secret codé en dur', en: 'Hardcoded secret', fixable: false },
-      { id: 'sensitive_data_exposure', fr: 'Exposition données sensibles', en: 'Sensitive data exposure', fixable: false },
+      { id: 'hardcoded_secret',         fixable: false },
+      { id: 'sensitive_data_exposure',  fixable: false },
     ]
   },
   {
-    id: 'performance',
-    icon: 'mdi:speedometer',
-    labelFr: 'Performance',
-    labelEn: 'Performance',
+    id: 'performance', icon: 'mdi:speedometer',
     types: [
-      { id: 'high_complexity_actions', fr: 'Actions très complexes', en: 'High complexity actions', fixable: false },
-      { id: 'high_parallel_max', fr: 'parallel_max élevé', en: 'High parallel_max', fixable: false },
-      { id: 'potential_self_loop', fr: 'Boucle potentielle', en: 'Potential self-loop', fixable: false },
-      { id: 'missing_state_class', fr: 'state_class manquant', en: 'Missing state_class', fixable: false },
-      { id: 'expensive_template_selectattr', fr: 'Template selectattr coûteux', en: 'Expensive selectattr template', fixable: false },
-      { id: 'expensive_template_states_all', fr: "Template states.all coûteux", en: 'Expensive states.all template', fixable: false },
+      { id: 'high_complexity_actions',          fixable: false },
+      { id: 'high_parallel_max',                fixable: false },
+      { id: 'potential_self_loop',              fixable: false },
+      { id: 'missing_state_class',              fixable: false },
+      { id: 'expensive_template_selectattr',    fixable: false },
+      { id: 'expensive_template_states_all',    fixable: false },
     ]
   },
   {
-    id: 'blueprints',
-    icon: 'mdi:file-document-outline',
-    labelFr: 'Blueprints',
-    labelEn: 'Blueprints',
+    id: 'blueprints', icon: 'mdi:file-document-outline',
     types: [
-      { id: 'blueprint_missing_path', fr: 'Chemin blueprint manquant', en: 'Missing blueprint path', fixable: false },
-      { id: 'blueprint_file_not_found', fr: 'Fichier blueprint introuvable', en: 'Blueprint file not found', fixable: false },
-      { id: 'blueprint_empty_input', fr: 'Entrée blueprint vide', en: 'Empty blueprint input', fixable: false },
-      { id: 'blueprint_no_inputs', fr: 'Blueprint sans entrées', en: 'Blueprint with no inputs', fixable: false },
+      { id: 'blueprint_missing_path',   fixable: false },
+      { id: 'blueprint_file_not_found', fixable: false },
+      { id: 'blueprint_empty_input',    fixable: false },
+      { id: 'blueprint_no_inputs',      fixable: false },
     ]
   },
   {
-    id: 'dashboards',
-    icon: 'mdi:view-dashboard',
-    labelFr: 'Tableaux de bord',
-    labelEn: 'Dashboards',
+    id: 'dashboards', icon: 'mdi:view-dashboard',
     types: [
-      { id: 'dashboard_missing_entity', fr: 'Entité manquante dans dashboard', en: 'Missing entity in dashboard', fixable: false },
+      { id: 'dashboard_missing_entity', fixable: false },
     ]
   },
 ];
 
 // ─── Rendering ────────────────────────────────────────────────────────────
 
-function renderConfigTab(options, lang) {
+function renderConfigTab(options, lang, t) {
+  // t() is the translation function passed from the panel component
+  if (!t) t = (key) => key; // fallback: return key as-is
   lang = lang || 'en';
-  var t = function (fr, en) { return lang === 'fr' ? fr : en; };
   var excludedTypes = new Set(options.excluded_issue_types || []);
 
   var categorySections = ISSUE_TYPES_BY_CATEGORY.map(function (cat) {
-    var label = lang === 'fr' ? cat.labelFr : cat.labelEn;
+    var label = t('issue_types.categories.' + cat.id);
 
     var typeRows = cat.types.map(function (tp) {
       var enabled = !excludedTypes.has(tp.id);
-      var tpLabel = lang === 'fr' ? tp.fr : tp.en;
+      var tpLabel = t('issue_types.types.' + tp.id);
       var fixBadge = tp.fixable
-        ? '<span class="cfg-badge cfg-badge-fix">' + t('✓ Auto-fixable', '✓ Auto-fixable') + '</span>'
+        ? '<span class="cfg-badge cfg-badge-fix">' + t('config.auto_fixable') + '</span>'
         : '';
       return '<label class="cfg-type-row' + (enabled ? '' : ' disabled') + '" data-type="' + tp.id + '">' +
         '<span class="cfg-type-label">' + tpLabel + fixBadge + '</span>' +
@@ -138,8 +121,8 @@ function renderConfigTab(options, lang) {
       '<span class="cfg-cat-count" id="count-' + cat.id + '"></span>' +
       '</div>' +
       '<div class="cfg-cat-header-actions">' +
-      '<button class="cfg-cat-all-btn" data-cat="' + cat.id + '" data-action="enable">' + t('Tout activer', 'Enable all') + '</button>' +
-      '<button class="cfg-cat-all-btn" data-cat="' + cat.id + '" data-action="disable">' + t('Tout désactiver', 'Disable all') + '</button>' +
+      '<button class="cfg-cat-all-btn" data-cat="' + cat.id + '" data-action="enable">' + t('config.enable_all') + '</button>' +
+      '<button class="cfg-cat-all-btn" data-cat="' + cat.id + '" data-action="disable">' + t('config.disable_all') + '</button>' +
       '</div>' +
       '</div>' +
       '<div class="cfg-type-list" id="types-' + cat.id + '">' + typeRows + '</div>' +
@@ -152,33 +135,33 @@ function renderConfigTab(options, lang) {
     '<div class="cfg-header">' +
     '<ha-icon icon="mdi:cog" style="--mdc-icon-size:28px;color:var(--primary-color);"></ha-icon>' +
     '<div>' +
-    '<div class="cfg-header-title">' + t('Configuration H.A.C.A', 'H.A.C.A Configuration') + '</div>' +
-    '<div class="cfg-header-sub">' + t('Paramètres généraux, seuils et types d\'issues actifs', 'General settings, thresholds and active issue types') + '</div>' +
+    '<div class="cfg-header-title">' + t('config.title') + '</div>' +
+    '<div class="cfg-header-sub">' + t('config.general_settings_sub') + '</div>' +
     '</div>' +
     '</div>' +
 
     // ── Section : Scan ──
     '<div class="cfg-section">' +
-    '<div class="cfg-section-title"><ha-icon icon="mdi:magnify-scan" style="--mdc-icon-size:18px;"></ha-icon>' + t('Scan automatique', 'Automatic scan') + '</div>' +
+    '<div class="cfg-section-title"><ha-icon icon="mdi:magnify-scan" style="--mdc-icon-size:18px;"></ha-icon>' + t('config.automatic_scan') + '</div>' +
     '<div class="cfg-row">' +
-    '<div class="cfg-row-label"><span>' + t('Intervalle de scan (minutes)', 'Scan interval (minutes)') + '</span><span class="cfg-row-hint">5 – 1440 min</span></div>' +
+    '<div class="cfg-row-label"><span>' + t('config.scan_interval_minutes') + '</span><span class="cfg-row-hint">5 – 1440 min</span></div>' +
     '<input type="number" id="cfg-scan-interval" class="cfg-input" min="5" max="1440" value="' + (options.scan_interval || 60) + '">' +
     '</div>' +
     '<div class="cfg-row">' +
-    '<div class="cfg-row-label"><span>' + t('Délai au démarrage (secondes)', 'Startup delay (seconds)') + '</span><span class="cfg-row-hint">0 – 300 s</span></div>' +
+    '<div class="cfg-row-label"><span>' + t('config.startup_delay') + '</span><span class="cfg-row-hint">0 – 300 s</span></div>' +
     '<input type="number" id="cfg-startup-delay" class="cfg-input" min="0" max="300" value="' + (options.startup_delay_seconds || 60) + '">' +
     '</div>' +
     '</div>' +
 
     // ── Section : Événements ──
     '<div class="cfg-section">' +
-    '<div class="cfg-section-title"><ha-icon icon="mdi:bell-ring-outline" style="--mdc-icon-size:18px;"></ha-icon>' + t('Surveillance des événements', 'Event monitoring') + '</div>' +
+    '<div class="cfg-section-title"><ha-icon icon="mdi:bell-ring-outline" style="--mdc-icon-size:18px;"></ha-icon>' + t('config.event_monitoring') + '</div>' +
     '<div class="cfg-row">' +
-    '<div class="cfg-row-label"><span>' + t('Surveillance active', 'Active monitoring') + '</span><span class="cfg-row-hint">' + t('Rescan après modification', 'Auto-rescan after changes') + '</span></div>' +
+    '<div class="cfg-row-label"><span>' + t('config.active_monitoring') + '</span><span class="cfg-row-hint">' + t('config.auto_rescan_after_changes') + '</span></div>' +
     '<label class="cfg-toggle"><input type="checkbox" id="cfg-event-monitoring"' + (options.event_monitoring_enabled !== false ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
     '</div>' +
     '<div class="cfg-row" id="cfg-debounce-row">' +
-    '<div class="cfg-row-label"><span>' + t('Délai anti-rebond (secondes)', 'Debounce delay (seconds)') + '</span><span class="cfg-row-hint">5 – 300 s</span></div>' +
+    '<div class="cfg-row-label"><span>' + t('config.debounce_delay') + '</span><span class="cfg-row-hint">5 – 300 s</span></div>' +
     '<input type="number" id="cfg-event-debounce" class="cfg-input" min="5" max="300" value="' + (options.event_debounce_seconds || 30) + '">' +
     '</div>' +
     '</div>' +
@@ -187,45 +170,42 @@ function renderConfigTab(options, lang) {
     '<div class="cfg-section">' +
     '<div class="cfg-section-title">' +
     '<ha-icon icon="mdi:checkbox-multiple-marked-outline" style="--mdc-icon-size:18px;"></ha-icon>' +
-    t('Types d\'issues à détecter', 'Issue types to detect') +
+    t('config.issue_types') +
     '</div>' +
     '<div class="cfg-section-hint">' +
-    t('Décochez les types que vous ne souhaitez pas voir dans le tableau de bord. ' +
-      'Les types en ✓ Auto-fixable peuvent être réparés automatiquement.',
-      'Uncheck issue types you don\'t want to see in the dashboard. ' +
-      'Types marked ✓ Auto-fixable can be automatically repaired.') +
+    t('config.issue_types_hint') +
     '</div>' +
     '<div class="cfg-categories-root">' + categorySections + '</div>' +
     '</div>' +
 
     // ── Section : Batteries ──
     '<div class="cfg-section">' +
-    '<div class="cfg-section-title"><ha-icon icon="mdi:battery" style="--mdc-icon-size:18px;"></ha-icon>' + t('Seuils batterie', 'Battery thresholds') + '</div>' +
-    '<div class="cfg-row"><div class="cfg-row-label"><span>🔴 ' + t('Critique (%)', 'Critical (%)') + '</span></div><input type="number" id="cfg-battery-critical" class="cfg-input" min="1" max="50" value="' + (options.battery_critical || 5) + '"></div>' +
-    '<div class="cfg-row"><div class="cfg-row-label"><span>🟠 ' + t('Faible (%)', 'Low (%)') + '</span></div><input type="number" id="cfg-battery-low" class="cfg-input" min="5" max="50" value="' + (options.battery_low || 15) + '"></div>' +
-    '<div class="cfg-row"><div class="cfg-row-label"><span>🟡 ' + t('Avertissement (%)', 'Warning (%)') + '</span></div><input type="number" id="cfg-battery-warning" class="cfg-input" min="10" max="75" value="' + (options.battery_warning || 25) + '"></div>' +
+    '<div class="cfg-section-title"><ha-icon icon="mdi:battery" style="--mdc-icon-size:18px;"></ha-icon>' + t('config.battery_thresholds') + '</div>' +
+    '<div class="cfg-row"><div class="cfg-row-label"><span>🔴 ' + t('config.battery_critical') + '</span></div><input type="number" id="cfg-battery-critical" class="cfg-input" min="1" max="50" value="' + (options.battery_critical || 5) + '"></div>' +
+    '<div class="cfg-row"><div class="cfg-row-label"><span>🟠 ' + t('config.battery_low') + '</span></div><input type="number" id="cfg-battery-low" class="cfg-input" min="5" max="50" value="' + (options.battery_low || 15) + '"></div>' +
+    '<div class="cfg-row"><div class="cfg-row-label"><span>🟡 ' + t('config.battery_warning') + '</span></div><input type="number" id="cfg-battery-warning" class="cfg-input" min="10" max="75" value="' + (options.battery_warning || 25) + '"></div>' +
     '</div>' +
 
     // ── Section : Historique ──
     '<div class="cfg-section">' +
-    '<div class="cfg-section-title"><ha-icon icon="mdi:history" style="--mdc-icon-size:18px;"></ha-icon>' + t('Historique & Sauvegardes', 'History & Backups') + '</div>' +
+    '<div class="cfg-section-title"><ha-icon icon="mdi:history" style="--mdc-icon-size:18px;"></ha-icon>' + t('config.history_backups') + '</div>' +
     '<div class="cfg-row">' +
-    '<div class="cfg-row-label"><span>' + t('Rétention de l\'historique (jours)', 'History retention (days)') + '</span><span class="cfg-row-hint">30 – 730</span></div>' +
+    '<div class="cfg-row-label"><span>' + t('config.history_retention') + '</span><span class="cfg-row-hint">30 – 730</span></div>' +
     '<input type="number" id="cfg-history-retention" class="cfg-input" min="30" max="730" value="' + (options.history_retention_days || 365) + '">' +
     '</div>' +
     '<div class="cfg-row">' +
-    '<div class="cfg-row-label"><span>' + t('Sauvegarde automatique avant fix', 'Auto-backup before fix') + '</span><span class="cfg-row-hint">' + t('Recommandé', 'Recommended') + '</span></div>' +
+    '<div class="cfg-row-label"><span>' + t('config.auto_backup') + '</span><span class="cfg-row-hint">' + t('config.recommended') + '</span></div>' +
     '<label class="cfg-toggle"><input type="checkbox" id="cfg-backup-enabled"' + (options.backup_enabled !== false ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
     '</div>' +
     '</div>' +
 
     // ── Section Diagnostics & Logs ──
     '<div class="cfg-section" style="margin-top:4px;">' +
-    '<div class="cfg-section-title"><ha-icon icon="mdi:bug" style="--mdc-icon-size:18px;color:var(--warning-color,#ffa726);"></ha-icon>' + t('Diagnostics &amp; Logs', 'Diagnostics &amp; Logs') + '</div>' +
+    '<div class="cfg-section-title"><ha-icon icon="mdi:bug" style="--mdc-icon-size:18px;color:var(--warning-color,#ffa726);"></ha-icon>' + t('config.diagnostics_logs') + '</div>' +
     '<div class="cfg-row" style="align-items:flex-start;">' +
     '<div class="cfg-row-label">' +
-    '<span>' + t('Mode debug', 'Debug mode') + '</span>' +
-    '<span class="cfg-row-hint">' + t('Logs détaillés dans Paramètres → Système → Journaux', 'Detailed logs in Settings → System → Logs') + '</span>' +
+    '<span>' + t('config.debug_mode') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.detailed_logs') + '</span>' +
     '</div>' +
     '<label class="cfg-toggle">' +
     '<input type="checkbox" id="cfg-debug-toggle">' +
@@ -233,16 +213,25 @@ function renderConfigTab(options, lang) {
     '</label>' +
     '</div>' +
     '<div style="margin-top:12px;padding:10px 14px;background:var(--secondary-background-color);border-radius:8px;font-size:11px;color:var(--secondary-text-color);line-height:1.9;">' +
-    t('Filtrer dans les logs HA :', 'Filter in HA logs:') + ' <code>custom_components.config_auditor</code><br>' +
-    t('Pour persister entre redémarrages, ajoutez dans', 'To persist across restarts, add to') + ' <code>configuration.yaml</code> :<br>' +
+    t('config.filter_in_ha_logs') + ' <code>custom_components.config_auditor</code><br>' +
+    t('config.persist_hint') + ' <code>configuration.yaml</code> :<br>' +
     '<code style="display:block;margin-top:4px;padding:6px 8px;background:rgba(0,0,0,0.1);border-radius:4px;white-space:pre;">logger:\n  logs:\n    custom_components.config_auditor: debug</code>' +
     '</div>' +
     '</div>' +
 
     // ── Boutons ──
     '<div class="cfg-actions">' +
-    '<button class="cfg-btn cfg-btn-secondary" id="cfg-reset-btn"><ha-icon icon="mdi:restore" style="--mdc-icon-size:18px;"></ha-icon>' + t('Réinitialiser', 'Reset') + '</button>' +
-    '<button class="cfg-btn cfg-btn-primary" id="cfg-save-btn"><ha-icon icon="mdi:content-save" style="--mdc-icon-size:18px;"></ha-icon>' + t('Enregistrer', 'Save') + '</button>' +
+    `
+      <div class="cfg-section" style="padding:16px 20px;">
+        <div class="cfg-section-title"><ha-icon icon="mdi:label-off-outline" style="--mdc-icon-size:18px;"></ha-icon>${t('config.haca_ignore_title')}</div>
+        <div class="cfg-row-hint" style="margin-top:8px;line-height:1.6;">${t('config.haca_ignore_info')}</div>
+        <div class="cfg-row-hint" style="margin-top:6px;">
+          <code style="background:var(--code-background-color,rgba(0,0,0,0.1));padding:2px 6px;border-radius:4px;">haca_ignore</code>
+        </div>
+      </div>
+      ` +
+      '<button class="cfg-btn cfg-btn-secondary" id="cfg-reset-btn"><ha-icon icon="mdi:restore" style="--mdc-icon-size:18px;"></ha-icon>' + t('config.reset') + '</button>' +
+    '<button class="cfg-btn cfg-btn-primary" id="cfg-save-btn"><ha-icon icon="mdi:content-save" style="--mdc-icon-size:18px;"></ha-icon>' + t('config.save') + '</button>' +
     '</div>' +
     '<div id="cfg-save-status" class="cfg-save-status" style="display:none;"></div>' +
     '</div>';
