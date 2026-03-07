@@ -2,11 +2,14 @@
 
 All notable changes to this project are documented here.
 
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.3/)  
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.2/)  
 Versioning: [Semantic Versioning](https://semver.org/)
 
+
+## [1.1.2] -2026-03-07 -Fixes some bugs
+
 ---
-## [1.1.0] - 2026-03-04 - Rewrite of the internationalization system and added features
+## [1.1.1] - 2026-03-06 - Rewrite of the internationalization system and added features
 
 ### Added
 

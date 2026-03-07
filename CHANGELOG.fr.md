@@ -2,11 +2,14 @@
 
 Toutes les modifications notables de ce projet sont documentées ici.
 
-Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.3/)  
+Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.2/)  
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
+
+## [1.1.2] - 2026-03-07 - Corrige quelques bugs
+
 ---
-## [1.1.0] - 2026-03-04 - Réecriture du système d'internationnalisation et ajout de fonctionnalités
+## [1.1.1] - 2026-03-06 - Réecriture du système d'internationnalisation et ajout de fonctionnalités
 
 ### Ajouté
 
@@ -35,9 +38,9 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ### Ajouté
 
-- **Analyseur d'automations** (Module 1) — détection `device_id`, modes incorrects, services inconnus, références cassées, doublons exacts et fonctionnels
+- **Analyseur d'automatisations** (Module 1) — détection `device_id`, modes incorrects, services inconnus, références cassées, doublons exacts et fonctionnels
 - **Moniteur de santé des entités** (Module 2) — entités fantômes, indisponibles, désactivées mais référencées, doublons de registre
-- **Analyseur de performances** (Module 3) — automations haute fréquence, templates à rafraîchissement élevé, patterns en boucle
+- **Analyseur de performances** (Module 3) — automatisations haute fréquence, templates à rafraîchissement élevé, patterns en boucle
 - **Générateur de rapports** (Module 4) — rapports MD, JSON et PDF horodatés dans `/config/haca_reports/`
 - **Refactoring Assistant** (Module 5) — correction automatique `device_id → entity_id`, modes, templates simples ; sauvegarde YAML avant chaque correction
 - **Assistant IA** (Module 6) — explication des issues et suggestions via OpenAI / Google Generative AI
@@ -49,7 +52,7 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 - **Graphe de dépendances** — visualisation D3.js force-directed, filtres par type/issues, export SVG et PNG
 - **Moniteur de batteries** — tableau de toutes les batteries, alertes par sévérité
 - **Score de santé global** — score 0-100 calculé sur l'ensemble des issues, affiché avec tendance
-- **Complexité d'automations** — classement par score de complexité avec métriques détaillées
+- **Complexité d'automatisations** — classement par score de complexité avec métriques détaillées
 - Panel personnalisé HA avec 9 onglets principaux et sous-onglets par catégorie
 - Filtres par sévérité (HIGH / MEDIUM / LOW) et export CSV sur chaque liste d'issues
 - Recherche textuelle dans le graphe de dépendances
