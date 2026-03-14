@@ -167,6 +167,15 @@ class MockHass:
     async def async_add_executor_job(self, func, *args):
         return func(*args)
 
+    def async_create_task(self, coro):
+        """No-op in tests — swallows background tasks like _auto_backup."""
+        import asyncio
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return asyncio.Future()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Pytest fixtures

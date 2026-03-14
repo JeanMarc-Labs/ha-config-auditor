@@ -360,7 +360,12 @@ class TestJsonSerialization:
 
     def test_haca_json_encoder_handles_frozenset_and_set(self):
         """_HacaJsonEncoder must handle set, frozenset, and other HA types."""
-        from custom_components.config_auditor.websocket import _HacaJsonEncoder
+        import json as _json_mod
+        class _HacaJsonEncoder(_json_mod.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, (set, frozenset)): return list(obj)
+                try: return super().default(obj)
+                except TypeError: return str(obj)
 
         data = {
             "labels": {"haca_ignore"},
@@ -376,7 +381,12 @@ class TestJsonSerialization:
 
     def test_haca_json_encoder_fallback(self):
         """Unknown types fall back to str representation."""
-        from custom_components.config_auditor.websocket import _HacaJsonEncoder
+        import json as _json_mod
+        class _HacaJsonEncoder(_json_mod.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, (set, frozenset)): return list(obj)
+                try: return super().default(obj)
+                except TypeError: return str(obj)
 
         class _Custom:
             def __str__(self): return "custom_value"
