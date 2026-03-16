@@ -66,8 +66,8 @@ class BatteryMonitor:
             entity_id = state.entity_id
             if entity_id in _ignored: continue
             # Match sensor.*battery* — case-insensitive on the slug
-            slug = entity_id.lower()
-            if not (slug.startswith("sensor.") and "battery" in slug):
+            slug_lower = entity_id.lower()
+            if not (slug_lower.startswith("sensor.") and "battery" in slug_lower):
                 continue
             if state.state in ("unavailable", "unknown", "none", ""):
                 continue
@@ -83,6 +83,11 @@ class BatteryMonitor:
                 if "battery_level" not in slug_lower and "battery_percent" not in slug_lower:
                     continue
 
+            # Also skip if entity name contains '_cycle_count' 
+            slug_lower = entity_id.lower()
+            if "battery_cycle_count" in slug_lower or "_cycle_count" in slug_lower:
+                continue
+            
             try:
                 level = float(state.state)
             except (ValueError, TypeError):
