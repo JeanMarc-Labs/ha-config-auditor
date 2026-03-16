@@ -7818,7 +7818,7 @@ function _updateTypeCounts(el) {
                 ${isRealEntity && !isZombieEntity ? `<button class="open-entity-btn" data-idx="${idx}" title="${this.t('actions.open_entity')}" style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">${_icon("open-in-new")} ${this.t('actions.open_entity')}</button>` : ''}
                 ${isZombieEntity ? `<a href="/config/entities" target="_blank" style="text-decoration:none;"><button class="edit-ha-btn" style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);" title="${this.t('actions.view_entities_list')}">${_icon("format-list-bulleted")} ${this.t('actions.view_entities_list')}</button></a>` : ''}
                 <button class="explain-btn" data-idx="${idx}" style="background: var(--accent-color, #03a9f4); color: white;">
-                    ${_icon("robot")} IA
+                    ${_icon("robot")} ${this.t('actions.ai_explain')}
                 </button>
                 ${i.entity_id && i.entity_id.startsWith('automation.') && (() => {
             const scores = this._lastData?.complexity_scores || [];
