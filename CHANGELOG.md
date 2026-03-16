@@ -7,6 +7,47 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.6.0] — 2026-03-16 — Lovelace cards, deep audit fixes, Unicode slugs and HA 2026.x compatibility
+
+### Added
+
+- **Lovelace Dashboard Card** (`haca-dashboard-card`) — custom card with health score gauge, issue counter grid, scan button, and panel link. Visual configuration via `getConfigForm()` with native HA selectors (title, toggles, column count, entity picker filtered by integration). Click opens standard HA more-info dialog (history, settings gear, 3-dot menu)
+- **Lovelace Score Card** (`haca-score-card`) — compact health score gauge with optional issue count pills. Auto-discovers score entity via `haca_type` attribute. Visual editor with entity picker and detail toggle
+- **Automatic Lovelace resource registration** — cards are auto-registered as dashboard resources at integration setup via `async_setup` following the official HA embedded card pattern (manifest dependencies, `lovelace.resources.async_create_item`, retry on `resources.loaded`). Stale resources from previous paths automatically cleaned up
+- **`haca_type` state attribute** — all 14 HACA sensors expose `haca_type` (e.g. `"health_score"`, `"automation_issues"`) in `extra_state_attributes` for language-independent entity discovery by frontend cards
+- **`suggested_object_id`** — sensors suggest English-only object IDs regardless of HA backend language, producing stable entity IDs like `sensor.h_a_c_a_health_score` instead of localized variants
+- **`_slugify()` helper** — centralized Unicode-aware slug generator using `unicodedata.normalize('NFKD')`. Handles all diacritics (é→e, ç→c, ñ→n, ü→u). Applied to 9 locations: blueprints (3), area_id, script_id, helper_id, entity_id in create_automation, entity_id in deep_search, scene creation
+- **`_issue_stable_id()`** — generates deterministic issue identifiers (`entity_id|type`) for MCP tools since analyzers don't produce `id` fields
+- **`_TS_CACHE` merged strategy** — translation cache now stores root + panel JSON merged, making `ai_prompts` (30 keys), `services_notif`, and root-level `notifications` accessible alongside panel sections
+
+### Fixed
+
+- **MCP tools `fixable` field** — tools read `fix_available` and `recommendation` (the actual field names from analyzers) instead of non-existent `fixable` and `fix_description`. Fixes `haca_fix_suggestion`, `haca_apply_fix`, and `haca_get_issues`
+- **`_find_issue_by_id` broken** — searched for `issue.get("id")` but no analyzer produces an `id` field. Now matches on stable ID, entity_id, or alias
+- **`_tool_get_score` incomplete** — counted only 5 of 10 categories in `by_severity`. Now counts all 10 (automation, script, scene, blueprint, entity, helper, performance, security, dashboard, compliance). Removed phantom `last_scan` field
+- **13 blocking I/O in `mcp_server.py`** — all `.read_text()`, `.exists()`, `open()`, `os.remove()`, `os.makedirs()` in async functions wrapped in `async_add_executor_job`. Affects: `_tool_get_automation`, `_tool_ha_create_automation`, `_tool_ha_update_automation`, `_tool_ha_create_script`, `_tool_ha_remove_automation`, `_tool_ha_deep_search`, `_tool_ha_config_list_helpers`, `_tool_ha_remove_blueprint`, `_tool_ha_update_config_file`, `_tool_ha_create_blueprint`, `_tool_ha_import_blueprint`
+- **`_TS_CACHE` only stored `panel` subtree** — `services.py` notifications, `conversation.py` AI prompts (30 keys), `automation_optimizer.py` system prompt, and `__init__.py` uninstall message all returned raw keys instead of translated text
+- **`extra_state_attributes` override without `super()`** — `HACAHealthScoreSensor`, `HACABatteryAlertsSensor`, and `HACARecorderOrphansSensor` overwrote the base class `haca_type` attribute. All three now call `super().extra_state_attributes`
+- **Blueprint slug `allumer_une_lumi_re`** — `re.sub(r"[^a-z0-9_]", "_", ...)` stripped accented characters as underscores. Fixed by `_slugify()` with NFKD normalization: `"Allumer une lumière avec un capteur de présence"` → `"allumer_une_lumiere_avec_un_capteur_de_presence"`
+- **Manual accent replacement** — area_id generation used a chain of 8 `.replace("é","e")` calls. Replaced by `_slugify()` for full Unicode coverage
+- **`Path.mkdir(True)` crash** — `exist_ok` is keyword-only in `Path.mkdir()`. Passing `True` as positional set `mode=1`. Fixed with lambda
+- **`LovelaceData.mode` removed in HA 2026.x** — replaced by `resource_mode`. Code now uses `getattr` with fallback for backward compatibility
+- **Card resource cache busting** — resource URLs used static version `?v=1.5.2` which never changed between JS rebuilds. Now uses build hash (`?v=70c62e88`) ensuring browser reloads on every code change
+- **`customElements.define` crash** — HA 2026.x scoped registry throws on duplicate registration. Both cards guarded with `if (!customElements.get(...))`
+- **Card `ha-card` destroyed on every render** — `this.innerHTML = '<ha-card>...'` in `set hass()` replaced the `ha-card` element HA attached its edit overlay to. Now follows official HA pattern: `ha-card` created once in `if (!this.content)`, only inner `div` content updated
+- **Card `setConfig` destroyed DOM** — reset `_cardBuilt = false` causing `ha-card` recreation. `setConfig` now stores config only, never touches DOM
+
+### Changed
+
+- **`manifest.json`** — `dependencies` now includes `["frontend", "http"]` (required for Lovelace resource registration)
+- **Card registration in `async_setup`** — moved from `async_setup_entry` to `async_setup` per official HA developer guide (runs once per domain, not per config entry). Uses `CoreState.running` check with `homeassistant_started` event listener fallback
+
+### Removed
+
+- **Custom card editor elements** — `HacaDashboardCardEditor` and `HacaScoreCardEditor` custom elements removed in favor of `getConfigForm()` with native HA selectors
+
+---
+
 ## [1.5.2] — 2026-03-14 — Native LLM API, security hardening, graph relationships and code quality
 
 ### Added

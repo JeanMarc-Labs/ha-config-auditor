@@ -7,6 +7,47 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ---
 
+## [1.6.0] — 2026-03-16 — Cartes Lovelace, audit approfondi, slugs Unicode et compatibilité HA 2026.x
+
+### Ajouté
+
+- **Carte Lovelace Dashboard** (`haca-dashboard-card`) — carte personnalisée avec jauge de score de santé, grille de compteurs d'issues, bouton de scan et lien vers le panel. Configuration visuelle via `getConfigForm()` avec les sélecteurs natifs HA (titre, toggles, nombre de colonnes, sélecteur d'entités filtré par intégration). Un clic ouvre le dialogue more-info standard de HA (historique, engrenage, menu 3 points)
+- **Carte Lovelace Score** (`haca-score-card`) — jauge de score de santé compacte avec pastilles optionnelles de compteurs d'issues. Découverte automatique de l'entité score via l'attribut `haca_type`. Éditeur visuel avec sélecteur d'entité et toggle de détails
+- **Enregistrement automatique des ressources Lovelace** — les cartes sont auto-enregistrées comme ressources du dashboard au setup de l'intégration via `async_setup` suivant le pattern officiel HA (dépendances manifest, `lovelace.resources.async_create_item`, retry sur `resources.loaded`). Les anciennes ressources obsolètes sont automatiquement nettoyées
+- **Attribut d'état `haca_type`** — les 14 capteurs HACA exposent `haca_type` (ex: `"health_score"`, `"automation_issues"`) dans `extra_state_attributes` pour la découverte d'entités indépendante de la langue par les cartes frontend
+- **`suggested_object_id`** — les capteurs suggèrent des identifiants en anglais quel que soit la langue du backend HA, produisant des entity_id stables comme `sensor.h_a_c_a_health_score` au lieu de variantes localisées
+- **Helper `_slugify()`** — générateur de slug centralisé avec support Unicode via `unicodedata.normalize('NFKD')`. Gère tous les diacritiques (é→e, ç→c, ñ→n, ü→u). Appliqué sur 9 emplacements : blueprints (3), area_id, script_id, helper_id, entity_id dans create_automation, entity_id dans deep_search, création de scènes
+- **`_issue_stable_id()`** — génère des identifiants d'issues déterministes (`entity_id|type`) pour les outils MCP car les analyseurs ne produisent pas de champ `id`
+- **Stratégie de fusion `_TS_CACHE`** — le cache de traductions stocke maintenant le JSON racine + panel fusionné, rendant `ai_prompts` (30 clés), `services_notif` et `notifications` racine accessibles aux côtés des sections panel
+
+### Corrigé
+
+- **Champ `fixable` des outils MCP** — les outils lisent maintenant `fix_available` et `recommendation` (les vrais noms de champs des analyseurs) au lieu de `fixable` et `fix_description` inexistants. Corrige `haca_fix_suggestion`, `haca_apply_fix` et `haca_get_issues`
+- **`_find_issue_by_id` cassé** — cherchait `issue.get("id")` mais aucun analyseur ne produit de champ `id`. Cherche maintenant par ID stable, entity_id ou alias
+- **`_tool_get_score` incomplet** — ne comptait que 5 des 10 catégories dans `by_severity`. Compte maintenant les 10 (automation, script, scene, blueprint, entity, helper, performance, security, dashboard, compliance). Suppression du champ fantôme `last_scan`
+- **13 I/O bloquants dans `mcp_server.py`** — tous les `.read_text()`, `.exists()`, `open()`, `os.remove()`, `os.makedirs()` dans des fonctions async encapsulés dans `async_add_executor_job`
+- **`_TS_CACHE` ne stockait que le sous-arbre `panel`** — les notifications de `services.py`, les prompts IA de `conversation.py` (30 clés), le prompt système de `automation_optimizer.py` et le message de désinstallation de `__init__.py` retournaient tous les clés brutes au lieu du texte traduit
+- **`extra_state_attributes` écrasait `super()`** — `HACAHealthScoreSensor`, `HACABatteryAlertsSensor` et `HACARecorderOrphansSensor` perdaient l'attribut `haca_type` de la classe de base. Les trois appellent maintenant `super().extra_state_attributes`
+- **Slug de blueprint `allumer_une_lumi_re`** — `re.sub(r"[^a-z0-9_]", "_", ...)` transformait les accents en underscores. Corrigé par `_slugify()` avec normalisation NFKD : `"Allumer une lumière avec un capteur de présence"` → `"allumer_une_lumiere_avec_un_capteur_de_presence"`
+- **Remplacement manuel des accents** — la génération de area_id utilisait une chaîne de 8 `.replace("é","e")`. Remplacé par `_slugify()` pour une couverture Unicode complète
+- **Crash `Path.mkdir(True)`** — `exist_ok` est keyword-only dans `Path.mkdir()`. Passer `True` en positionnel définissait `mode=1`. Corrigé avec lambda
+- **`LovelaceData.mode` supprimé dans HA 2026.x** — remplacé par `resource_mode`. Le code utilise maintenant `getattr` avec fallback pour la compatibilité
+- **Cache des ressources de cartes** — les URLs utilisaient une version statique `?v=1.5.2` qui ne changeait jamais entre les rebuilds JS. Utilise maintenant le hash de build (`?v=70c62e88`) garantissant le rechargement du navigateur à chaque modification
+- **Crash `customElements.define`** — le registre scopé de HA 2026.x lance une exception en cas de double enregistrement. Les deux cartes sont protégées par `if (!customElements.get(...))`
+- **`ha-card` détruit à chaque rendu** — `this.innerHTML = '<ha-card>...'` dans `set hass()` remplaçait l'élément `ha-card` auquel HA avait attaché son overlay d'édition. Suit maintenant le pattern officiel HA : `ha-card` créé une seule fois dans `if (!this.content)`, seul le contenu du `div` intérieur est mis à jour
+- **`setConfig` détruisait le DOM** — remettait `_cardBuilt = false` causant la recréation de `ha-card`. `setConfig` stocke maintenant la config uniquement, ne touche jamais le DOM
+
+### Modifié
+
+- **`manifest.json`** — `dependencies` inclut maintenant `["frontend", "http"]` (requis pour l'enregistrement des ressources Lovelace)
+- **Enregistrement des cartes dans `async_setup`** — déplacé de `async_setup_entry` vers `async_setup` selon le guide officiel du développeur HA (s'exécute une fois par domaine, pas par config entry). Utilise la vérification `CoreState.running` avec fallback sur l'événement `homeassistant_started`
+
+### Supprimé
+
+- **Éditeurs de cartes custom** — les éléments `HacaDashboardCardEditor` et `HacaScoreCardEditor` supprimés au profit de `getConfigForm()` avec les sélecteurs natifs HA
+
+---
+
 ## [1.5.2] — 2026-03-14 — LLM API natif, sécurité renforcée, relations graphe et qualité code
 
 ### Ajouté
