@@ -7,6 +7,75 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ---
 
+## [1.6.1] — 2026-03-20 — Corrections de bugs, nouvelles fonctionnalités, améliorations UX
+
+### Ajouté
+
+- **Checks LOW désactivés par défaut** (#10) — Les nouvelles installations excluent 14 types d'issues de faible sévérité (no_description, no_alias, helper_unused, etc.) pour éviter de submerger les nouveaux utilisateurs avec 1400+ notifications
+- **Mode scan manuel uniquement** (#19) — Mettre scan_interval à 0 désactive le scan automatique. HACA ne scanne que lorsque l'utilisateur clique "Scan complet"
+- **Toggle notifications batterie** (#11) — Nouveau toggle dans la Configuration pour désactiver les notifications persistantes de batterie tout en gardant la liste dans le dashboard
+- **Panel admin uniquement** (#6.2) — Le panel HACA dans la sidebar est masqué pour les utilisateurs non-admin via `require_admin=True`
+- **Bouton menu mobile** (#6.3) — Icône menu hamburger dans le header sur mobile/tablette qui ouvre la sidebar HA (dispatche `hass-toggle-menu`), comme toutes les intégrations HA
+- **Explications des types d'issues** (#13) — 33 explications courtes affichées sous chaque issue expliquant ce qui a été détecté et pourquoi. Traduites en anglais et français
+- **Timestamp du dernier scan** — Affiché dans le header du panel HACA à côté du bouton Scan avec le label "Dernier scan" (traduit en 13 langues), date et heure avec année
+- **Config : catégories scripts, scènes, helpers, groupes** — Les toggles de types d'issues couvrent maintenant les 74 types d'analyseurs dans 11 catégories
+
+### Corrigé
+
+- **`excluded_issue_types` ne fonctionnait pas** (#12, #18, #6) — Cause racine : 29 types d'analyseurs manquaient dans la liste de toggles du panel de config. Resynchronisation complète des 74 types dans 11 catégories
+- **Label `haca_ignore` ignoré par les analyseurs performance et sécurité** (#3) — Les deux analyseurs chargent et filtrent maintenant par labels `haca_ignore`
+- **Repairs non nettoyées après correction des issues** (#16) — Réécriture de `repairs.py` : supprime TOUTES les anciennes repairs HACA avant de recréer les actuelles
+- **Messages Repairs trop vagues** (#9) — Type affiché en texte lisible. Recommandation incluse. Seuls les fixes simples sont marqués auto-fixables
+- **Scripts supprimés toujours signalés** (#17) — `.clear()` ajouté avant le rechargement des fichiers YAML
+- **"IA" codé en dur au lieu de "AI"** (#4) — Remplacé par la clé de traduction `actions.ai_explain`
+- **Vérification labels inutilisés trop restrictive** (#7) — Vérifie maintenant entités, appareils, zones et automations/scripts
+- **Boutons copier ne fonctionnaient pas** — Remplacement de `navigator.clipboard` par un fallback compatible HTTP
+- **Création de blueprint bloquée par le backup** — L'IA n'appelle plus `ha_backup_create` séparément. Le backup est géré en interne
+- **Format `inputs` du blueprint rejeté** — Parsing robuste : accepte dict, JSON string, ou valeurs simples
+- **Carte Score affichait "0/100"** — Changé en "%"
+- **Carte Score batterie affichait "0%"** — Affiche ✓ avec icône batterie verte quand battery_alerts = 0
+- **Carte Dashboard batterie "0"** — Affiche ✓ au lieu de "0"
+
+### Modifié
+
+- **Config MCP Antigravity** — Utilise le pont `mcp-proxy` (HACA ne supporte pas OAuth2 dynamic client registration)
+- **Alias MCP `/api/haca_mcp/sse`** — Conservé mais tous les exemples utilisent l'URL de base
+
+---
+
+## [1.6.1] — 2026-03-20 — Corrections issues tracker, nouvelles options de config, UX mobile et améliorations MCP
+
+### Ajouté
+
+- **Checks LOW désactivés par défaut** (#10) — les nouvelles installations excluent 14 types d'issues de faible sévérité pour éviter de submerger les utilisateurs avec 1400+ notifications
+- **Mode scan manuel uniquement** (#19) — intervalle de scan à 0 dans la Configuration pour désactiver les scans automatiques ; seul le bouton "Scan complet" déclenche l'analyse
+- **Toggle notifications batterie** (#11) — nouveau toggle dans la Configuration pour désactiver les notifications persistantes tout en gardant la liste dans le dashboard
+- **Explications par type d'issue** (#13) — 33 explications courtes affichées sous chaque carte d'issue. Traduites en 13 langues
+- **Panel admin uniquement** (#6.2) — `require_admin=True` ; les utilisateurs non-admin ne voient plus HACA dans la barre latérale
+- **Bouton menu mobile** (#6.3) — icône hamburger dans le header qui ouvre la barre latérale HA sur mobile/tablette
+- **Timestamp dernier scan** — "Dernier scan : JJ/MM/AAAA HH:MM" dans le header à côté du bouton Scan, traduit en 13 langues
+- **Route alias MCP `/sse`** — `/api/haca_mcp/sse` accepté comme URL alternative pour les clients MCP basés sur SSE
+
+### Corrigé
+
+- **`excluded_issue_types` désynchronisé** (#12/#18/#6) — le panel config listait 55 types mais les analyseurs en produisent 74. Ajout de 4 nouvelles catégories (Scripts, Scènes, Helpers, Groupes) avec 31 types manquants
+- **`haca_ignore` non respecté** (#3) — `performance_analyzer.py` et `security_analyzer.py` n'avaient aucun filtre
+- **Repairs non nettoyées** (#9/#16) — réécriture de `repairs.py` : remise à zéro à chaque scan, noms de types lisibles, recommandations
+- **Scripts supprimés toujours signalés** (#17) — les dicts de configs n'étaient pas vidés avant rechargement
+- **"IA" hardcodé au lieu de "AI"** (#4) — remplacé par la clé de traduction `actions.ai_explain`
+- **Faux positifs label inutilisé** (#7) — vérification étendue aux devices, areas et automations
+- **Régression création de blueprint** — l'IA appelait un backup séparé et se bloquait. Backup maintenant interne, parsing des inputs robuste
+- **Boutons copier MCP** — fallback pour HTTP, event listeners au lieu de onclick inline
+- **Carte score batterie 0/100** — affiche ✓ vert au lieu de 0%
+- **Carte dashboard /100** — jauge affiche % au lieu de /100
+
+### Modifié
+
+- **Configs agents MCP** — URL de base `/api/haca_mcp` pour tous. Antigravity utilise `mcp-proxy` (OAuth2 non supporté)
+- **Valeurs par défaut config_flow** — `excluded_issue_types`, `repairs_enabled`, `battery_notifications_enabled` définis à l'installation
+
+---
+
 ## [1.6.0] — 2026-03-16 — Cartes Lovelace, audit approfondi, slugs Unicode et compatibilité HA 2026.x
 
 ### Ajouté
