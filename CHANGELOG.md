@@ -7,6 +7,76 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.6.1] — 2026-03-20 — Bug fixes, new features, UX improvements
+
+### Added
+
+- **LOW checks disabled by default** (#10) — New installations exclude 14 low-severity issue types (no_description, no_alias, helper_unused, etc.) to avoid overwhelming new users with 1400+ notifications. Users can enable them in Configuration when ready
+- **Manual-only scan mode** (#19) — Setting scan_interval to 0 disables automatic scanning. HACA only scans when the user clicks "Full Scan"
+- **Battery notifications toggle** (#11) — New toggle in Configuration to disable battery persistent notifications while keeping the battery list in the dashboard
+- **Admin-only panel** (#6.2) — The HACA sidebar panel is now hidden for non-admin users via `require_admin=True`
+- **Mobile menu button** (#6.3) — Menu hamburger icon in the header on mobile/tablet that opens the HA sidebar (dispatches `hass-toggle-menu`), matching native HA behavior
+- **Issue type hints** (#13) — 33 short explanations displayed below each issue card explaining what was detected and why it matters. Translated in English and French
+- **Last scan timestamp** — Displayed in the HACA panel header next to the Scan button with label "Last scan" (translated in 13 languages), date and time including year
+- **Config panel: scripts, scenes, helpers, groups categories** — Issue type toggles now cover all 74 analyzer types across 11 categories including new Scripts, Scenes, Helpers & Templates, and Groups sections
+
+### Fixed
+
+- **`excluded_issue_types` not working** (#12, #18, #6) — Root cause: 29 analyzer types were missing from the config panel toggle list. `god_automation` and `complex_automation` (the real type names) were absent while orphan `high_complexity_actions` was listed. Full resync of all 74 types across 11 categories
+- **`haca_ignore` label ignored by performance and security analyzers** (#3) — Both `performance_analyzer.py` and `security_analyzer.py` now load and filter by `haca_ignore` labels
+- **Repairs not cleared after fixing issues** (#16) — Rewrote `repairs.py` with clean-slate approach: deletes ALL previous HACA repairs before creating current ones. No more stale entries after HA restart
+- **Repairs messages too vague** (#9) — Type displayed as readable text ("Device ID in trigger" instead of "device_id_in_trigger"). Recommendation included in description. Only simple fixes (no_description, no_alias) marked as auto-fixable — complex automations never
+- **Deleted scripts still reported** (#17) — `_load_script_configs()` and `_load_scene_configs()` now call `.clear()` before reloading YAML, preventing stale data from previous scans
+- **"IA" hardcoded instead of "AI"** (#4) — Replaced with translation key `actions.ai_explain` in `issues.js`, `optimizer.js`, and `config_tab.js`
+- **Unused label check too narrow** (#7) — Now checks entities, devices, areas, and automations/scripts — not just entities
+- **Copy buttons not working in MCP config panel** — Replaced `navigator.clipboard` (requires HTTPS) with `_hacaCopy()` fallback using textarea + execCommand. Replaced fragile inline onclick with proper event listeners
+- **Blueprint creation blocked by backup** (#5 forum) — AI was calling `ha_backup_create` first, then waiting forever. Tool description now explicitly says "do NOT call ha_backup_create". Internal `_auto_backup` runs synchronously inside `_tool_ha_create_blueprint`
+- **Blueprint `inputs` format rejection** — Robust parsing: accepts dict, JSON string, or simple string values. Default values preserved in `input` section (HA requires them)
+- **Score card showing "0/100"** — Changed to "%" for the gauge label
+- **Score card battery showing "0%" for no alerts** — Shows ✓ with green battery-check icon when battery_alerts = 0
+- **Dashboard card battery "0"** — Shows ✓ instead of "0" for battery_alerts with 0 alerts
+
+### Changed
+
+- **MCP Antigravity config** — Uses `mcp-proxy` bridge instead of direct URL (HACA does not support OAuth2 dynamic client registration). Hint explains the limitation clearly
+- **MCP server `/api/haca_mcp/sse` alias** — Kept as optional route but all config examples use the base URL `/api/haca_mcp`
+
+---
+
+## [1.6.1] — 2026-03-20 — Issue tracker bugfixes, new config options, mobile UX and MCP improvements
+
+### Added
+
+- **LOW checks disabled by default** (#10) — new installations exclude 14 low-severity issue types (no_description, helper_unused, etc.) to avoid overwhelming new users with 1400+ notifications
+- **Manual-only scan mode** (#19) — set scan interval to 0 in Configuration to disable automatic scans; only the "Full Scan" button triggers analysis
+- **Battery notifications toggle** (#11) — new toggle in Configuration to disable persistent battery notifications while keeping the battery list in the dashboard
+- **Issue type hints** (#13) — 33 short explanations displayed below each issue card (e.g. "Uses device_id which breaks if the device is re-paired"). Translated in 13 languages
+- **Admin-only panel** (#6.2) — `require_admin=True` on panel registration; non-admin users no longer see HACA in the sidebar
+- **Mobile menu button** (#6.3) — hamburger icon in panel header dispatches `hass-toggle-menu` to open HA sidebar on mobile/tablet, matching the standard HA behavior
+- **Last scan timestamp** — "Last scan: DD/MM/YYYY HH:MM" displayed in the panel header next to the Scan button, with label translated in 13 languages
+- **MCP `/sse` alias route** — `/api/haca_mcp/sse` accepted as an alternative URL for SSE-based MCP clients
+
+### Fixed
+
+- **`excluded_issue_types` mismatch** (#12/#18/#6) — config panel listed 55 types but analyzers produce 74. Added 4 new categories (Scripts, Scenes, Helpers, Groups) with 31 missing types including `god_automation`, `complex_automation`, all script/scene/helper/template/timer/group types. Removed orphan `high_complexity_actions` (real type is in automations category)
+- **`haca_ignore` not respected** (#3) — `performance_analyzer.py` and `security_analyzer.py` had no `haca_ignore` filtering; entities with the label were still scanned and flagged
+- **Repairs not cleaned** (#9/#16) — rewrote `repairs.py`: clean slate on every scan (deletes ALL existing HACA repairs then recreates only current HIGH issues). Fixes stale repairs surviving HA restarts. Human-readable type names in descriptions. `FIXABLE_ISSUE_TYPES` reduced to safe-only fixes
+- **Deleted scripts still flagged** (#17) — `_load_script_configs()` and `_load_scene_configs()` did not clear their dicts before reloading from YAML; deleted items persisted across scans
+- **"IA" hardcoded instead of "AI"** (#4) — replaced with `this.t('actions.ai_explain')` translation key in issues.js, optimizer.js, and config_tab.js
+- **Unused label false positives** (#7) — compliance check now scans entity registry + device registry + area registry + automation/script labels, not just entities
+- **Blueprint creation regression** (#5 user report) — AI called `ha_backup_create` before `ha_create_blueprint` and got stuck waiting. Fixed: backup is now internal to the function, tool description explicitly says "do NOT call ha_backup_create". Input parsing accepts string JSON, dict, and simple values. Default values preserved in blueprint input section
+- **Copy buttons not working** — `navigator.clipboard` fails on HTTP (non-HTTPS). Added `_hacaCopy()` helper with `textarea + execCommand` fallback. Replaced inline `onclick` with `addEventListener` (works in Shadow DOM)
+- **Score card battery 0/100** — pill now shows `✓` with green `mdi:battery-check-outline` icon when no battery alerts
+- **Dashboard card /100** — gauge shows `%` instead of `/100`
+- **Lovelace card timestamp removed** — timestamp belongs in the panel header, not the Lovelace card
+
+### Changed
+
+- **MCP agent configs** — all examples use base URL `/api/haca_mcp` (no `/sse` suffix). Antigravity config uses `mcp-proxy` bridge with explicit note that OAuth2 is not supported
+- **Config flow defaults** — `excluded_issue_types`, `repairs_enabled`, `battery_notifications_enabled` set at installation time
+
+---
+
 ## [1.6.0] — 2026-03-16 — Lovelace cards, deep audit fixes, Unicode slugs and HA 2026.x compatibility
 
 ### Added
