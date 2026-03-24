@@ -7,6 +7,46 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ---
 
+## [1.6.2] — 2026-03-23 — Correction blueprint, nettoyage i18n, refonte prompt LLM, outils Lovelace
+
+### Ajouté
+
+- **Prompt LLM API multilingue** — le prompt système injecté dans les agents IA charge maintenant depuis `translations/{lang}.json → llm_prompt` (18 clés × 13 langues). Précédemment en français hardcodé
+- **Workflows IA proactifs** — le prompt inclut des workflows étape par étape pour les dashboards Lovelace, les automatisations et les scripts. L'agent IA sait maintenant appeler `ha_get_lovelace` avant d'ajouter des cartes et utilise `view_index=0` automatiquement quand il n'y a qu'une seule vue
+- **58 descriptions d'outils enrichies** — chaque outil MCP inclut maintenant les appels prérequis, les actions de suivi et des conseils d'utilisation
+- **Guide étendu Claude Desktop** — installation pas à pas avec `winget install astral-sh.uv -e` (Windows) / `curl` (macOS/Linux), chemins du fichier de config et instructions de redémarrage. Traduit en 13 langues
+- **Guide étendu Antigravity / Gemini** — installation pas à pas avec `pip install mcp-proxy`, traduit en 13 langues
+- **Bannière avertissement IP** — affichée en haut du panel MCP : utiliser l'adresse IP si `.local` ne fonctionne pas. Traduit en 13 langues
+- **Attribut `alert_entities`** — le sensor alertes batteries expose la liste des entity_id en alerte. Les cartes Lovelace les affichent en tooltip au survol
+
+### Corrigé
+
+- **Création de blueprint : corruption des inputs JSON** — les agents IA envoyaient les inputs sous forme de JSON string imbriqué. Le parser détecte et déplie maintenant ce pattern, produisant des champs `name` + `selector` propres
+- **Blueprint : texte français hardcodé** — commentaire d'en-tête, description par défaut et messages de succès passés en anglais
+- **`strings.json` manquait 9 des 14 sensors** — HA utilise `strings.json` comme référence pour la résolution des `translation_key`. Les 14 sensors sont maintenant présents
+- **Chaînes françaises en runtime** — 9 chaînes françaises remplacées par l'anglais dans `mcp_server.py`, `websocket.py`, `proactive_agent.py`
+- **Outils Lovelace refactorisés** — les 5 outils utilisent un helper partagé `_get_lovelace_dashboard()` compatible avec toutes les versions de HA
+- **`ha_add_lovelace_card` plus intelligent** — détection automatique de `view_index=0`, détection automatique d'entité pour les types `weather-forecast`, `thermostat`, etc.
+- **Faux positifs entités zombies** — validation du format entity_id. Les device_id (hash hex) et automation_id sont rejetés
+- **Faux positifs doublons blueprint** — les automatisations utilisant `use_blueprint` sont exclues de la détection de doublons
+- **Carte HACA Score : sélecteur d'entité** — éditeur custom qui filtre `battery_alerts`. Jauge pour health_score, nombre brut pour les autres
+- **Carte Score : `e()` avant initialisation** — fonction d'échappement déplacée en début de `_update()`
+- **Intervalle de scan 0** — `|| 60` traitait 0 comme falsy. Corrigé avec `!= null`
+- **Panel MCP : fallbacks hardcodés** — tous les `_t('mcp.*', 'texte')` remplacés par `_t('mcp.*')`
+- **Panel MCP : traductions dans `panel.mcp`** — clés déplacées de la racine JSON vers `panel.mcp`
+- **MCP auth 401** — passage à `requires_auth = True` (middleware standard HA)
+- **Détection batterie stricte** — seul `device_class: "battery"` accepté
+- **Icône menu invisible** — path SVG `menu` ajouté au dictionnaire `_MDI`
+- **Section token supprimée** — `mcp_ha_token` supprimé (inutilisé)
+
+### Modifié
+
+- **Version** : 1.6.1 → 1.6.2
+- **Badge version MCP** : v1.6.2
+- **Configs agents MCP** : Claude Code en HTTP direct, Claude Desktop via `uvx mcp-proxy`, Antigravity via `mcp-proxy -H`
+
+---
+
 ## [1.6.1] — 2026-03-20 — Corrections de bugs, nouvelles fonctionnalités, améliorations UX
 
 ### Ajouté
