@@ -7,6 +7,46 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.6.2] — 2026-03-23 — Blueprint fix, i18n cleanup, LLM prompt overhaul, Lovelace tools
+
+### Added
+
+- **Multilingual LLM API prompt** — the system prompt injected into AI agents (via `llm_api.py`) now loads from `translations/{lang}.json → llm_prompt` (18 keys × 13 languages). Previously hardcoded in French
+- **Proactive AI workflows** — the LLM prompt includes step-by-step workflows for Lovelace dashboards, automations, and scripts. The AI agent now knows to call `ha_get_lovelace` before adding cards, and uses `view_index=0` automatically when only one view exists
+- **58 tool descriptions enriched** — every MCP tool now includes prerequisite calls (e.g. "ALWAYS call ha_backup_create first"), follow-up actions ("call ha_reload_core after"), and usage guidance
+- **Claude Desktop expanded guide** — step-by-step setup with `winget install astral-sh.uv -e` (Windows) / `curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux), config file paths, and restart instructions. Translated in 13 languages
+- **Antigravity / Gemini expanded guide** — step-by-step setup with `pip install mcp-proxy`, translated in 13 languages
+- **IP warning banner** — displayed at the top of MCP panel: use IP address if `.local` doesn't work. Translated in 13 languages
+- **`alert_entities` attribute** — battery alerts sensor now exposes the list of alerting entity_ids. Lovelace cards show them as tooltip on hover
+
+### Fixed
+
+- **Blueprint creation: JSON inputs corruption** — AI agents sent inputs as a nested JSON string (`{"json": "{...}"}`). The parser now detects and unwraps this pattern, producing clean `name` + `selector` fields instead of raw JSON in `description`/`default`
+- **Blueprint: French hardcoded text** — blueprint header comment, description fallback, and success messages switched from French to English
+- **`strings.json` missing 9 of 14 sensors** — HA uses `strings.json` as the reference for `translation_key` resolution. Only 5 sensors were listed; the other 9 (`health_score`, `automation_issues`, `entity_issues`, etc.) showed untranslated names in Settings → Devices & Services. All 14 sensors now in `strings.json`
+- **French runtime strings** — replaced 9 French strings in `mcp_server.py`, `websocket.py`, `proactive_agent.py` with English equivalents (error messages, YAML fallbacks, blueprint success messages)
+- **Lovelace tools refactored** — all 5 Lovelace tools (`ha_get_lovelace`, `ha_add_lovelace_card`, `ha_update_lovelace_card`, `ha_remove_lovelace_card`, `ha_list_dashboards`) use a shared `_get_lovelace_dashboard()` helper that handles all HA versions. Fixes "cannot access dashboard" errors
+- **`ha_add_lovelace_card` smarter** — auto-detects `view_index=0` when only one view exists (no more asking the user). Auto-detects entity for `weather-forecast`, `thermostat`, `media-control` card types. Better error messages with card type examples
+- **Zombie entity false positives** — `_build_entity_references` now validates entity_id format via `_is_valid_entity_id()`. Device IDs (hex hashes like `631e3d...`) and automation IDs are rejected
+- **Blueprint duplicate false positives** — automations using `use_blueprint` are excluded from duplicate detection (Strategy A and B)
+- **HACA Score card: entity selector** — custom editor (`haca-score-card-editor`) filters out `battery_alerts` from the entity dropdown. Other entities show gauge (health_score) or plain number (issue counts)
+- **Score card: `e()` before initialization** — escape function moved to top of `_update()`, duplicate removed
+- **Scan interval 0** — `options.scan_interval || 60` treated 0 as falsy → field showed 60. Fixed with `!= null` check. Same fix for `startup_delay_seconds`
+- **MCP panel: hardcoded fallbacks** — all `_t('mcp.*', 'fallback text')` replaced with `_t('mcp.*')`. English fallback comes from `en.json` via the i18n system
+- **MCP panel: translations in `panel.mcp`** — keys were at JSON root instead of inside `panel` section. Moved to `panel.mcp` so the WebSocket handler delivers them to the frontend
+- **MCP auth 401** — switched from custom `_check_auth()` to `requires_auth = True` (HA standard middleware)
+- **Battery detection: strict `device_class`** — only `device_class: "battery"` accepted, no more name-based detection
+- **Menu icon invisible** — SVG path for `menu` (hamburger) added to `_MDI` dictionary
+- **Token section removed** — `mcp_ha_token` removed from config panel, ALLOWED_KEYS, and handlers (was unused)
+
+### Changed
+
+- **Version**: 1.6.1 → 1.6.2
+- **MCP panel version badge**: v1.6.2
+- **MCP agent configs**: Claude Code uses `url` + `type: http` (no proxy). Claude Desktop uses `uvx mcp-proxy`. Antigravity uses `mcp-proxy` with `-H` flag for auth
+
+---
+
 ## [1.6.1] — 2026-03-20 — Bug fixes, new features, UX improvements
 
 ### Added
