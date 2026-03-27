@@ -7,6 +7,32 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.6.3] — 2026-03-25 — Auto-generated dashboard, trigger rate fix, script rename fix, template variable fix, purge fix
+
+### Added
+
+- **Auto-generated HACA dashboard** — "Create Dashboard" button below the stat cards (separate from Full Scan to avoid misclicks). Uses HA's native WebSocket commands (`lovelace/dashboards/create` + `lovelace/config/save`) so the dashboard appears instantly in the sidebar without restart. Dashboard includes: HACA Score gauge (custom card), markdown intro, issue counters in tile cards (4 primary + 4 secondary + 3 tertiary in horizontal stacks), battery alerts + recorder orphans, 7-day health score history graph, HACA dashboard card (custom), and a button to open the HACA panel. Re-clicking updates the dashboard with fresh data. Translated in 13 languages
+
+- **Severity filter toggles** — 3 new toggles in the Configuration tab to show/hide issues by severity level (High, Medium, Low). Allows users to focus on critical issues without disabling checks entirely. Translated in 13 languages
+- **Dashboard button moved to Configuration** — the "Create Dashboard" button is now in its own section at the bottom of the Configuration tab, with an explanatory text. Separated from Full Scan to avoid accidental clicks
+- **All dashboard texts translated** — every text in the auto-generated dashboard (card names, welcome message, gauge label, history title, button) uses translation keys loaded from `panel.dashboard.*`. Zero hardcoded strings
+
+### Fixed
+
+- **False "possible loop" trigger rate alerts removed** — `_analyze_trigger_rate` was fundamentally flawed: a single `last_triggered` timestamp snapshot cannot measure frequency. An automation triggered 16 seconds ago simply ran recently — that's normal for heating, presence sensors, etc. The method is now a no-op. Structural loop detection (`_detect_potential_loops`) remains active for automations that modify the same entities they trigger on
+- **Renamed scripts still flagged as unused** — `_load_script_configs()` built entity_ids from YAML slugs (`script.{yaml_key}`). If a user renamed the entity_id via Settings → Entities, the old slug-based ID didn't match the new entity_id → script appeared orphaned. Now resolves actual entity_id via the entity registry
+- **Template variables flagged as missing entities** — scripts using `entity_id: "{{ target_device }}"` (Jinja2 template) were added to entity_references as real entity_ids, then flagged as zombie/not found. Script section of `_build_entity_references` now uses `_add_ref()` helper which validates format via `_is_valid_entity_id()`. Templates are rejected
+- **Purge orphans silent failure** — two bugs: (1) JS error handler called `this._this.showToast()` (undefined) instead of `this._showToast()`, swallowing the backend error silently. (2) `instance.get_session()` removed in recent HA versions. Added fallback to `SQLAlchemy Session(bind=instance.engine)`
+- **Blueprint duplicate false positives** — automations using `use_blueprint` excluded from both exact fingerprint (Strategy A) and Jaccard similarity (Strategy B) duplicate detection. Two Frigate automations on different cameras are no longer flagged
+- **Zombie entity false positives** — `_is_valid_entity_id()` rejects device_id hashes (`631e3d...`) and other non-entity strings. Script section also uses the validation helper
+
+### Changed
+
+- **Version**: 1.6.2 → 1.6.3
+- **Tests**: 486 passed, 0 failed, 32 skipped. Updated assertions for: version (1.6.3), `haca_type` in `extra_state_attributes`, `device_class: battery` requirement, translation coverage (17 hints added to FR), `CARDS_URL_BASE` static path, conversation boundary checks
+
+---
+
 ## [1.6.2] — 2026-03-23 — Blueprint fix, i18n cleanup, LLM prompt overhaul, Lovelace tools
 
 ### Added
