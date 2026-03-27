@@ -7,6 +7,32 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ---
 
+## [1.6.3] — 2026-03-25 — Dashboard auto-généré, correction trigger rate, scripts renommés, variables template, purge
+
+### Ajouté
+
+- **Dashboard HACA auto-généré** — bouton "Créer Dashboard" sous les cartes de stats (séparé du bouton Scan pour éviter les erreurs de clic). Utilise les commandes WebSocket natives de HA (`lovelace/dashboards/create` + `lovelace/config/save`) pour que le dashboard apparaisse instantanément dans la barre latérale sans redémarrage. Contient : jauge Score HACA (carte custom), introduction markdown, compteurs d'issues en cartes tile (4 primaires + 4 secondaires + 3 tertiaires en horizontal stacks), alertes batteries + orphelins recorder, graphique historique 7 jours, carte dashboard HACA (custom), et un bouton d'accès au panel. Un re-clic met à jour le dashboard. Traduit en 13 langues
+
+- **Filtres de sévérité** — 3 nouveaux toggles dans l'onglet Configuration pour afficher/masquer les issues par niveau de sévérité (Haute, Moyenne, Basse). Traduit en 13 langues
+- **Bouton dashboard déplacé dans Configuration** — le bouton "Créer Dashboard" est maintenant dans sa propre section en bas de l'onglet Configuration, avec un texte explicatif. Séparé du bouton Scan pour éviter les clics accidentels
+- **Tous les textes du dashboard traduits** — chaque texte du dashboard auto-généré utilise des clés de traduction `panel.dashboard.*`. Zéro texte hardcodé
+
+### Corrigé
+
+- **Fausses alertes "possible loop" supprimées** — `_analyze_trigger_rate` était fondamentalement défectueux : un seul timestamp `last_triggered` ne mesure pas la fréquence. Une automatisation déclenchée il y a 16s a simplement tourné récemment. La détection structurelle de boucle reste active
+- **Scripts renommés toujours signalés comme inutilisés** — `_load_script_configs()` construisait les entity_id depuis les slugs YAML. Si l'utilisateur renommait l'entity_id, l'ancien slug ne correspondait plus. Résolution via le registre d'entités
+- **Variables template signalées comme entités manquantes** — les scripts utilisant `entity_id: "{{ target_device }}"` étaient ajoutés aux références comme de vraies entités. La section scripts utilise maintenant le helper `_add_ref()` qui valide le format
+- **Purge orphelins silencieusement en échec** — deux bugs JS/Python corrigés : `this._this.showToast()` → `this._showToast()`, et fallback session SQLAlchemy pour HA récents
+- **Faux positifs doublons blueprint** — les automatisations `use_blueprint` exclues de la détection de doublons
+- **Faux positifs entités zombies** — validation du format entity_id, rejection des device_id hex
+
+### Modifié
+
+- **Version** : 1.6.2 → 1.6.3
+- **Tests** : 486 passés, 0 échoué, 32 ignorés
+
+---
+
 ## [1.6.2] — 2026-03-23 — Correction blueprint, nettoyage i18n, refonte prompt LLM, outils Lovelace
 
 ### Ajouté
