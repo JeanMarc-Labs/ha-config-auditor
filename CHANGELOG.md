@@ -7,6 +7,51 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.7.0] — 2026-04-01 — Integration Monitor
+
+### Added
+
+- **Integration Monitor tab** — new tab listing all installed integrations with type badges (HACS violet, Core blue, Custom orange, Card rose, Theme green, App gold), in-use/unused status, version, entity count, install age, and documentation links
+- **Supervisor add-ons** — apps are detected via `hassio_supervisor_info` and shown with badge APP and color `rgb(241,196,71)`
+- **Orphan detection** — integrations with entities but no active config entry are flagged with an orange "Orphan" badge
+- **AI analysis** — "Ask AI" button on unused/orphan integrations opens the chat with a structured dependency-check prompt
+- **Export CSV / MD** — full integration list exportable as CSV or as a formatted Markdown report grouped by type
+- **Dashboard stat card** — clickable "Integrations" card (violet) on the main dashboard, links to the tab
+- **Pagination** — 25 items per page with navigation controls
+- **Search & sort** — filter by name/domain, sort by name/type/entities/age
+
+### Changed
+
+- **`unknown_state` check** — now context-aware: domains where unknown is normal (button, event, tts, etc.) are excluded; other domains only flagged if referenced by automations
+- **Blueprint AI prompts** — instructions now explicitly tell the AI to use `ha_create_blueprint()` instead of explaining how to do it manually
+- **Translation placeholders** — fixed `{CATÉGORIE}/{KATEGORIE}/etc.` → `{CATEGORY}` in all 12 non-English languages (HA validation requires identical placeholders)
+
+---
+
+## [1.6.4] — 2026-03-28 — Issue ID system, AI Fix batch, issue catalog
+
+### Added
+
+- **Unique issue IDs** — every detected issue now has a stable, human-readable identifier in the format `HACA-{CATEGORY}-{TYPE}-{HASH6}` (e.g. `HACA-AUTO-NO_ALIAS-a3f2c1`). IDs are displayed in all issue listings (main tabs + compliance table) with click-to-copy. The hash is derived from the entity_id to guarantee uniqueness when multiple entities share the same issue type
+- **`haca_list_issue_catalog` tool** — new MCP/LLM tool that returns the complete HACA issue catalog: all 10 categories with short codes (AUTO, SCRIPT, SCENE, BP, ENT, HELPER, PERF, SEC, DASH, COMPL), all issue types per category (76 types), severity levels, fixable status, and live counts from the current scan
+- **`haca_fix_batch` tool** — new MCP/LLM tool for single or bulk issue fixes. Accepts `issue_id` for single fix, or `category` + `type` + `severity` filters for batch. Always `dry_run=true` by default (preview mode), requires explicit `dry_run=false` after user confirmation
+- **AI Fix Reference panel** — new section in the MCP/AI tab showing the ID format, all category codes, severity levels, and 5 example AI prompts users can copy. Translated in 13 languages
+- **Fixable badge** — issues that can be auto-fixed now display a green "FIXABLE" badge next to their title in all issue listings
+- **Fix workflow in LLM prompt** — the system prompt injected into AI agents now includes the fix workflow (catalog → list → preview → apply). Translated in 13 languages
+
+### Changed
+
+- **Issue IDs in `haca_get_issues` response** — each issue now includes `category` code and the new `HACA-*` format ID (backward-compatible: legacy `entity_id|type` format still accepted)
+- **`haca_get_issues` category filter** — now accepts `helper` and `blueprint` categories (previously missing from enum)
+- **Tool count corrected** — 67 tools (was incorrectly displayed as 65)
+- **MCP system prompt updated** — added FIX SINGLE, FIX BATCH, and CATALOG workflow lines
+
+### Fixed
+
+- **`_find_issue_by_id` backward compatibility** — accepts new `HACA-*` format, legacy `entity_id|type` pipe format, raw entity_id, and alias lookup
+
+---
+
 ## [1.6.3] — 2026-03-25 — Auto-generated dashboard, trigger rate fix, script rename fix, template variable fix, purge fix
 
 ### Added
