@@ -7,6 +7,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.7.1] — 2026-04-03 — Minor fixes
+
+### Fixed
+
+- **Notifications in user's language** — notifications are now in the user's language
+
+---
+
 ## [1.7.0] — 2026-04-01 — Integration Monitor
 
 ### Added

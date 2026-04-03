@@ -6,7 +6,14 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ---
+## [1.7.1] — 2026-04-03 — Corrections mineures
 
+### Corrigé
+
+- **Notifications dans la langue de l'utilisateur** — les notifications sont maintenant dans la langue de l'utilisateur
+
+
+---
 ## [1.7.0] — 2026-04-01 — Moniteur d'intégrations
 
 ### Ajouté
