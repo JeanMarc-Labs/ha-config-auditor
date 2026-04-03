@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.7.0-orange)
+![Version](https://img.shields.io/badge/version-1.7.1-orange)
 ![HA](https://img.shields.io/badge/Home%20Assistant-2024.1+-blue)
 ![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
