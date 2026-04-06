@@ -12,6 +12,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Fixed
 
 - **Notifications in user's language** — notifications are now in the user's language
+- **Orphelins DB issues** — HACA continued to display Orphelins DB issues even after excluding them from the recorder. It is fixed. 
 
 ---
 
