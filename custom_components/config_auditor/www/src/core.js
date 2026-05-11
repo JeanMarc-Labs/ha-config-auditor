@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   if (customElements.get('haca-panel')) return; // already loaded, skip entirely
-  const HACA_VERSION = '1.7.1'; // build marker
+  const HACA_VERSION = '1.7.3'; // build marker
 
   // Dans l'iframe (embed_iframe:true), ha-icon n'est pas enregistré.
   // On copie la définition depuis le document parent où HA l'a déjà défini.
@@ -1567,7 +1567,7 @@
                       <th style="padding:6px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;"></th>
                     </tr></thead>
                     <tbody id="script-complexity-tbody">
-                      <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>
+                      <tr><td colspan="6" style="text-align:center;padding:20px;color:var(--secondary-text-color);">${this.t('misc.run_scan_scores')}</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -1866,7 +1866,7 @@
                   </tr>
                 </thead>
                 <tbody id="history-tbody">
-                  <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('misc.loading')}</td></tr>
+                  <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('misc.loading')}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1997,6 +1997,23 @@
 
             <!-- SubTab: Monitor -->
             <div class="subtab-content active" id="subtab-battery-monitor">
+              <!-- Battery Notes info banner — shown when Battery Notes is NOT installed -->
+              <div id="battery-notes-banner" style="display:none;margin:12px 20px 0;padding:10px 14px;border-radius:10px;background:rgba(33,150,243,0.06);border:1px solid rgba(33,150,243,0.2);font-size:12px;color:var(--secondary-text-color);line-height:1.6;">
+                <div style="display:flex;align-items:flex-start;gap:8px;">
+                  ${_icon('information-outline', 16)}
+                  <div style="flex:1;">
+                    <div style="font-weight:600;color:var(--primary-text-color);margin-bottom:4px;">${this.t('battery.bn_banner_title')}</div>
+                    <div>${this.t('battery.bn_banner_body')}</div>
+                    <div style="margin-top:6px;font-size:11px;opacity:0.85;">
+                      <a href="https://github.com/andrew-codechimp/HA-Battery-Notes" target="_blank" rel="noopener" style="color:var(--primary-color);text-decoration:none;">${this.t('battery.bn_banner_install_link')}</a>
+                      &nbsp;·&nbsp;
+                      <a href="#" id="battery-notes-banner-edit" style="color:var(--primary-color);text-decoration:none;">${this.t('battery.bn_banner_edit_link')}</a>
+                    </div>
+                  </div>
+                  <button id="battery-notes-banner-close" style="background:none;border:none;cursor:pointer;color:var(--secondary-text-color);font-size:16px;padding:0;" title="${this.t('actions.close')}">×</button>
+                </div>
+              </div>
+
               <div class="section-header">
                 <div class="section-header-btns" style="display:flex;align-items:center;gap:10px;">
                   <span id="bat-summary-text" style="font-size:13px;color:var(--secondary-text-color);"></span>
@@ -2016,12 +2033,15 @@
                   <thead>
                     <tr style="border-bottom:2px solid var(--divider-color);">
                       <th style="padding:8px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;">${this.t('tables.device')}</th>
+                      <th style="padding:8px 10px;text-align:left;color:var(--secondary-text-color);font-weight:600;min-width:130px;">${this.t('battery.manufacturer_col')}</th>
                       <th style="padding:8px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;min-width:120px;">${this.t('tables.level_col')}</th>
+                      <th style="padding:8px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;min-width:80px;" title="${this.t('battery.battery_notes_tooltip')}">${this.t('battery.type_col')} ${_icon('battery-unknown',12)}</th>
+                      <th style="padding:8px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;min-width:100px;" title="${this.t('battery.last_replaced_col')}">${this.t('battery.last_replaced_col')} ${_icon('calendar-check',12)}</th>
                       <th style="padding:8px 10px;text-align:center;color:var(--secondary-text-color);font-weight:600;min-width:90px;">${this.t('tables.status_col')}</th>
                     </tr>
                   </thead>
                   <tbody id="bat-tbody">
-                    <tr><td colspan="3" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('battery.run_scan')}</td></tr>
+                    <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--secondary-text-color);">${this.t('battery.run_scan')}</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -2242,6 +2262,23 @@
 
       // "Vue complète" in batteries mini-panel → go to batteries tab
       this.shadowRoot.querySelector('#goto-batteries-tab')?.addEventListener('click', () => this.switchTab('batteries'));
+
+      // ── Battery Notes banner: close + edit-library modal ─────────────
+      this.shadowRoot.querySelector('#battery-notes-banner-close')?.addEventListener('click', () => {
+        this._bnBannerDismissed = true;
+        const banner = this.shadowRoot.querySelector('#battery-notes-banner');
+        if (banner) banner.style.display = 'none';
+      });
+      this.shadowRoot.querySelector('#battery-notes-banner-edit')?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        let info = { seed_path: '', user_path: '' };
+        try {
+          info = await this.hass.callWS({ type: 'haca/get_battery_library_info' });
+        } catch (err) {
+          // ignore — modal still works without the paths
+        }
+        this._showBatteryLibraryModal(info);
+      });
 
       // Integrations stat card → go to integrations tab
       this.shadowRoot.querySelector('#integrations-stat-btn')?.addEventListener('click', () => this.switchTab('integrations'));
@@ -2753,6 +2790,83 @@
       this.shadowRoot.querySelector(`#subtab-${subtabName}`)?.classList.add('active');
     }
 
+    _showBatteryLibraryModal(info) {
+      const seedPath = (info && info.seed_path) || '<config>/custom_components/config_auditor/data/battery_library_seed.json';
+      const newEntryExample = JSON.stringify(
+        { manufacturer: "Aqara", model: "Door and Window Sensor", battery_type: "CR1632", battery_quantity: 1 },
+        null, 2
+      );
+
+      // Remove any existing modal
+      this.shadowRoot.querySelector('#haca-bn-edit-modal')?.remove();
+
+      const modal = document.createElement('div');
+      modal.id = 'haca-bn-edit-modal';
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+      modal.innerHTML = `
+        <div style="background:var(--card-background-color);border-radius:12px;max-width:720px;width:100%;max-height:90vh;overflow-y:auto;padding:20px 24px;box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            ${_icon('book-open-variant', 22)}
+            <h3 style="margin:0;flex:1;font-size:17px;color:var(--primary-text-color);">${this.t('battery.bn_edit_modal_title')}</h3>
+            <button id="haca-bn-modal-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--secondary-text-color);padding:0 4px;">×</button>
+          </div>
+
+          <div style="font-size:13px;line-height:1.7;color:var(--primary-text-color);margin-bottom:18px;">
+            ${this.escapeHtml(this.t('battery.bn_edit_modal_body'))}
+          </div>
+
+          <div style="font-size:13px;font-weight:700;color:var(--primary-text-color);margin-bottom:6px;">1. ${this.t('battery.bn_step1_title')}</div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">${this.t('battery.bn_step1_detail')}</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;">
+            <code id="haca-bn-seed-path" style="flex:1;background:var(--secondary-background-color);padding:8px 12px;border-radius:8px;font-size:12px;word-break:break-all;color:var(--primary-text-color);">${this.escapeHtml(seedPath)}</code>
+            <button class="haca-bn-copy-btn" data-target="path" style="background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:6px 8px;cursor:pointer;color:var(--primary-text-color);" title="${this.t('mcp.copy')}">${_icon('content-copy', 14)}</button>
+          </div>
+
+          <div style="font-size:13px;font-weight:700;color:var(--primary-text-color);margin-bottom:6px;">2. ${this.t('battery.bn_step2_title')}</div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:6px;">${this.t('battery.bn_step2_detail')}</div>
+          <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">
+            <pre id="haca-bn-example" style="flex:1;background:var(--secondary-background-color);padding:10px 14px;border-radius:8px;font-size:11px;line-height:1.5;overflow-x:auto;color:var(--primary-text-color);margin:0;">${this.escapeHtml(newEntryExample)}</pre>
+            <button class="haca-bn-copy-btn" data-target="example" style="background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:6px;padding:6px 8px;cursor:pointer;color:var(--primary-text-color);flex-shrink:0;" title="${this.t('mcp.copy')}">${_icon('content-copy', 14)}</button>
+          </div>
+
+          <div style="font-size:11px;color:var(--secondary-text-color);margin-top:8px;line-height:1.6;">
+            <div style="margin-bottom:4px;"><strong>${this.t('battery.bn_fields_label')}</strong></div>
+            <div>• <code>manufacturer</code>, <code>model</code>: ${this.t('battery.bn_field_mfr_help')}</div>
+            <div>• <code>battery_type</code>: ${this.t('battery.bn_field_type_help')}</div>
+            <div>• <code>battery_quantity</code>: ${this.t('battery.bn_field_qty_help')}</div>
+            <div>• <code>model_match_method</code>: ${this.t('battery.bn_field_match_help')}</div>
+          </div>
+
+          <div style="font-size:13px;font-weight:700;color:var(--primary-text-color);margin:18px 0 6px;">3. ${this.t('battery.bn_step3_title')}</div>
+          <div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:14px;">${this.t('battery.bn_step3_detail')}</div>
+
+          <div style="font-size:11px;color:#ff9800;margin-top:14px;font-style:italic;border-top:1px solid var(--divider-color);padding-top:10px;">
+            ⚠️ ${this.t('battery.bn_warning_overwrite')}
+          </div>
+        </div>
+      `;
+      this.shadowRoot.appendChild(modal);
+
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      modal.querySelector('#haca-bn-modal-close')?.addEventListener('click', () => modal.remove());
+
+      // Wire copy buttons
+      modal.querySelectorAll('.haca-bn-copy-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const target = btn.dataset.target;
+          const text = target === 'path' ? seedPath : newEntryExample;
+          try {
+            window._hacaCopy ? window._hacaCopy(text) : await navigator.clipboard.writeText(text);
+            this._showToast(this.t('notifications.copied') || 'Copied');
+          } catch {
+            this._showToast(this.t('notifications.copy_failed') || 'Copy failed', 'error');
+          }
+        });
+      });
+    }
+
+
+
     // ─── Onglet Configuration ──────────────────────────────────────────────
 
     async loadConfigTab() {
@@ -3219,11 +3333,14 @@
         hsCard.style.borderLeft = `5px solid ${col}`;
       }
 
-      // Update Issues tab badge with total issue count
-      const totalIssues = (data.automation_issues || 0) + (data.script_issues || 0)
-        + (data.scene_issues || 0) + (data.entity_issues || 0) + (data.helper_issues || 0)
-        + (data.performance_issues || 0)
-        + (data.security_issues || 0) + (data.blueprint_issues || 0) + (data.dashboard_issues || 0);
+      // Stat cards + Issues tab badge — read directly from the per-category
+      // counts the backend reports.
+      const totalIssues =
+        (data.automation_issues || 0) + (data.script_issues || 0)
+        + (data.scene_issues || 0) + (data.entity_issues || 0)
+        + (data.helper_issues || 0) + (data.performance_issues || 0)
+        + (data.security_issues || 0) + (data.blueprint_issues || 0)
+        + (data.dashboard_issues || 0);
       const issuesTab = this.shadowRoot.querySelector('.tabs .tab[data-tab="issues"]');
       if (issuesTab) {
         const existingBadge = issuesTab.querySelector('.tab-badge-wrap');
@@ -3238,15 +3355,15 @@
 
       // Load sparkline (async, non-blocking)
       this._loadSparkline();
-      safeSetText('auto-count', data.automation_issues || 0);
-      safeSetText('script-count', data.script_issues || 0);
-      safeSetText('scene-count', data.scene_issues || 0);
-      safeSetText('entity-count', data.entity_issues || 0);
-      safeSetText('helper-count', data.helper_issues || 0);
-      safeSetText('perf-count', data.performance_issues || 0);
+      safeSetText('auto-count',     data.automation_issues || 0);
+      safeSetText('script-count',   data.script_issues || 0);
+      safeSetText('scene-count',    data.scene_issues || 0);
+      safeSetText('entity-count',   data.entity_issues || 0);
+      safeSetText('helper-count',   data.helper_issues || 0);
+      safeSetText('perf-count',     data.performance_issues || 0);
       safeSetText('security-count', data.security_issues || 0);
-      safeSetText('blueprint-count', data.blueprint_issues || 0);
-      safeSetText('dashboard-count', data.dashboard_issues || 0);
+      safeSetText('blueprint-count',data.blueprint_issues || 0);
+      safeSetText('dashboard-count',data.dashboard_issues || 0);
 
       // ── Recorder orphans ──────────────────────────────────────────────
       this._lastScanData = data;
