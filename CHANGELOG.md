@@ -4,6 +4,47 @@ All notable changes to this project are documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
+---
+## [1.7.3] — 2026-05-11 — Recorder excludes, battery library, full translation pass
+
+### Added
+
+- **Exclude from Recorder** — green button on each `noisy_entity` issue writes the entity to `recorder.exclude.entities` in `configuration.yaml` (timestamped backup, comments preserved via ruamel.yaml, validated with `homeassistant.check_config`, auto-rollback on failure)
+- **Autonomous battery library** — bundled seed file (~50 brands), optional Battery Notes enrichment, in-app library editor, manufacturer/model column, per-row "Mark as replaced" button
+- **Live noisy-entity tracker** — in-memory state-change counter complements the recorder DB so an entity removed from `configuration.yaml` reappears at the next scan, without restarting Home Assistant
+- **DB orphans sortable + tab badge** — sort by size or name; the Database tab icon shows a red count badge
+
+### Changed
+
+- **`configuration.yaml` is the authoritative source for recorder excludes** — read at every scan with HA-tag-aware PyYAML; takes precedence over the startup-cached recorder filter
+- **Translations** — full pass across all 13 languages: panel UI, HACA Configuration tab, severity filters and badges, issue types/hints/categories, MCP tool categories, PDF report sections, post-report notification, weekly report, compliance and battery-prediction views (~700 entries)
+- **`haca_id`** stable hash on `entity_id | type | location` for unique per-issue addressing
+
+### Removed
+
+- **Per-issue Ignore feature** — replaced by Exclude from Recorder (scoped to `noisy_entity` issues only)
+
+### Fixed
+
+- Excluded entity not reappearing after manual removal from `configuration.yaml`
+- Hardcoded English severity badges (`HIGH/MEDIUM/LOW`) and hardcoded French MCP category titles in the AI fix-reference card
+- Several stat-card and notification strings still in English in Danish / Swedish / German
+- `device_id` fixes preserve `continue_on_error` / `enabled` / `alias` and merge extra fields (`preset_mode`, `brightness`) into `data`
+- Fix button now targets a single action via `location`, not the whole automation
+- Duplicate repair-advice text removed; tab switching auto-scrolls into view on small screens
+
+---
+
+## [1.7.2] — 2026-04-26 — Minor fixes
+
+---
+
+## [1.7.1] — 2026-04-03 — Minor fixes
+
+### Fixed
+
+- **Notifications in user's language** — notifications are now in the user's language
+- **Orphelins DB issues** — HACA continued to display Orphelins DB issues even after excluding them from the recorder. It is fixed. 
 
 ---
 
