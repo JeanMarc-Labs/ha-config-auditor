@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
+## [1.7.4] — 2026-05-12 — Battery library extended, dashboard scan cleanup
+
+### Added
+
+- **Bundled battery library extended to ~2140 devices** — Single source of truth, no external integration needed.
+
+### Changed
+
+- **Dashboard analyzer** now only scans `.storage/lovelace.<id>` files registered in `.storage/lovelace_dashboards`. Orphan / backup files are ignored — eliminates false-positive "missing entity" issues that flooded the HA Repairs panel.
+
+### Removed
+
+- **Battery Notes runtime support** — `sensor.*_battery_plus` scan, install banner, `battery_notes_tooltip`, and related translation keys. HACA's own `battery_last_replaced` storage and the bundled library fully replace it.
+
+---
 ## [1.7.3] — 2026-05-11 — Recorder excludes, battery library, full translation pass
 
 ### Added

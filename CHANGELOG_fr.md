@@ -5,6 +5,21 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
+## [1.7.4] — 2026-05-12 — Fusion de la bibliothèque batteries, nettoyage du scan dashboards
+
+### Ajouté
+
+- **Bibliothèque de piles embarquée étendue à ~2140 appareils** — Source unique, plus besoin d'intégration externe.
+
+### Modifié
+
+- **Analyseur de dashboards** : ne scanne plus que les fichiers `.storage/lovelace.<id>` enregistrés dans `.storage/lovelace_dashboards`. Les fichiers orphelins / backups sont ignorés — élimine les faux positifs « entité manquante » qui inondaient le panneau HA Repairs.
+
+### Supprimé
+
+- **Support runtime Battery Notes** — scan `sensor.*_battery_plus`, bannière d'installation, `battery_notes_tooltip` et clés de traduction associées. Le stockage `battery_last_replaced` natif HACA et la bibliothèque embarquée prennent entièrement le relais.
+
+---
 ## [1.7.3] — 2026-05-11 — Exclusion Recorder, bibliothèque batteries, passe de traductions complète
 
 ### Ajouté
