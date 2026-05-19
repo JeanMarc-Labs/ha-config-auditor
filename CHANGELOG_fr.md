@@ -19,6 +19,10 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 - **Support runtime Battery Notes** — scan `sensor.*_battery_plus`, bannière d'installation, `battery_notes_tooltip` et clés de traduction associées. Le stockage `battery_last_replaced` natif HACA et la bibliothèque embarquée prennent entièrement le relais.
 
+### Corrigé
+
+- **Critique : des clics concurrents sur « Exclure du Recorder » pouvaient vider `configuration.yaml`** et ne laisser qu'une section `recorder:` nue. Trois défenses ajoutées : un `asyncio.Lock` qui sérialise toute la séquence édition/validation, refus d'écrire si le YAML se charge à vide, et écriture atomique via `os.replace` pour qu'aucun lecteur ne voie un fichier tronqué.
+
 ---
 ## [1.7.3] — 2026-05-11 — Exclusion Recorder, bibliothèque batteries, passe de traductions complète
 
