@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import re
 from datetime import datetime, timedelta
@@ -10,6 +11,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from .const import (
+    DOMAIN,
     ISSUE_HIGH_FREQUENCY,
     ISSUE_VERY_HIGH_FREQUENCY,
     ISSUE_BURST_PATTERN,
@@ -19,6 +21,37 @@ from .const import (
     BURST_WINDOW_MINUTES,
 )
 from .translation_utils import TranslationHelper
+
+
+def _get_noisy_exclude_patterns(hass: HomeAssistant) -> list[str]:
+    """Return user-defined glob patterns to skip in the noisy entity scan.
+
+    Patterns are stored in the first HACA config entry options under
+    ``noisy_scan_exclude_patterns``. Empty / whitespace lines are ignored.
+    Returns ``[]`` if no entry or no patterns are configured.
+    """
+    try:
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            raw = entry.options.get("noisy_scan_exclude_patterns") or []
+            if isinstance(raw, str):
+                raw = raw.splitlines()
+            return [p.strip() for p in raw if isinstance(p, str) and p.strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _matches_noisy_exclude(entity_id: str, patterns: list[str]) -> bool:
+    """True if ``entity_id`` matches any of the user-defined glob patterns."""
+    if not patterns:
+        return False
+    for pat in patterns:
+        try:
+            if fnmatch.fnmatchcase(entity_id, pat):
+                return True
+        except Exception:
+            continue
+    return False
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -392,11 +425,25 @@ class PerformanceAnalyzer:
         except ImportError:
             _has_recorder_filter = False
 
+        # User-defined noisy-scan exclusions: glob patterns + haca_ignore label.
+        # Both are checked before the recorder filter so excluded entities never
+        # appear as a noisy_entity issue, even if they're still being recorded.
+        _exclude_patterns = _get_noisy_exclude_patterns(self.hass)
+        try:
+            from .translation_utils import async_get_haca_ignored_entity_ids
+            _ignored_entities = await async_get_haca_ignored_entity_ids(self.hass)
+        except Exception:
+            _ignored_entities = set()
+
         for entity_id, count in noisy_results:
             domain = entity_id.split(".")[0]
             if domain in _NOISY_SKIP_DOMAINS:
                 continue
             if entity_id.startswith("sensor.h_a_c_a_"):
+                continue
+            if entity_id in _ignored_entities:
+                continue
+            if _matches_noisy_exclude(entity_id, _exclude_patterns):
                 continue
 
             if _yaml_authoritative:

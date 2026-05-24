@@ -1274,6 +1274,7 @@ async def handle_save_options(
         "notify_medium_severity",  # false (default) — persistent notification for MEDIUM issues
         "notify_low_severity",     # false (default) — persistent notification for LOW issues
         "battery_last_replaced",   # dict {entity_id: ISO datetime} — battery replacement tracking
+        "noisy_scan_exclude_patterns",  # list[str] — glob patterns to skip in noisy entity scan
     }
     for key, value in incoming.items():
         if key in ALLOWED_KEYS and value is not None:  # ignorer les None (token non modifié)
