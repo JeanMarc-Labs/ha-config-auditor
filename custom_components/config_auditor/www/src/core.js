@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   if (customElements.get('haca-panel')) return; // already loaded, skip entirely
-  const HACA_VERSION = '1.7.4'; // build marker
+  const HACA_VERSION = '1.7.5'; // build marker
 
   // Dans l'iframe (embed_iframe:true), ha-icon n'est pas enregistré.
   // On copie la définition depuis le document parent où HA l'a déjà défini.
@@ -3126,6 +3126,42 @@
         debugToggle.checked = !!(options.debug_mode);
         window.__haca_debug_mode = debugToggle.checked;
       }
+
+      // Noisy-scan exclude-patterns: live test button (no save needed)
+      el.querySelector('#cfg-noisy-exclude-test-btn')?.addEventListener('click', () => {
+        const input = el.querySelector('#cfg-noisy-exclude-test');
+        const ta = el.querySelector('#cfg-noisy-exclude-patterns');
+        const out = el.querySelector('#cfg-noisy-exclude-test-result');
+        if (!input || !ta || !out) return;
+        const entityId = (input.value || '').trim();
+        if (!entityId) {
+          out.textContent = '';
+          return;
+        }
+        const patterns = ta.value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+        // fnmatch-style: * matches anything, ? matches one char, [...] charset
+        const toRegex = (pat) => {
+          let re = '';
+          for (let i = 0; i < pat.length; i++) {
+            const c = pat[i];
+            if (c === '*') re += '.*';
+            else if (c === '?') re += '.';
+            else if ('\\^$+()|{}.'.indexOf(c) !== -1) re += '\\' + c;
+            else re += c;
+          }
+          return new RegExp('^' + re + '$');
+        };
+        const matched = patterns.find(p => {
+          try { return toRegex(p).test(entityId); } catch (e) { return false; }
+        });
+        if (matched) {
+          out.textContent = '✓ ' + this.t('config.noisy_exclude_test_match').replace('{pattern}', matched);
+          out.style.color = 'var(--success-color, #15803d)';
+        } else {
+          out.textContent = '✗ ' + this.t('config.noisy_exclude_test_no_match');
+          out.style.color = 'var(--error-color, #dc2626)';
+        }
+      });
 
       // Dashboard creation button (in config tab)
       el.querySelector('#cfg-create-dashboard-btn')?.addEventListener('click', async () => {
