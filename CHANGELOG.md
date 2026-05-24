@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
+## [1.7.5] — 2026-05-24 — Noisy-scan exclude patterns, security false positive fix, optimizer fix
+
+### Added
+
+- **Noisy entity scan: per-pattern exclusions** — New Configuration section "Exclude from Noisy Entity scan". Accepts one glob per line (`sensor.browser_mod_*`, `device_tracker.*`, `*_motion`). Skipped entities keep their full Recorder history (unlike Recorder excludes). Live `Test` field to check an `entity_id` against current patterns. The `haca_ignore` label is now also honoured by the noisy scan.
+- **Per-issue "Ignore (noisy)" button** — Orange button on every `noisy_entity` issue card (next to "Exclude from Recorder"). One click appends the literal `entity_id` to the noisy-scan exclusion list and fades the card out. Dedup: if any existing pattern (literal or glob) already covers the entity, the button is a no-op and the toast reports which pattern matched. The textarea above remains for power users adding glob families in bulk.
+
+### Fixed
+
+- **`sensitive_data_exposure` false positive on snake_case identifiers** — The detection regex flagged any 16-char alphanumeric string, catching HA Mobile App protocol values such as `clear_notification` (used to dismiss notifications by tag). Tightened: pure snake_case (no uppercase) is excluded, plus an allowlist of known HA Mobile App constants. The same heuristic is now shared by the hardcoded-secret and notification-exposure scans.
+- **`AutomationOptimizer.optimize` crashed with `AttributeError: '_build_content'`** — `_build_prompt` referenced a method that was never defined and a variable that was not in scope, so every "Optimise this automation" call failed. The prompt content is now built inline from the locals the function already computed.
+
+---
 ## [1.7.4] — 2026-05-12 — Battery library extended, dashboard scan cleanup
 
 ### Added
