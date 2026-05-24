@@ -5,6 +5,19 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
+## [1.7.5] — 2026-05-24 — Patterns d'exclusion scan noisy, faux positif sécurité, fix optimizer
+
+### Ajouté
+
+- **Scan entités bruyantes : exclusions par pattern** — Nouvelle section Configuration « Exclure du scan Entités bruyantes ». Accepte un glob par ligne (`sensor.browser_mod_*`, `device_tracker.*`, `*_motion`). Les entités exclues conservent leur historique Recorder complet (contrairement à l'exclusion Recorder). Champ `Tester` live pour vérifier un `entity_id` contre les patterns courants. Le label `haca_ignore` est désormais respecté par le scan noisy également.
+- **Bouton « Ignorer (bruit) » par issue** — Bouton orange sur chaque carte d'issue `noisy_entity` (à côté d'« Exclure du Recorder »). Un clic ajoute l'`entity_id` littéral à la liste d'exclusion du scan noisy et fait fader la carte. Dédup : si un pattern existant (littéral ou glob) couvre déjà l'entité, le bouton no-op et le toast indique quel pattern matche. Le textarea reste pour les utilisateurs avancés qui ajoutent des familles de globs en masse.
+
+### Corrigé
+
+- **Faux positif `sensitive_data_exposure` sur les identifiants snake_case** — La regex de détection flaggait toute chaîne alphanumérique de 16+ caractères, attrapant les constantes du protocole Mobile App telles que `clear_notification` (utilisé pour dismiss les notifications par tag). Resserrée : le snake_case pur (sans majuscule) est exclu, plus une allowlist des constantes Mobile App connues. La même heuristique est désormais partagée par les scans hardcoded-secret et notification-exposure.
+- **`AutomationOptimizer.optimize` crashait avec `AttributeError: '_build_content'`** — `_build_prompt` référençait une méthode jamais définie et une variable hors-scope, donc tous les appels « Optimiser cette automation » échouaient. Le contenu du prompt est désormais construit en inline depuis les variables locales déjà calculées.
+
+---
 ## [1.7.4] — 2026-05-12 — Fusion de la bibliothèque batteries, nettoyage du scan dashboards
 
 ### Ajouté
