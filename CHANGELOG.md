@@ -12,6 +12,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Noisy entity scan: per-pattern exclusions** — New Configuration section "Exclude from Noisy Entity scan". Accepts one glob per line (`sensor.browser_mod_*`, `device_tracker.*`, `*_motion`). Skipped entities keep their full Recorder history (unlike Recorder excludes). Live `Test` field to check an `entity_id` against current patterns. The `haca_ignore` label is now also honoured by the noisy scan.
 - **Per-issue "Ignore (noisy)" button** — Orange button on every `noisy_entity` issue card (next to "Exclude from Recorder"). One click appends the literal `entity_id` to the noisy-scan exclusion list and fades the card out. Dedup: if any existing pattern (literal or glob) already covers the entity, the button is a no-op and the toast reports which pattern matched. The textarea above remains for power users adding glob families in bulk.
 
+### Changed
+
+- **Frontend cache-bust now uses a hashed filename, not a query string.** Several users on 1.7.5 reported seeing the new `v1.7.5` header (translations are loaded fresh via WebSocket on every visit) but no new "Hide entities from the Noisy Entity scan" section (the bundle JS was served from cache). The query-string bust (`haca-panel.js?v=<hash>`) was being ignored by the HA frontend service worker on those installs. The build script now emits `haca-panel.<hash>.js` alongside `haca-panel.js`, and `custom_panel.py` registers the hashed URL — the URL itself changes with every rebuild, so neither browser nor service-worker cache can serve a stale copy. Older `haca-panel.<oldhash>.js` files are auto-cleaned on rebuild.
+
 ### Fixed
 
 - **`sensitive_data_exposure` false positive on snake_case identifiers** — The detection regex flagged any 16-char alphanumeric string, catching HA Mobile App protocol values such as `clear_notification` (used to dismiss notifications by tag). Tightened: pure snake_case (no uppercase) is excluded, plus an allowlist of known HA Mobile App constants. The same heuristic is now shared by the hardcoded-secret and notification-exposure scans.
