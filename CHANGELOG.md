@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.7.5] — 2026-05-24 — Noisy-scan exclude patterns, security false positive fix, optimizer fix
+## [1.7.5] — 2026-05-27 — Noisy-scan exclude patterns, security false positive fix, optimizer fix
 
 ### Added
 

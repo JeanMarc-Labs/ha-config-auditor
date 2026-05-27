@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.7.5] — 2026-05-24 — Patterns d'exclusion scan noisy, faux positif sécurité, fix optimizer
+## [1.7.5] — 2026-05-27 — Patterns d'exclusion scan noisy, faux positif sécurité, fix optimizer
 
 ### Ajouté
 
