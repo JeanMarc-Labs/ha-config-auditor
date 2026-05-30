@@ -397,25 +397,29 @@ class PerformanceAnalyzer:
         # we fall back to the live recorder filter, which reflects the
         # state HA loaded at startup.
         _yaml_excluded: set[str] = set()
+        _yaml_globs: list[str] = []
+        _yaml_domains: set[str] = set()
         _yaml_authoritative = False
         try:
-            from .recorder_yaml_editor import async_get_recorder_excluded_entities
-            _yaml_excluded, _yaml_authoritative = (
-                await async_get_recorder_excluded_entities(self.hass)
+            from .recorder_yaml_editor import async_get_recorder_excludes
+            _yaml_excluded, _yaml_globs, _yaml_domains, _yaml_authoritative = (
+                await async_get_recorder_excludes(self.hass)
             )
         except Exception as exc:
             _LOGGER.warning(
                 "[HACA] recorder YAML read failed: %s — falling back to is_entity_recorded",
                 exc,
             )
-            _yaml_excluded, _yaml_authoritative = set(), False
+            _yaml_excluded, _yaml_globs, _yaml_domains, _yaml_authoritative = set(), [], set(), False
 
         # Visible (INFO) log so the user can confirm what HACA sees on each
-        # scan — essential when diagnosing "I removed the entity from the
-        # YAML but the issue still doesn't reappear".
+        # scan — essential when diagnosing "I added a glob in configuration.yaml
+        # but HACA still flags my entity".
         _LOGGER.info(
-            "[HACA] recorder excludes from configuration.yaml: %s (authoritative=%s)",
+            "[HACA] recorder excludes from configuration.yaml: entities=%s globs=%s domains=%s (authoritative=%s)",
             sorted(_yaml_excluded) if _yaml_excluded else "<empty>",
+            _yaml_globs or "<empty>",
+            sorted(_yaml_domains) if _yaml_domains else "<empty>",
             _yaml_authoritative,
         )
 
@@ -447,15 +451,26 @@ class PerformanceAnalyzer:
                 continue
 
             if _yaml_authoritative:
-                # YAML is the single source of truth. Skip if-and-only-if
-                # the entity is in recorder.exclude.entities right now.
+                # YAML is the single source of truth. Skip if the entity
+                # is excluded by ANY mechanism the user can write in
+                # recorder.exclude: explicit entity, domain match, or
+                # any of the entity_globs (HA's own fnmatch semantics).
                 if entity_id in _yaml_excluded:
                     continue
+                if domain in _yaml_domains:
+                    continue
+                if any(fnmatch.fnmatchcase(entity_id, g) for g in _yaml_globs):
+                    continue
             else:
-                # YAML couldn't tell us authoritatively. Honour both the
-                # in-list check (still useful when YAML is partial) and
-                # the runtime recorder filter (HA's startup view).
+                # YAML couldn't tell us authoritatively. Honour the in-list
+                # check (still useful when YAML is partial) and defer to
+                # the runtime recorder filter (HA's startup view), which
+                # already knows about entities + globs + domains.
                 if entity_id in _yaml_excluded:
+                    continue
+                if domain in _yaml_domains:
+                    continue
+                if any(fnmatch.fnmatchcase(entity_id, g) for g in _yaml_globs):
                     continue
                 if _has_recorder_filter:
                     try:
