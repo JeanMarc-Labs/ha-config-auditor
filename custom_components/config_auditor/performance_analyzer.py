@@ -304,8 +304,13 @@ class PerformanceAnalyzer:
 
             try:
                 with inst.engine.connect() as conn:
+                    # Fresh read transaction: roll back any idle snapshot the
+                    # pool handed us, then let the SELECT open a new one.
+                    # Never BEGIN IMMEDIATE here — it takes a write lock, and
+                    # the aggregate below scans `states` over a 24h window,
+                    # which would block the recorder from committing.
                     try:
-                        conn.execute(text("BEGIN IMMEDIATE"))
+                        conn.rollback()
                     except Exception:
                         pass
 
