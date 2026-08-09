@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
+## [1.7.6] — 2026-08-09 — Recorder orphan selection fix
+
+### Fixed
+
+- **Recorder orphans: every automatic scan re-selected the whole list** — Checkboxes were rendered `checked` by default and the table is re-rendered on every scan result, so a background scan landing mid-selection silently re-ticked all rows and "Purge selection" could target entities the user never picked. Nothing is pre-selected any more.
+
+### Changed
+
+- **Orphan selection is now persistent** — It survives scans, pagination and re-sorting. The header checkbox reflects the current page (indeterminate when partial), a `{n} selected` counter shows the global selection, and "Purge selection" acts on that global selection instead of only the visible page.
+
+### Note
+
+- **Text looking greyer since 1.7.5 is expected.** `_syncTheme()` now propagates HA's inline `<html>` theme variables into the panel iframe, so HACA finally follows custom themes like a native card. Previously those variables never reached the iframe and the panel fell back to a hardcoded near-black. Adjust `primary-text-color` / `secondary-text-color` in your theme if you want a darker rendering.
+
+---
 ## [1.7.5] — 2026-08-05 — Noisy-scan exclude patterns, dark mode, security false positive fix, optimizer fix
 
 ### Added
