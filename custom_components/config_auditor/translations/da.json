@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant konfigurations-auditor",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Fuld skanning",
       "automations": "Automatiseringer",
@@ -537,7 +537,8 @@
       "estimated_total": "Anslået total: ~{mb} MB for {count} enhed(er)",
       "subtab_orphans": "DB-forældreløse",
       "subtab_impact": "DB-påvirkning",
-      "orphan_badge": "{count} forældreløs(e) · ~{mb} MB"
+      "orphan_badge": "{count} forældreløs(e) · ~{mb} MB",
+      "selected_count": "{n} valgt"
     },
     "graph": {
       "title": "Afhængighedsgraf",

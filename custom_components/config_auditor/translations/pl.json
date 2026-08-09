@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Audytor konfiguracji Home Assistant",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Pełne skanowanie",
       "automations": "Automatyzacje",
@@ -537,7 +537,8 @@
       "estimated_total": "Szacowany łącznie: ~{mb} MB dla {count} encji",
       "subtab_orphans": "Sieroty DB",
       "subtab_impact": "Wpływ DB",
-      "orphan_badge": "{count} osierocony/e · ~{mb} MB"
+      "orphan_badge": "{count} osierocony/e · ~{mb} MB",
+      "selected_count": "Zaznaczono: {n}"
     },
     "graph": {
       "title": "Graf zależności",

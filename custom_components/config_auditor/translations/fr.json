@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Auditeur de configuration Home Assistant",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Scan Complet",
       "automations": "Automatisations",
@@ -537,7 +537,8 @@
       "estimated_total": "Total estimé : ~{mb} MB sur {count} entité(s)",
       "subtab_orphans": "Orphelins DB",
       "subtab_impact": "Impact DB",
-      "orphan_badge": "{count} orphelin(s) · ~{mb} MB"
+      "orphan_badge": "{count} orphelin(s) · ~{mb} MB",
+      "selected_count": "{n} sélectionnée(s)"
     },
     "graph": {
       "title": "Graphe de Dépendances",

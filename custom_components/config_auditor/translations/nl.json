@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant configuratie-auditor",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Volledige scan",
       "automations": "Automatiseringen",
@@ -537,7 +537,8 @@
       "estimated_total": "Geschat totaal: ~{mb} MB over {count} entiteit(en)",
       "subtab_orphans": "DB-wezen",
       "subtab_impact": "DB-impact",
-      "orphan_badge": "{count} wees(entiteit) · ~{mb} MB"
+      "orphan_badge": "{count} wees(entiteit) · ~{mb} MB",
+      "selected_count": "{n} geselecteerd"
     },
     "graph": {
       "title": "Afhankelijkheidsgrafiek",

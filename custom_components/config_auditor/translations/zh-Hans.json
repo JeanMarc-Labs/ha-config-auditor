@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant 配置审计器",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "全面扫描",
       "automations": "自动化",
@@ -537,7 +537,8 @@
       "estimated_total": "估计总计：约 {mb} MB，覆盖 {count} 个实体",
       "subtab_orphans": "孤立记录",
       "subtab_impact": "数据库影响",
-      "orphan_badge": "{count} 孤立条目 · ~{mb} MB"
+      "orphan_badge": "{count} 孤立条目 · ~{mb} MB",
+      "selected_count": "已选择 {n} 项"
     },
     "graph": {
       "title": "依赖关系图",
