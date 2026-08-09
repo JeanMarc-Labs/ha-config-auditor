@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Аудитор конфигураций Home Assistant",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Полное сканирование",
       "automations": "Автоматизации",
@@ -537,7 +537,8 @@
       "estimated_total": "Оценочно всего: ~{mb} МБ по {count} сущности(ям)",
       "subtab_orphans": "Сироты БД",
       "subtab_impact": "Влияние БД",
-      "orphan_badge": "{count} сирот · ~{mb} MB"
+      "orphan_badge": "{count} сирот · ~{mb} MB",
+      "selected_count": "Выбрано: {n}"
     },
     "graph": {
       "title": "Граф зависимостей",

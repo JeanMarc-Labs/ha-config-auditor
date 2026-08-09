@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant Config Auditor",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Full Scan",
       "automations": "Automations",
@@ -537,7 +537,8 @@
       "estimated_total": "Estimated total: ~{mb} MB across {count} entity/entities",
       "subtab_orphans": "DB Orphans",
       "subtab_impact": "DB Impact",
-      "orphan_badge": "{count} orphan(s) · ~{mb} MB"
+      "orphan_badge": "{count} orphan(s) · ~{mb} MB",
+      "selected_count": "{n} selected"
     },
     "graph": {
       "title": "Dependency Graph",

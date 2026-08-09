@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant 設定監査ツール",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "完全スキャン",
       "automations": "オートメーション",
@@ -537,7 +537,8 @@
       "estimated_total": "推定合計: 約 {mb} MB / {count} エンティティ",
       "subtab_orphans": "DB Orphans",
       "subtab_impact": "DB Impact",
-      "orphan_badge": "{count} 孤立エンティティ · ~{mb} MB"
+      "orphan_badge": "{count} 孤立エンティティ · ~{mb} MB",
+      "selected_count": "{n} 件選択中"
     },
     "graph": {
       "title": "依存関係グラフ",

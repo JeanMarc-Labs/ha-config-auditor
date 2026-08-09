@@ -104,7 +104,7 @@
   "panel": {
     "title": "H.A.C.A",
     "subtitle": "Home Assistant konfigurationsgranskare",
-    "version": "v1.7.5",
+    "version": "v1.7.6",
     "buttons": {
       "scan_all": "Fullständig skanning",
       "automations": "Automationer",
@@ -537,7 +537,8 @@
       "estimated_total": "Uppskattad total: ~{mb} MB för {count} enhet(er)",
       "subtab_orphans": "DB-föräldralösa",
       "subtab_impact": "DB-påverkan",
-      "orphan_badge": "{count} föräldralös/a · ~{mb} MB"
+      "orphan_badge": "{count} föräldralös/a · ~{mb} MB",
+      "selected_count": "{n} valda"
     },
     "graph": {
       "title": "Beroendegraf",
