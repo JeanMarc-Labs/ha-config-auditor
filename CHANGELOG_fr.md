@@ -5,6 +5,21 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
+## [1.7.6] — 2026-08-09 — Correctif sélection des orphelins Recorder
+
+### Corrigé
+
+- **Orphelins Recorder : chaque scan automatique re-sélectionnait toute la liste** — Les cases étaient générées `checked` par défaut et le tableau est redessiné à chaque résultat de scan : un scan de fond arrivant en pleine sélection recochait silencieusement toutes les lignes, et « Purger la sélection » pouvait viser des entités jamais choisies. Plus rien n'est pré-coché.
+
+### Modifié
+
+- **La sélection des orphelins est désormais persistante** — Elle survit aux scans, à la pagination et au changement de tri. La case d'en-tête reflète la page courante (état indéterminé si partielle), un compteur `{n} sélectionnée(s)` indique la sélection globale, et « Purger la sélection » agit sur cette sélection globale et non plus seulement sur la page visible.
+
+### Note
+
+- **Le texte plus gris depuis la 1.7.5 est normal.** `_syncTheme()` propage maintenant les variables de thème inline de `<html>` dans l'iframe du panel : HACA suit enfin les thèmes personnalisés comme une carte native. Avant, ces variables n'atteignaient jamais l'iframe et le panel retombait sur un quasi-noir codé en dur. Ajustez `primary-text-color` / `secondary-text-color` dans votre thème pour un rendu plus foncé.
+
+---
 ## [1.7.5] — 2026-08-05 — Patterns d'exclusion scan noisy, thème sombre, faux positif sécurité, fix optimizer
 
 ### Ajouté
