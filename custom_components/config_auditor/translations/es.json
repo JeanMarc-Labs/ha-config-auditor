@@ -481,10 +481,6 @@
       "id_copied": "ID {id} copiado al portapapeles",
       "fixable": "Corregible",
       "not_fixable": "No corregible",
-      "generic_high_issue": {
-        "title": "HACA: {type} — {entity}",
-        "description": "{message}\n\nAbra el panel HACA para detalles y correcciones disponibles."
-      },
       "recorder_exclude_effective": "Efectivo en el próximo escaneo de HACA.",
       "recorder_exclude_to_revert": "Para volver a ver este problema, elimina la entidad de configuration.yaml.",
       "recorder_exclude_explanation": "Para excluir esta incidencia del Recorder, puedes editar configuration.yaml manualmente (haz una copia de seguridad primero) o hacer clic en el botón «Excluir del Recorder». En ese caso, HACA modificará tu archivo configuration.yaml pero creará una copia de seguridad antes del cambio."
@@ -885,6 +881,7 @@
         "missing_state_class": "Falta state_class",
         "expensive_template_selectattr": "Plantilla selectattr costosa",
         "expensive_template_states_all": "Plantilla states.all costosa",
+        "noisy_entity": "Entidad ruidosa",
         "blueprint_missing_path": "Ruta del plano faltante",
         "blueprint_file_not_found": "Archivo de plano no encontrado",
         "blueprint_empty_input": "Entrada vacía en plano",
@@ -1830,5 +1827,11 @@
     "workflow_fix_title": "Flujo de corrección de errores:",
     "workflow_fix": "1. haca_list_issue_catalog() para descubrir categorías, tipos y errores corregibles\n2. haca_get_issues(category?, type?, severity?) para listar errores específicos\n3. haca_fix_batch(issue_id='HACA-XXX-TYPE-hash') para corregir un error (dry_run=true por defecto)\n4. haca_fix_batch(category?, type?, severity?) para corrección en lote\n5. Siempre previsualizar con dry_run=true primero, luego dry_run=false tras confirmación del usuario\nFormato de ID: HACA-{CATEGORY}-{TYPE}-{HASH6}, ej: HACA-AUTO-NO_ALIAS-a3f2c1",
     "rule_use_haca_id": "Cada problema tiene un haca_id único (formato: HACA-CAT-TYPE-hash). Use SIEMPRE el haca_id proporcionado — NUNCA fabrique o adivine un ID."
+  },
+  "issues": {
+    "generic_high_issue": {
+      "title": "HACA: {type} — {entity}",
+      "description": "{message}\n\nAbra el panel HACA para ver los detalles y las correcciones disponibles."
+    }
   }
 }

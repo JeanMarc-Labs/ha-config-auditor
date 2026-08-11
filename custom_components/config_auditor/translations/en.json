@@ -481,10 +481,6 @@
       "id_copied": "ID {id} copied to clipboard",
       "fixable": "Fixable",
       "not_fixable": "Not fixable",
-      "generic_high_issue": {
-        "title": "HACA: {type} — {entity}",
-        "description": "{message}\n\nOpen the HACA panel for details and available fixes."
-      },
       "recorder_exclude_effective": "Effective at the next HACA scan.",
       "recorder_exclude_to_revert": "To make this issue visible again, remove the entity from configuration.yaml.",
       "recorder_exclude_explanation": "To exclude this issue from the Recorder, you can either edit configuration.yaml manually (make a backup first) or click the Exclude from Recorder button. In that case, HACA will modify your configuration.yaml file but will create a backup before the change."
@@ -885,6 +881,7 @@
         "missing_state_class": "Missing state_class",
         "expensive_template_selectattr": "Expensive selectattr template",
         "expensive_template_states_all": "Expensive states.all template",
+        "noisy_entity": "Noisy entity",
         "blueprint_missing_path": "Missing blueprint path",
         "blueprint_file_not_found": "Blueprint file not found",
         "blueprint_empty_input": "Empty blueprint input",
@@ -1830,5 +1827,11 @@
     "workflow_fix_title": "Fix issues workflow:",
     "workflow_fix": "1. haca_list_issue_catalog() to discover categories, types, and fixable issues\n2. haca_get_issues(category?, type?, severity?) to list specific issues\n3. haca_fix_batch(issue_id='HACA-XXX-TYPE-hash') to fix a single issue (dry_run=true by default)\n4. haca_fix_batch(category?, type?, severity?) to fix multiple issues in batch\n5. Always preview with dry_run=true first, then set dry_run=false to apply after user confirmation\nIssue IDs use format: HACA-{CATEGORY}-{TYPE}-{HASH6}, e.g. HACA-AUTO-NO_ALIAS-a3f2c1",
     "rule_use_haca_id": "Each issue has a unique haca_id (format: HACA-CAT-TYPE-hash). ALWAYS use the exact haca_id provided — NEVER fabricate or guess an ID."
+  },
+  "issues": {
+    "generic_high_issue": {
+      "title": "HACA: {type} — {entity}",
+      "description": "{message}\n\nOpen the HACA panel for details and available fixes."
+    }
   }
 }

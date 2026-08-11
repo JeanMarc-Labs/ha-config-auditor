@@ -481,10 +481,6 @@
       "id_copied": "ID {id} をクリップボードにコピーしました",
       "fixable": "修正可能",
       "not_fixable": "修正不可",
-      "generic_high_issue": {
-        "title": "HACA: {type} — {entity}",
-        "description": "{message}\n\nOpen the HACA panel for details and available fixes."
-      },
       "recorder_exclude_effective": "次回の HACA スキャンから有効になります。",
       "recorder_exclude_to_revert": "この問題を再表示するには、configuration.yaml からエンティティを削除してください。",
       "recorder_exclude_explanation": "この問題を Recorder から除外するには、configuration.yaml を手動で編集する（先にバックアップを取ってください）か、「Recorder から除外」ボタンをクリックします。後者の場合、HACA は configuration.yaml を変更しますが、変更前にバックアップを作成します。"
@@ -885,6 +881,7 @@
         "missing_state_class": "state_class が欠落",
         "expensive_template_selectattr": "高コストの selectattr テンプレート",
         "expensive_template_states_all": "高コストの states.all テンプレート",
+        "noisy_entity": "ノイズの多いエンティティ",
         "blueprint_missing_path": "ブループリントのパスが不足",
         "blueprint_file_not_found": "ブループリントファイルが見つかりません",
         "blueprint_empty_input": "空のブループリント入力",
@@ -1830,5 +1827,11 @@
     "workflow_fix_title": "問題修正ワークフロー：",
     "workflow_fix": "1. haca_list_issue_catalog() でカテゴリ、タイプ、修正可能な問題を確認\n2. haca_get_issues(category?, type?, severity?) で特定の問題を一覧表示\n3. haca_fix_batch(issue_id='HACA-XXX-TYPE-hash') で単一の問題を修正（dry_run=trueがデフォルト）\n4. haca_fix_batch(category?, type?, severity?) で一括修正\n5. まずdry_run=trueでプレビュー、ユーザー確認後にdry_run=falseで適用\nIDフォーマット: HACA-{CATEGORY}-{TYPE}-{HASH6}、例: HACA-AUTO-NO_ALIAS-a3f2c1",
     "rule_use_haca_id": "各問題には固有のhaca_id（形式：HACA-CAT-TYPE-hash）があります。提供されたhaca_idを必ず使用し、IDを推測しないでください。"
+  },
+  "issues": {
+    "generic_high_issue": {
+      "title": "HACA: {type} — {entity}",
+      "description": "{message}\n\n詳細と利用可能な修正は HACA パネルで確認してください。"
+    }
   }
 }

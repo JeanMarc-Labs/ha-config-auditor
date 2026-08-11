@@ -687,9 +687,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # entities even when HA's recorder is currently filtering them
     # (otherwise the SQL query has nothing to find for ~24h after the
     # user un-excludes an entity in configuration.yaml).
+    #
+    # The listener sees every state change on the instance, so it only runs
+    # while the noisy-entity scan is switched on (panel → Configuration →
+    # Performance → "Noisy entity"). haca/save_options starts/stops it live.
     from .noisy_tracker import NoisyEntityTracker
+    from .performance_analyzer import noisy_scan_enabled
     noisy_tracker = NoisyEntityTracker(hass)
-    noisy_tracker.start()
+    if noisy_scan_enabled(hass):
+        noisy_tracker.start()
+    else:
+        _LOGGER.debug("[HACA] noisy-entity scan disabled — tracker not started")
 
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,

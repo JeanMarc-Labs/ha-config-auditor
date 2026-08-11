@@ -1,4 +1,4 @@
-// HACA-BUILD: 8331c15e  2026-08-09T15:27:08Z
+// HACA-BUILD: 2e8bf64e  2026-08-11T12:14:51Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -121,6 +121,10 @@ var ISSUE_TYPES_BY_CATEGORY = [
       { id: 'missing_state_class', fixable: false },
       { id: 'expensive_template_selectattr', fixable: false },
       { id: 'expensive_template_states_all', fixable: false },
+      // Switching this one off also stops the recorder query and the
+      // in-memory state-change listener that feed it (see performance_analyzer
+      // .noisy_scan_enabled) — not just the display of the issues.
+      { id: 'noisy_entity', fixable: false },
     ]
   },
   {

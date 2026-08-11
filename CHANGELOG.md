@@ -5,10 +5,16 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.7.6] — 2026-08-09 — Recorder orphan selection fix
+## [1.7.6] — 2026-08-11 — Repairs panel titles, noisy-entity switch, recorder orphan selection fix
+
+### Added
+
+- **The noisy-entity detection can now be switched off** — New "Noisy entity" toggle in Configuration → Performance, next to the other issue types. It does more than hide the issues: the recorder aggregate query that produces them is skipped entirely, and the in-memory `EVENT_STATE_CHANGED` listener that complements it (`noisy_tracker.py`, one callback per state change on the whole instance) is stopped. The switch applies immediately — no Home Assistant restart. The glob-pattern exclusion list added in 1.7.5 remains available for users who only want to silence part of their entities.
 
 ### Fixed
 
+- **HA Repairs entries showed "config_auditor: generic_high_issue" and no description** — The `generic_high_issue` translation sat under `panel.issues.*` in all 13 `translations/<lang>.json` files. That subtree is only handed to the panel's JavaScript; the Repairs framework reads `issues.<key>` at the **root** of the language file, never found it, and fell back to printing `<domain>: <translation_key>`. `strings.json` did carry it at the root — but Home Assistant does not load `strings.json` for a custom integration, only `translations/<lang>.json`. The section now lives at the root of every language file, and the eight languages that still carried the English sentence were translated at the same time.
+- **The "Fix" button on HACA repairs could not open anything** — Four issue types (`no_description`, `no_alias`, `compliance_automation_no_description`, `compliance_script_no_description`) were pushed with `is_fixable=True`, but the repairs platform no longer exposes `async_create_fix_flow` — it was removed together with the old `HacaFixFlow` (see the skipped `tests/test_repairs.py`), so Home Assistant had no flow handler to load and the dialog failed to open. Every repair is now created with `is_fixable=False`; the description points to the HACA panel, where the fixes actually live.
 - **Recorder orphans: every automatic scan re-selected the whole list** — Checkboxes were rendered `checked` by default and the table is re-rendered on every scan result, so a background scan landing mid-selection silently re-ticked all rows and "Purge selection" could target entities the user never picked. Nothing is pre-selected any more.
 
 ### Changed
