@@ -481,10 +481,6 @@
       "id_copied": "ID {id} gekopieerd naar klembord",
       "fixable": "Herstelbaar",
       "not_fixable": "Niet herstelbaar",
-      "generic_high_issue": {
-        "title": "HACA: {type} — {entity}",
-        "description": "{message}\n\nOpen the HACA panel for details and available fixes."
-      },
       "recorder_exclude_effective": "Van kracht bij de volgende HACA-scan.",
       "recorder_exclude_to_revert": "Om dit probleem weer zichtbaar te maken, verwijder de entiteit uit configuration.yaml.",
       "recorder_exclude_explanation": "Om dit probleem uit te sluiten van de Recorder kunt u configuration.yaml handmatig bewerken (maak eerst een back-up) of op de knop 'Uitsluiten van Recorder' klikken. In dat geval wijzigt HACA uw configuration.yaml-bestand, maar maakt eerst een back-up."
@@ -885,6 +881,7 @@
         "missing_state_class": "Ontbrekende state_class",
         "expensive_template_selectattr": "Duur sjabloon selectattr",
         "expensive_template_states_all": "Duur sjabloon states.all",
+        "noisy_entity": "Lawaaierige entiteit",
         "blueprint_missing_path": "Ontbrekend blauwdrukpad",
         "blueprint_file_not_found": "Blauwdrukbestand niet gevonden",
         "blueprint_empty_input": "Lege blauwdrukinput",
@@ -1830,5 +1827,11 @@
     "workflow_fix_title": "Workflow probleemoplossing:",
     "workflow_fix": "1. haca_list_issue_catalog() om categorieën, types en herstelbare problemen te ontdekken\n2. haca_get_issues(category?, type?, severity?) om specifieke problemen op te lijsten\n3. haca_fix_batch(issue_id='HACA-XXX-TYPE-hash') om één probleem op te lossen (dry_run=true standaard)\n4. haca_fix_batch(category?, type?, severity?) voor bulkherstel\n5. Altijd eerst voorvertoning met dry_run=true, dan dry_run=false na gebruikersbevestiging\nID-formaat: HACA-{CATEGORY}-{TYPE}-{HASH6}, bijv. HACA-AUTO-NO_ALIAS-a3f2c1",
     "rule_use_haca_id": "Elk probleem heeft een uniek haca_id (formaat: HACA-CAT-TYPE-hash). Gebruik ALTIJD het opgegeven haca_id — NOOIT een ID verzinnen of raden."
+  },
+  "issues": {
+    "generic_high_issue": {
+      "title": "HACA: {type} — {entity}",
+      "description": "{message}\n\nOpen het HACA-paneel voor details en beschikbare oplossingen."
+    }
   }
 }

@@ -481,10 +481,6 @@
       "id_copied": "ID {id} kopieret til udklipsholder",
       "fixable": "Kan rettes",
       "not_fixable": "Kan ikke rettes",
-      "generic_high_issue": {
-        "title": "HACA: {type} — {entity}",
-        "description": "{message}\n\nOpen the HACA panel for details and available fixes."
-      },
       "recorder_exclude_effective": "Træder i kraft ved næste HACA-scanning.",
       "recorder_exclude_to_revert": "For at se dette problem igen, fjern entiteten fra configuration.yaml.",
       "recorder_exclude_explanation": "For at udelukke dette problem fra Recorderen kan du enten redigere configuration.yaml manuelt (tag først en sikkerhedskopi) eller klikke på knappen »Udeluk fra Recorder«. I så fald ændrer HACA din configuration.yaml-fil, men opretter en sikkerhedskopi før ændringen."
@@ -885,6 +881,7 @@
         "missing_state_class": "Manglende state_class",
         "expensive_template_selectattr": "Dyr selectattr-skabelon",
         "expensive_template_states_all": "Dyr states.all-skabelon",
+        "noisy_entity": "Støjende entitet",
         "blueprint_missing_path": "Manglende blueprint-sti",
         "blueprint_file_not_found": "Blueprint-fil ikke fundet",
         "blueprint_empty_input": "Tomt blueprint-inddata",
@@ -1830,5 +1827,11 @@
     "workflow_fix_title": "Workflow til fejlrettelse:",
     "workflow_fix": "1. haca_list_issue_catalog() for at opdage kategorier, typer og rettelige fejl\n2. haca_get_issues(category?, type?, severity?) for at liste specifikke fejl\n3. haca_fix_batch(issue_id='HACA-XXX-TYPE-hash') for at rette en enkelt fejl (dry_run=true som standard)\n4. haca_fix_batch(category?, type?, severity?) for batchrettelse\n5. Altid forhåndsvis med dry_run=true først, derefter dry_run=false efter brugerbekræftelse\nID-format: HACA-{CATEGORY}-{TYPE}-{HASH6}, f.eks. HACA-AUTO-NO_ALIAS-a3f2c1",
     "rule_use_haca_id": "Hvert problem har et unikt haca_id (format: HACA-CAT-TYPE-hash). Brug ALTID det angivne haca_id — OPFIND ALDRIG et ID."
+  },
+  "issues": {
+    "generic_high_issue": {
+      "title": "HACA: {type} — {entity}",
+      "description": "{message}\n\nÅbn HACA-panelet for detaljer og tilgængelige rettelser."
+    }
   }
 }

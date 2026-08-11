@@ -1449,6 +1449,20 @@ async def handle_save_options(
         if not isinstance(entry_data, dict):
             continue
 
+        # excluded_issue_types → démarrer/arrêter le tracker noisy en direct.
+        # Il écoute EVENT_STATE_CHANGED pour toute l'instance : inutile de le
+        # laisser tourner si l'utilisateur a désactivé le type "noisy_entity".
+        if "excluded_issue_types" in incoming:
+            tracker = entry_data.get("noisy_tracker")
+            if tracker is not None:
+                from .performance_analyzer import noisy_scan_enabled
+                enabled = noisy_scan_enabled(hass)
+                tracker.start() if enabled else tracker.stop()
+                _LOGGER.info(
+                    "[HACA] noisy-entity scan %s",
+                    "enabled" if enabled else "disabled",
+                )
+
         # scan_interval → mettre à jour l'intervalle du coordinator (0 = manual only)
         if "scan_interval" in incoming:
             coordinator = entry_data.get("coordinator")

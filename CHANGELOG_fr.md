@@ -5,10 +5,16 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.7.6] — 2026-08-09 — Correctif sélection des orphelins Recorder
+## [1.7.6] — 2026-08-11 — Titres des Repairs, interrupteur entités bruyantes, correctif sélection des orphelins Recorder
+
+### Ajouté
+
+- **La détection des entités bruyantes peut désormais être désactivée** — Nouvel interrupteur « Entité bruyante » dans Configuration → Performance, à côté des autres types d'issues. Il ne se contente pas de masquer les issues : la requête d'agrégation Recorder qui les produit est entièrement sautée, et l'écouteur `EVENT_STATE_CHANGED` en mémoire qui la complète (`noisy_tracker.py`, un callback par changement d'état de toute l'instance) est arrêté. L'interrupteur s'applique immédiatement, sans redémarrer Home Assistant. La liste d'exclusion par motifs glob ajoutée en 1.7.5 reste disponible pour qui ne veut faire taire qu'une partie de ses entités.
 
 ### Corrigé
 
+- **Les entrées Repairs affichaient « config_auditor: generic_high_issue » sans description** — La traduction `generic_high_issue` se trouvait sous `panel.issues.*` dans les 13 fichiers `translations/<lang>.json`. Ce sous-arbre n'est transmis qu'au JavaScript du panel ; le framework Repairs lit `issues.<clé>` à la **racine** du fichier de langue, ne la trouvait donc jamais et retombait sur son affichage de repli `<domaine> : <clé_de_traduction>`. `strings.json` la portait bien à la racine — mais Home Assistant ne charge pas `strings.json` pour une intégration personnalisée, uniquement `translations/<lang>.json`. La section est maintenant à la racine de chaque fichier de langue, et les huit langues qui portaient encore la phrase en anglais ont été traduites au passage.
+- **Le bouton « Réparer » des Repairs HACA n'ouvrait rien** — Quatre types d'issues (`no_description`, `no_alias`, `compliance_automation_no_description`, `compliance_script_no_description`) étaient poussés avec `is_fixable=True`, alors que la plateforme repairs n'expose plus `async_create_fix_flow` — retiré avec l'ancien `HacaFixFlow` (voir `tests/test_repairs.py`, désactivé), Home Assistant n'avait donc aucun handler de flow à charger et la boîte de dialogue échouait. Tous les repairs sont désormais créés avec `is_fixable=False` ; la description renvoie vers le panneau HACA, où se trouvent réellement les correctifs.
 - **Orphelins Recorder : chaque scan automatique re-sélectionnait toute la liste** — Les cases étaient générées `checked` par défaut et le tableau est redessiné à chaque résultat de scan : un scan de fond arrivant en pleine sélection recochait silencieusement toutes les lignes, et « Purger la sélection » pouvait viser des entités jamais choisies. Plus rien n'est pré-coché.
 
 ### Modifié
