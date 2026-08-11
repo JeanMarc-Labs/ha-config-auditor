@@ -4,3 +4,6 @@ memory-bank/
 __pycache__/
 .agent/
 .vscode/
+
+# Working notes, not shipped to users
+SESSION_HANDOFF.md

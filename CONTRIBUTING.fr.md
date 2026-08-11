@@ -92,7 +92,7 @@ Ouvrir une issue avec le label `enhancement` en décrivant :
 ```
 type(scope): description courte en français ou anglais
 
-feat(analyzer): ajouter la détection des automations en mode restart
+feat(analyzer): ajouter la détection des automatisations en mode restart
 fix(panel): corriger le scroll dans la modal de proposition IA
 docs(readme): mettre à jour la section installation
 test(health_score): ajouter les cas limites score=0 et score=100
