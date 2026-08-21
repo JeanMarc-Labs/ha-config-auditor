@@ -335,7 +335,8 @@
       "loading_proposal": "建议加载中...",
       "error_loading": "加载报告时出错",
       "error_display": "显示报告时出错",
-      "generating": "生成中…"
+      "generating": "生成中…",
+      "deleting": "删除中…"
     },
     "ai": {
       "analyzing": "AI 正在分析您的问题...",

@@ -48,6 +48,28 @@ def _load_translations_from_json(language: str) -> dict:
         return {}
 
 
+# ── Session ids, shared by the listing and the delete path ──────────────────
+
+_AUDIT_SESSION_RE = _re.compile(r"^report_(\d{8}_\d{6})")
+_AGENT_SESSION_RE = _re.compile(r"^agent_report_(\d{8}_\d{6})")
+
+
+def report_session_id(stem: str) -> str | None:
+    """Return the session a report filename belongs to, or None.
+
+    Mirrors the ids ``list_reports`` hands to the panel, so a delete removes
+    exactly the session the user clicked — including agent reports, whose
+    files are named ``agent_report_<ts>_score<NN>.md``.
+    """
+    match = _AGENT_SESSION_RE.match(stem)
+    if match:
+        return "agent_" + match.group(1)
+    match = _AUDIT_SESSION_RE.match(stem)
+    if match:
+        return match.group(1)
+    return None
+
+
 # ── Filename guard, shared by the WS endpoint and the HTTP view ──────────────
 
 ALLOWED_REPORT_SUFFIXES = frozenset({".md", ".json", ".pdf", ".html"})
@@ -779,28 +801,33 @@ class ReportGenerator:
         return sorted_sessions[:30]  # 30 rapports max
 
     async def delete_report_session(self, session_id: str) -> dict:
-        """Delete all report files for a given session ID."""
-        import re
-        
+        """Delete every report file belonging to a session ID."""
+        def _collect() -> list[Path]:
+            if not self._reports_dir.is_dir():
+                return []
+            return [
+                p for p in self._reports_dir.iterdir()
+                if p.is_file() and report_session_id(p.stem) == session_id
+            ]
+
+        # Previously: glob("report_*") + a prefix regex. Agent sessions
+        # (agent_report_<ts>…, id "agent_<ts>") never matched that glob, so
+        # deleting one silently removed nothing, and a truncated id matched
+        # several sessions by prefix. Both go through report_session_id now.
+        targets = await self.hass.async_add_executor_job(_collect)
+
         deleted_files = []
         errors = []
-        
-        # Find all files matching this session
-        pattern = re.compile(f"report_{re.escape(session_id)}")
-        
-        for report_file in self._reports_dir.glob("report_*"):
-            if pattern.match(report_file.name):
-                try:
-                    def delete_file():
-                        report_file.unlink()
-                    
-                    await self.hass.async_add_executor_job(delete_file)
-                    deleted_files.append(report_file.name)
-                    _LOGGER.info("Deleted report file: %s", report_file.name)
-                except Exception as e:
-                    errors.append(f"{report_file.name}: {str(e)}")
-                    _LOGGER.error("Failed to delete report file %s: %s", report_file.name, e)
-        
+
+        for report_file in targets:
+            try:
+                await self.hass.async_add_executor_job(report_file.unlink)
+                deleted_files.append(report_file.name)
+                _LOGGER.info("Deleted report file: %s", report_file.name)
+            except Exception as e:
+                errors.append(f"{report_file.name}: {str(e)}")
+                _LOGGER.error("Failed to delete report file %s: %s", report_file.name, e)
+
         if not deleted_files and not errors:
             return {
                 "success": False,

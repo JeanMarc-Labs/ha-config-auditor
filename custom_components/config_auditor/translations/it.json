@@ -335,7 +335,8 @@
       "loading_proposal": "Caricamento proposta...",
       "error_loading": "Errore nel caricamento dei rapporti",
       "error_display": "Errore nella visualizzazione dei rapporti",
-      "generating": "Generazione…"
+      "generating": "Generazione…",
+      "deleting": "Eliminazione…"
     },
     "ai": {
       "analyzing": "L'IA sta analizzando il tuo problema...",

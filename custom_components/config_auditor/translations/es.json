@@ -335,7 +335,8 @@
       "loading_proposal": "Cargando propuesta...",
       "error_loading": "Error al cargar informes",
       "error_display": "Error al mostrar informes",
-      "generating": "Generando…"
+      "generating": "Generando…",
+      "deleting": "Eliminando…"
     },
     "ai": {
       "analyzing": "La IA está analizando su problema...",

@@ -335,7 +335,8 @@
       "loading_proposal": "Voorstel laden...",
       "error_loading": "Fout bij laden van rapporten",
       "error_display": "Fout bij weergeven van rapporten",
-      "generating": "Genereren…"
+      "generating": "Genereren…",
+      "deleting": "Verwijderen…"
     },
     "ai": {
       "analyzing": "AI analyseert uw probleem...",

@@ -335,7 +335,8 @@
       "loading_proposal": "Loading proposal...",
       "error_loading": "Error loading reports",
       "error_display": "Error displaying reports",
-      "generating": "Generating…"
+      "generating": "Generating…",
+      "deleting": "Deleting…"
     },
     "ai": {
       "analyzing": "AI is analyzing your problem...",
