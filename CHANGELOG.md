@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.7.6] — 2026-08-11 — Repairs panel titles, noisy-entity switch, recorder orphan selection fix
+## [1.7.6] — 2026-08-11 — Repairs panel titles, noisy-entity switch, recorder orphan selection fix, history moved to .storage
 
 ### Added
 
@@ -23,6 +23,8 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Changed
 
+- **Audit history and battery snapshots now live in `.storage`** — `HistoryManager` wrote one JSON file per scan into `<config>/.haca_history/` and `BatteryPredictor` one file per day into `<config>/.haca_battery_history/`, re-reading the whole directory after every write. Both now use Home Assistant's `Store` helper (`.storage/config_auditor.history` and `.storage/config_auditor.battery_history`), which is where an integration is expected to keep its data: two fewer directories in `/config`, and a per-scan file write plus full-directory re-read replaced by a single coalesced atomic write of an in-memory list — noticeably less I/O on SD-card installs. Existing directories are imported once, at the first read after the update, then deleted; retention (`history_retention_days` for the audit history, 35 days for battery levels) is applied during the import. If the write to `.storage` fails, the old directory is left in place and the migration is retried at the next start. Clean uninstall removes the two `.storage` files as well. Two side effects of the rewrite: the first scan after a restart now reports a real `delta_score` (it used to compare against a not-yet-loaded cache and always report 0), and neither class creates its directory with a blocking `mkdir()` on the event loop any more.
+- **Reports and YAML backups deliberately stay on disk** — `haca_reports/` is served over HTTP and holds Markdown/JSON/PDF, and `.haca_backups/` exists precisely so a broken `automations.yaml` or `configuration.yaml` can be restored by hand. Neither belongs in `.storage`, which is internal JSON that Home Assistant asks users never to edit.
 - **Orphan selection is now persistent** — It survives scans, pagination and re-sorting. The header checkbox reflects the current page (indeterminate when partial), a `{n} selected` counter shows the global selection, and "Purge selection" acts on that global selection instead of only the visible page.
 
 ### Note

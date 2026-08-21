@@ -50,6 +50,11 @@ from .const import (
     MODULE_5_REFACTORING_ASSISTANT,
     BACKUP_DIR,
     REPORTS_DIR,
+    LEGACY_HISTORY_DIR,
+    LEGACY_BATTERY_HISTORY_DIR,
+    STORAGE_KEY_HISTORY,
+    STORAGE_KEY_BATTERY_HISTORY,
+    STORAGE_VERSION,
 )
 from .automation_analyzer import AutomationAnalyzer
 from .entity_analyzer import EntityAnalyzer
@@ -712,6 +717,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "dashboard_analyzer": dashboard_analyzer,
         "recorder_analyzer": recorder_analyzer,
         "history_manager": history_manager,
+        "battery_predictor": battery_predictor,
         "automation_optimizer": automation_optimizer,
         "compliance_analyzer": compliance_analyzer,
         "integration_analyzer": integration_analyzer,
@@ -1023,6 +1029,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:
             pass
 
+    # Flush any delayed .storage write: a reload happening seconds after a scan
+    # must not drop the snapshot that is still waiting in the Store delay timer.
+    for _key in ("history_manager", "battery_predictor"):
+        _component = entry_data.get(_key)
+        if _component is not None:
+            try:
+                await _component.async_flush()
+            except Exception as _flush_err:
+                _LOGGER.warning("HACA: %s flush failed: %s", _key, _flush_err)
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
@@ -1047,8 +1063,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # 1. Paths
     reports_path = hass.config.path(REPORTS_DIR)
     backups_path = hass.config.path(BACKUP_DIR)
-    history_path = Path(hass.config.config_dir) / ".haca_history"
-    battery_history_path = Path(hass.config.config_dir) / ".haca_battery_history"
+    # Legacy pre-1.7.6 directories — normally already migrated to .storage
+    history_path = Path(hass.config.config_dir) / LEGACY_HISTORY_DIR
+    battery_history_path = Path(hass.config.config_dir) / LEGACY_BATTERY_HISTORY_DIR
 
     # 2. Blocking cleanup — runs in the executor to avoid blocking the event loop
     def _cleanup_files() -> None:
@@ -1064,7 +1081,17 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     await hass.async_add_executor_job(_cleanup_files)
 
-    # 3. Persistent notification
+    # 3. Remove .storage data (audit history + battery snapshots)
+    from homeassistant.helpers.storage import Store
+
+    for storage_key in (STORAGE_KEY_HISTORY, STORAGE_KEY_BATTERY_HISTORY):
+        try:
+            await Store(hass, STORAGE_VERSION, storage_key).async_remove()
+            _LOGGER.info("Removed .storage/%s", storage_key)
+        except Exception as e:
+            _LOGGER.error("Failed to remove .storage/%s: %s", storage_key, e)
+
+    # 4. Persistent notification
     await hass.services.async_call(
         "persistent_notification",
         "create",

@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.7.6] — 2026-08-11 — Titres des Repairs, interrupteur entités bruyantes, correctif sélection des orphelins Recorder
+## [1.7.6] — 2026-08-11 — Titres des Repairs, interrupteur entités bruyantes, correctif sélection des orphelins Recorder, historique déplacé dans .storage
 
 ### Ajouté
 
@@ -23,6 +23,8 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 
 ### Modifié
 
+- **L'historique d'audit et les relevés de batterie sont désormais dans `.storage`** — `HistoryManager` écrivait un fichier JSON par scan dans `<config>/.haca_history/` et `BatteryPredictor` un fichier par jour dans `<config>/.haca_battery_history/`, en relisant tout le dossier après chaque écriture. Les deux utilisent maintenant le helper `Store` de Home Assistant (`.storage/config_auditor.history` et `.storage/config_auditor.battery_history`), c'est-à-dire l'endroit prévu pour les données d'une intégration : deux dossiers de moins dans `/config`, et une écriture de fichier par scan suivie d'une relecture complète du dossier remplacées par une seule écriture atomique différée d'une liste tenue en mémoire — nettement moins d'I/O sur les installations sur carte SD. Les dossiers existants sont importés une fois, à la première lecture après la mise à jour, puis supprimés ; la rétention (`history_retention_days` pour l'historique, 35 jours pour les batteries) est appliquée pendant l'import. Si l'écriture dans `.storage` échoue, l'ancien dossier est laissé en place et la migration est retentée au démarrage suivant. La désinstallation propre supprime aussi les deux fichiers `.storage`. Deux effets de bord de la réécriture : le premier scan après un redémarrage affiche enfin un vrai `delta_score` (il se comparait à un cache pas encore chargé et annonçait toujours 0), et aucune des deux classes ne crée plus son dossier avec un `mkdir()` bloquant sur la boucle d'événements.
+- **Les rapports et les sauvegardes YAML restent volontairement sur le disque** — `haca_reports/` est servi en HTTP et contient du Markdown/JSON/PDF, et `.haca_backups/` existe précisément pour qu'un `automations.yaml` ou un `configuration.yaml` cassé puisse être restauré à la main. Ni l'un ni l'autre n'a sa place dans `.storage`, qui est du JSON interne que Home Assistant demande de ne jamais éditer.
 - **La sélection des orphelins est désormais persistante** — Elle survit aux scans, à la pagination et au changement de tri. La case d'en-tête reflète la page courante (état indéterminé si partielle), un compteur `{n} sélectionnée(s)` indique la sélection globale, et « Purger la sélection » agit sur cette sélection globale et non plus seulement sur la page visible.
 
 ### Note
