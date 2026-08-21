@@ -80,6 +80,7 @@ def async_register_websocket_handlers(hass: HomeAssistant) -> None:
     # ── v1.5.0 ─────────────────────────────────────────────────────────────
     websocket_api.async_register_command(hass, handle_get_battery_predictions)
     websocket_api.async_register_command(hass, handle_export_battery_csv)
+    websocket_api.async_register_command(hass, handle_get_report_url)
     websocket_api.async_register_command(hass, handle_get_area_complexity)
     websocket_api.async_register_command(hass, handle_get_redundancy)
     websocket_api.async_register_command(hass, handle_get_recorder_impact)
@@ -1841,6 +1842,61 @@ async def handle_export_battery_csv(
         connection.send_result(msg["id"], {"csv": csv_data})
     except Exception as exc:
         connection.send_error(msg["id"], "csv_error", str(exc))
+
+
+# ── Reports ────────────────────────────────────────────────────────────────
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "haca/get_report_url",
+    vol.Required("filename"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def handle_get_report_url(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return a short-lived signed URL for one report file.
+
+    The reports endpoint requires authentication, which an <iframe src> or a
+    download link cannot carry. A signed path can: HA validates the signature
+    and resolves it back to this admin's refresh token.
+    """
+    from datetime import timedelta
+
+    from .const import REPORTS_DIR
+    from .report_generator import resolve_report_path
+    from .report_view import REPORT_URL_PREFIX
+
+    reports_dir = Path(hass.config.path(REPORTS_DIR))
+    path = await hass.async_add_executor_job(
+        resolve_report_path, reports_dir, msg["filename"]
+    )
+    if path is None:
+        connection.send_error(
+            msg["id"], "not_found", f"Report '{msg['filename']}' not found"
+        )
+        return
+
+    try:
+        from homeassistant.components.http.auth import async_sign_path
+    except ImportError:      # older layouts re-export it from the package
+        from homeassistant.components.http import async_sign_path
+
+    try:
+        signed = async_sign_path(
+            hass,
+            f"{REPORT_URL_PREFIX}/{path.name}",
+            timedelta(minutes=30),
+            refresh_token_id=connection.refresh_token_id,
+        )
+    except Exception as exc:
+        _LOGGER.error("HACA: could not sign report URL: %s", exc)
+        connection.send_error(msg["id"], "sign_error", str(exc))
+        return
+
+    connection.send_result(msg["id"], {"url": signed})
 
 
 # ── Area complexity ────────────────────────────────────────────────────────────

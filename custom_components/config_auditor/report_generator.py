@@ -15,6 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 import json as _json
 from pathlib import Path as _Path
+import re as _re
 
 def _load_translations_from_json(language: str) -> dict:
     """Return the ``report`` translation section for the given language.
@@ -45,6 +46,35 @@ def _load_translations_from_json(language: str) -> dict:
     except Exception as exc:
         _LOGGER.error("HACA translations load error: %s", exc)
         return {}
+
+
+# ── Filename guard, shared by the WS endpoint and the HTTP view ──────────────
+
+ALLOWED_REPORT_SUFFIXES = frozenset({".md", ".json", ".pdf", ".html"})
+_SAFE_REPORT_NAME = _re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def resolve_report_path(reports_dir: Path, filename: str) -> Path | None:
+    """Return the on-disk path of ``filename`` inside ``reports_dir``, or None.
+
+    The name must be a bare filename made of ``[A-Za-z0-9._-]`` with a known
+    report extension, and the resolved path must sit directly in the reports
+    directory — no traversal (``../secrets.yaml``), no absolute path, no
+    quote that could break a Content-Disposition header. Blocking (stat +
+    symlink resolution): call it from the executor.
+    """
+    if not filename or not _SAFE_REPORT_NAME.match(filename) or filename in (".", ".."):
+        return None
+    if Path(filename).suffix.lower() not in ALLOWED_REPORT_SUFFIXES:
+        return None
+    try:
+        base = reports_dir.resolve(strict=False)
+        path = (base / filename).resolve(strict=False)
+    except (OSError, ValueError):
+        return None
+    if path.parent != base or not path.is_file():
+        return None
+    return path
 
 
 class ReportGenerator:
@@ -560,10 +590,12 @@ class ReportGenerator:
 
     async def get_report_content(self, filename: str) -> dict[str, Any] | None:
         """Get the content of a report file."""
-        filepath = self._reports_dir / filename
-        if not filepath.exists() or not filepath.is_file():
+        filepath = await self.hass.async_add_executor_job(
+            resolve_report_path, self._reports_dir, filename
+        )
+        if filepath is None:
             return None
-            
+
         def read_file():
             if filepath.suffix == '.json':
                 with open(filepath, "r", encoding="utf-8") as f:
