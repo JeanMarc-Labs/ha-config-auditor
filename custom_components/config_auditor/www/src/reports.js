@@ -309,6 +309,30 @@
   async deleteReport(sessionId) {
     if (!confirm(this.t('report.confirm_delete') + '\n\nID: ' + sessionId)) return;
 
+    // Deleting takes a round-trip plus the unlinks, and the result used to be
+    // announced only through an HA persistent notification — from inside the
+    // panel it looked like nothing had happened. Show it here instead: the
+    // button spins, its row dims, and a toast reports the outcome.
+    const btns = Array.from(this.shadowRoot.querySelectorAll(
+      `.delete-report-btn[data-session="${CSS.escape(sessionId)}"]`
+    ));
+    const originalHTML = btns.map(b => b.innerHTML);
+    const rowOf = (b) => b.closest('tr') || b.closest('.m-card');
+    btns.forEach(b => {
+      b.disabled = true;
+      b.innerHTML = `<span class="btn-loader"></span>`;
+      const row = rowOf(b);
+      if (row) row.style.opacity = '0.5';
+    });
+    const restore = () => btns.forEach((b, i) => {
+      b.disabled = false;
+      b.innerHTML = originalHTML[i];
+      const row = rowOf(b);
+      if (row) row.style.opacity = '';
+    });
+
+    this._showToast(this.t('reports.deleting'));
+
     try {
       const result = await this.hass.callWS({
         type: 'call_service',
@@ -321,26 +345,22 @@
       const response = result.response || result;
 
       if (response.success) {
-        this.showHANotification(
-          this.t('notifications.report_deleted'),
-          `${response.deleted_count} ${this.t('notifications.files_deleted')}`,
-          'haca_report_deleted'
+        this._showToast(
+          `\u2705 ${response.deleted_count} ${this.t('notifications.files_deleted')}`,
+          'success'
         );
-        // Refresh the reports list
+        // Refresh the reports list (redraws the buttons, no restore needed)
         this.loadReports();
       } else {
-        this.showHANotification(
-          this.t('notifications.error'),
-          response.error || this.t('fix.error_unknown'),
-          'haca_error'
+        restore();
+        this._showToast(
+          `${this.t('notifications.error')}: ${response.error || this.t('fix.error_unknown')}`,
+          'error'
         );
       }
     } catch (error) {
-      this.showHANotification(
-        this.t('notifications.error'),
-        error.message,
-        'haca_error'
-      );
+      restore();
+      this._showToast(`${this.t('notifications.error')}: ${error.message}`, 'error');
     }
   }
 

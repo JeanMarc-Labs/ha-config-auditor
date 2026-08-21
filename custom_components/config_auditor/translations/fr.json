@@ -335,7 +335,8 @@
       "loading_proposal": "Chargement de la proposition...",
       "error_loading": "Erreur lors du chargement des rapports",
       "error_display": "Erreur d'affichage des rapports",
-      "generating": "Génération…"
+      "generating": "Génération…",
+      "deleting": "Suppression…"
     },
     "ai": {
       "analyzing": "L'IA analyse votre problème...",

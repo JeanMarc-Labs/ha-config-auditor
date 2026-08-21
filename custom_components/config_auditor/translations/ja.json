@@ -335,7 +335,8 @@
       "loading_proposal": "提案読み込み中...",
       "error_loading": "レポートの読み込みエラー",
       "error_display": "レポート表示エラー",
-      "generating": "生成中…"
+      "generating": "生成中…",
+      "deleting": "削除中…"
     },
     "ai": {
       "analyzing": "AIが問題を分析中です...",

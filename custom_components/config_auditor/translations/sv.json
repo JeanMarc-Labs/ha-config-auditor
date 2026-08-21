@@ -335,7 +335,8 @@
       "loading_proposal": "Laddar förslag...",
       "error_loading": "Fel vid laddning av rapporter",
       "error_display": "Fel vid visning av rapporter",
-      "generating": "Genererar…"
+      "generating": "Genererar…",
+      "deleting": "Raderar…"
     },
     "ai": {
       "analyzing": "AI analyserar ditt problem...",

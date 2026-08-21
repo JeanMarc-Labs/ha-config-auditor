@@ -335,7 +335,8 @@
       "loading_proposal": "Vorschlag wird geladen...",
       "error_loading": "Fehler beim Laden der Berichte",
       "error_display": "Fehler beim Anzeigen der Berichte",
-      "generating": "Generieren…"
+      "generating": "Generieren…",
+      "deleting": "Löschen…"
     },
     "ai": {
       "analyzing": "KI analysiert dein Problem...",
