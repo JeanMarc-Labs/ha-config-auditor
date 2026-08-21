@@ -1830,8 +1830,13 @@ async def handle_export_battery_csv(
         if not MODULE_18_BATTERY_PREDICTOR:
             connection.send_result(msg["id"], {"csv": "date,entity_id,level\n"})
             return
-        from .battery_predictor import BatteryPredictor
-        predictor = BatteryPredictor(hass)
+        # Reuse the loaded instance so we hit the in-memory .storage cache
+        entries = hass.config_entries.async_entries(DOMAIN)
+        domain_data = hass.data.get(DOMAIN, {}).get(entries[0].entry_id, {}) if entries else {}
+        predictor = domain_data.get("battery_predictor")
+        if predictor is None:
+            from .battery_predictor import BatteryPredictor
+            predictor = BatteryPredictor(hass)
         csv_data = await predictor.async_export_csv()
         connection.send_result(msg["id"], {"csv": csv_data})
     except Exception as exc:
