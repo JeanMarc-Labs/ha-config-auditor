@@ -1,4 +1,4 @@
-// HACA-BUILD: 2e8bf64e  2026-08-11T12:14:51Z
+// HACA-BUILD: 55ad7171  2026-08-21T13:23:47Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -8388,11 +8388,25 @@ function _updateTypeCounts(el) {
     }
   }
 
+  // Reports are served by an authenticated endpoint (they used to sit on an
+  // unauthenticated static path). An <iframe> or a download link cannot send
+  // a bearer token, so we ask the backend for a short-lived signed URL.
+  async _reportUrl(name) {
+    const res = await this.hass.callWS({ type: 'haca/get_report_url', filename: name });
+    return res.url;
+  }
+
   async viewReport(name) {
     const esc = (s) => this.escapeHtml(s);
     if (name.endsWith('.pdf')) {
-      const safeName = encodeURIComponent(name);
-      const card = this.createModal('');
+      const card = this.createModal(this.t('reports.loading_report'));
+      let url;
+      try {
+        url = await this._reportUrl(name);
+      } catch (e) {
+        card._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${esc(e.message)}</div>`);
+        return;
+      }
       // Enlarge modal for PDF to almost full screen
       card.style.width = '95%';
       card.style.height = '95%';
@@ -8406,7 +8420,7 @@ function _updateTypeCounts(el) {
                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(name)}</span>
               </h2>
               <div style="display: flex; gap: 8px; flex-shrink: 0;">
-                <a href="/haca_reports/${safeName}" target="_blank" style="text-decoration: none;">
+                <a href="${url}" target="_blank" style="text-decoration: none;">
                   <button style="background: var(--primary-color); color: white; padding: 8px 12px; font-size: 12px;">
                     ${_icon("fullscreen")} ${this.t('actions.fullscreen')}
                   </button>
@@ -8414,7 +8428,7 @@ function _updateTypeCounts(el) {
               </div>
           </div>
           <div style="flex: 1; height: 100%; background: #525659;">
-              <iframe src="/haca_reports/${safeName}" style="width: 100%; height: 85vh; border: none;"></iframe>
+              <iframe src="${url}" style="width: 100%; height: 85vh; border: none;"></iframe>
           </div>
       `);
       return;
@@ -8449,8 +8463,15 @@ function _updateTypeCounts(el) {
   }
 
   async downloadReport(name) {
+    let url;
+    try {
+      url = await this._reportUrl(name);
+    } catch (e) {
+      this.showHANotification(this.t('notifications.error'), e.message, 'haca_error');
+      return;
+    }
     const a = document.createElement('a');
-    a.href = `/haca_reports/${encodeURIComponent(name)}`;
+    a.href = url;
     a.download = name;
     a.style.display = 'none';
     document.body.appendChild(a);
