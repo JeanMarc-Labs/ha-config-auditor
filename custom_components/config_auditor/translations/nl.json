@@ -25,7 +25,7 @@
           "scan_interval": "Scaninterval (minuten)",
           "auto_fix_enabled": "Automatische correcties inschakelen",
           "backup_enabled": "Automatische back-ups inschakelen",
-          "startup_delay_seconds": "Startscandeling (seconden)",
+          "startup_delay_seconds": "Scan bij opstarten: maximale wachttijd (seconden)",
           "event_monitoring_enabled": "Continue monitoring (auto-scan bij gebeurtenissen)",
           "event_debounce_seconds": "Debounce vertraging gebeurtenismonitoring (seconden)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Algemene instellingen, drempels en actieve probleemtypes",
       "scan_section": "Automatische scan",
       "scan_interval": "Scaninterval (minuten)",
-      "startup_delay": "Opstartvertraging (seconden)",
+      "startup_delay": "Maximale wachttijd bij opstarten (seconden)",
       "event_section": "Evenementbewaking",
       "event_active": "Actieve bewaking",
       "event_rescan": "Automatisch opnieuw scannen na wijzigingen",

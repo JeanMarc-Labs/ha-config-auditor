@@ -25,7 +25,7 @@
           "scan_interval": "Intervalo de varredura (minutos)",
           "auto_fix_enabled": "Ativar correções automáticas",
           "backup_enabled": "Ativar backups automáticos",
-          "startup_delay_seconds": "Atraso na varredura de inicialização (segundos)",
+          "startup_delay_seconds": "Varredura de inicialização: espera máxima (segundos)",
           "event_monitoring_enabled": "Monitoramento contínuo (varredura automática em eventos)",
           "event_debounce_seconds": "Atraso de debounce no monitoramento de eventos (segundos)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Configurações gerais, limites e tipos de problemas ativos",
       "scan_section": "Verificação automática",
       "scan_interval": "Intervalo de verificação (minutos)",
-      "startup_delay": "Atraso de inicialização (segundos)",
+      "startup_delay": "Espera máxima na inicialização (segundos)",
       "event_section": "Monitoramento de eventos",
       "event_active": "Monitoramento ativo",
       "event_rescan": "Reverificação automática após mudanças",

@@ -25,7 +25,7 @@
           "scan_interval": "Interwał skanowania (minuty)",
           "auto_fix_enabled": "Włącz automatyczne poprawki",
           "backup_enabled": "Włącz automatyczne kopie zapasowe",
-          "startup_delay_seconds": "Opóźnienie skanu przy starcie (sekundy)",
+          "startup_delay_seconds": "Skan przy starcie: maksymalne oczekiwanie (sekundy)",
           "event_monitoring_enabled": "Ciągłe monitorowanie (automatyczne skanowanie przy zdarzeniach)",
           "event_debounce_seconds": "Opóźnienie debouncingu monitorowania zdarzeń (sekundy)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Ustawienia ogólne, progi i aktywne typy problemów",
       "scan_section": "Automatyczne skanowanie",
       "scan_interval": "Interwał skanowania (minuty)",
-      "startup_delay": "Opóźnienie startu (sekundy)",
+      "startup_delay": "Maksymalne oczekiwanie przy starcie (sekundy)",
       "event_section": "Monitorowanie zdarzeń",
       "event_active": "Aktywne monitorowanie",
       "event_rescan": "Automatyczne ponowne skanowanie po zmianach",

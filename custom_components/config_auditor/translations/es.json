@@ -25,7 +25,7 @@
           "scan_interval": "Intervalo de escaneo (minutos)",
           "auto_fix_enabled": "Habilitar correcciones automáticas",
           "backup_enabled": "Habilitar copias de seguridad automáticas",
-          "startup_delay_seconds": "Retraso de escaneo al inicio (segundos)",
+          "startup_delay_seconds": "Escaneo al inicio: espera máxima (segundos)",
           "event_monitoring_enabled": "Monitoreo continuo (escaneo automático en eventos)",
           "event_debounce_seconds": "Retraso de debounce en monitoreo de eventos (segundos)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Configuraciones generales, umbrales y tipos de problemas activos",
       "scan_section": "Escaneo automático",
       "scan_interval": "Intervalo de escaneo (minutos)",
-      "startup_delay": "Retraso al iniciar (segundos)",
+      "startup_delay": "Espera máxima al inicio (segundos)",
       "event_section": "Monitoreo de eventos",
       "event_active": "Monitoreo activo",
       "event_rescan": "Reescanear automáticamente después de cambios",

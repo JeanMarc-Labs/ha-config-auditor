@@ -25,7 +25,7 @@
           "scan_interval": "Skanningsinterval (minutter)",
           "auto_fix_enabled": "Aktivér automatiske rettelser",
           "backup_enabled": "Aktivér automatiske sikkerhedskopier",
-          "startup_delay_seconds": "Opstartsskanning forsinkelse (sekunder)",
+          "startup_delay_seconds": "Opstartsskanning: maksimal ventetid (sekunder)",
           "event_monitoring_enabled": "Kontinuerlig overvågning (automatisk skanning ved hændelser)",
           "event_debounce_seconds": "Debounce-forsinkelse for hændelsesovervågning (sekunder)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Generelle indstillinger, tærskler og aktive problemtyper",
       "scan_section": "Automatisk skanning",
       "scan_interval": "Skanningsinterval (minutter)",
-      "startup_delay": "Opstartsforsinkelse (sekunder)",
+      "startup_delay": "Maksimal ventetid ved opstart (sekunder)",
       "event_section": "Hændelsesovervågning",
       "event_active": "Aktiv overvågning",
       "event_rescan": "Automatisk genskanning efter ændringer",

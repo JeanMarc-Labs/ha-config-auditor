@@ -25,7 +25,7 @@
           "scan_interval": "Intervallo di scansione (minuti)",
           "auto_fix_enabled": "Abilita correzioni automatiche",
           "backup_enabled": "Abilita backup automatici",
-          "startup_delay_seconds": "Ritardo scansione all'avvio (secondi)",
+          "startup_delay_seconds": "Scansione all’avvio: attesa massima (secondi)",
           "event_monitoring_enabled": "Monitoraggio continuo (scansione automatica su eventi)",
           "event_debounce_seconds": "Ritardo debounce monitoraggio eventi (secondi)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Impostazioni generali, soglie e tipi di problema attivi",
       "scan_section": "Scansione automatica",
       "scan_interval": "Intervallo scansione (minuti)",
-      "startup_delay": "Ritardo avvio (secondi)",
+      "startup_delay": "Attesa massima all’avvio (secondi)",
       "event_section": "Monitoraggio eventi",
       "event_active": "Monitoraggio attivo",
       "event_rescan": "Riscansione automatica dopo modifiche",
