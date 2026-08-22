@@ -25,7 +25,7 @@
           "scan_interval": "スキャン間隔（分）",
           "auto_fix_enabled": "自動修正を有効にする",
           "backup_enabled": "自動バックアップを有効にする",
-          "startup_delay_seconds": "起動時スキャンの遅延（秒）",
+          "startup_delay_seconds": "起動時スキャン：最大待機時間（秒）",
           "event_monitoring_enabled": "継続的監視（イベント発生時に自動スキャン）",
           "event_debounce_seconds": "イベント監視のディバウンス遅延（秒）"
         }
@@ -678,7 +678,7 @@
       "subtitle": "一般設定、閾値、検出する問題タイプ",
       "scan_section": "自動スキャン",
       "scan_interval": "スキャン間隔（分）",
-      "startup_delay": "起動遅延（秒）",
+      "startup_delay": "起動時の最大待機時間（秒）",
       "event_section": "イベント監視",
       "event_active": "有効な監視",
       "event_rescan": "変更後の自動再スキャン",

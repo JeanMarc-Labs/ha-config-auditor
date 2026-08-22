@@ -25,7 +25,7 @@
           "scan_interval": "Intervalle de scan (minutes)",
           "auto_fix_enabled": "Activer les corrections automatiques",
           "backup_enabled": "Activer les sauvegardes automatiques",
-          "startup_delay_seconds": "Délai avant le premier scan au démarrage (secondes)",
+          "startup_delay_seconds": "Scan au démarrage : attente max. (secondes)",
           "event_monitoring_enabled": "Monitoring continu (scan automatique sur événement)",
           "event_debounce_seconds": "Délai de debounce du monitoring (secondes)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Paramètres généraux, seuils et types d'issues actifs",
       "scan_section": "Scan automatique",
       "scan_interval": "Intervalle de scan (minutes)",
-      "startup_delay": "Délai au démarrage (secondes)",
+      "startup_delay": "Attente max. au démarrage (secondes)",
       "event_section": "Surveillance des événements",
       "event_active": "Surveillance active",
       "event_rescan": "Rescan après modification",

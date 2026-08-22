@@ -25,7 +25,7 @@
           "scan_interval": "Skanningsintervall (minuter)",
           "auto_fix_enabled": "Aktivera automatiska korrigeringar",
           "backup_enabled": "Aktivera automatiska säkerhetskopior",
-          "startup_delay_seconds": "Fördröjning vid uppstartsskanning (sekunder)",
+          "startup_delay_seconds": "Uppstartsskanning: maximal väntetid (sekunder)",
           "event_monitoring_enabled": "Kontinuerlig övervakning (automatisk skanning vid händelser)",
           "event_debounce_seconds": "Debounce-fördröjning för händelseövervakning (sekunder)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Allmänna inställningar, trösklar och aktiva problemtyper",
       "scan_section": "Automatisk skanning",
       "scan_interval": "Skanningsintervall (minuter)",
-      "startup_delay": "Uppstartsfördröjning (sekunder)",
+      "startup_delay": "Maximal väntetid vid uppstart (sekunder)",
       "event_section": "Händelseövervakning",
       "event_active": "Aktiv övervakning",
       "event_rescan": "Automatisk omskanning efter ändringar",

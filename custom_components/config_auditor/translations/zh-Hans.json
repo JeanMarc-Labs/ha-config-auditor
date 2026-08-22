@@ -25,7 +25,7 @@
           "scan_interval": "扫描间隔（分钟）",
           "auto_fix_enabled": "启用自动修复",
           "backup_enabled": "启用自动备份",
-          "startup_delay_seconds": "启动扫描延迟（秒）",
+          "startup_delay_seconds": "启动扫描：最长等待（秒）",
           "event_monitoring_enabled": "持续监控（事件自动扫描）",
           "event_debounce_seconds": "事件监控防抖延迟（秒）"
         }
@@ -678,7 +678,7 @@
       "subtitle": "通用设置、阈值及启用的问题类型",
       "scan_section": "自动扫描",
       "scan_interval": "扫描间隔（分钟）",
-      "startup_delay": "启动延迟（秒）",
+      "startup_delay": "启动时最长等待（秒）",
       "event_section": "事件监控",
       "event_active": "激活监控",
       "event_rescan": "更改后自动重新扫描",

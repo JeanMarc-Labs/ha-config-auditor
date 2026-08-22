@@ -25,7 +25,7 @@
           "scan_interval": "Scanintervall (Minuten)",
           "auto_fix_enabled": "Automatische Korrekturen aktivieren",
           "backup_enabled": "Automatische Backups aktivieren",
-          "startup_delay_seconds": "Startverzögerung für Scan (Sekunden)",
+          "startup_delay_seconds": "Start-Scan: maximale Wartezeit (Sekunden)",
           "event_monitoring_enabled": "Kontinuierliche Überwachung (Autoscan bei Ereignissen)",
           "event_debounce_seconds": "Entprellverzögerung für Ereignisüberwachung (Sekunden)"
         }
@@ -678,7 +678,7 @@
       "subtitle": "Allgemeine Einstellungen, Schwellwerte und aktive Problemtypen",
       "scan_section": "Automatischer Scan",
       "scan_interval": "Scanintervall (Minuten)",
-      "startup_delay": "Startverzögerung (Sekunden)",
+      "startup_delay": "Maximale Wartezeit beim Start (Sekunden)",
       "event_section": "Ereignisüberwachung",
       "event_active": "Aktive Überwachung",
       "event_rescan": "Autoscan nach Änderungen",
