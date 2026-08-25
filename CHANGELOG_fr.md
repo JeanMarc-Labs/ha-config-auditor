@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.7.6] — 2026-08-11 — Titres des Repairs, interrupteur entités bruyantes, correctif sélection des orphelins Recorder, historique déplacé dans .storage
+## [1.7.6] — 2026-08-25 — Rapports authentifiés, scan de démarrage adaptatif, titres des Repairs corrigés, historique déplacé dans .storage
 
 ### Ajouté
 

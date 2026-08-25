@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.7.6] — 2026-08-11 — Repairs panel titles, noisy-entity switch, recorder orphan selection fix, history moved to .storage
+## [1.7.6] — 2026-08-25 — Authenticated reports, adaptive startup scan, Repairs titles fixed, history moved to .storage
 
 ### Added
 
