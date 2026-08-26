@@ -1,4 +1,4 @@
-// HACA-BUILD: 26114fa8  2026-08-21T14:15:26Z
+// HACA-BUILD: 5843fe2b  2026-08-26T06:58:52Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -517,7 +517,7 @@ function _updateTypeCounts(el) {
 (function () {
   'use strict';
   if (customElements.get('haca-panel')) return; // already loaded, skip entirely
-  const HACA_VERSION = '1.7.6'; // build marker
+  const HACA_VERSION = '1.7.7'; // build marker
 
   // Dans l'iframe (embed_iframe:true), ha-icon n'est pas enregistré.
   // On copie la définition depuis le document parent où HA l'a déjà défini.

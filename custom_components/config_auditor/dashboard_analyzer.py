@@ -50,6 +50,9 @@ _SKIP_KEYS = {
     "tap_action", "hold_action", "double_tap_action",
     "state_color", "show_name", "show_icon", "show_state",
     "layout", "mode", "path", "url", "target", "service",
+    # HA 2024.8 renamed `service:` into `action:`; custom cards (flex-table-card,
+    # ...) also carry the service they call under `action:`. Never an entity_id.
+    "action", "perform_action",
     "forecast_type", "graph", "detail", "columns", "square",
     "hvac_modes", "features",
 }
@@ -69,6 +72,7 @@ class DashboardAnalyzer:
         self.hass = hass
         self.issues: list[dict[str, Any]] = []
         self._translator = TranslationHelper(hass)
+        self._registered_services: set[str] = set()
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -78,6 +82,7 @@ class DashboardAnalyzer:
         language = resolve_notification_language(self.hass)
         await self._translator.async_load_language(language)
         self._haca_ignored = await async_get_haca_ignored_entity_ids(self.hass)
+        self._load_registered_services()
 
         known = await self._build_known_entities()
         _LOGGER.warning(
@@ -110,6 +115,8 @@ class DashboardAnalyzer:
 
             missing = []
             for entity_id, card_path in refs:
+                if entity_id in self._registered_services:
+                    continue
                 if entity_id not in known:
                     missing.append((entity_id, card_path))
                     self._add_issue(entity_id, title, card_path, url_path)
@@ -123,6 +130,29 @@ class DashboardAnalyzer:
             "[HACA Dashboard] analyze_all() END — %d total issue(s)", len(self.issues)
         )
         return self.issues
+
+    # ── Registered services ───────────────────────────────────────────────
+
+    def _load_registered_services(self) -> None:
+        """Cache every registered service/action as "domain.service".
+
+        Service names share the entity_id shape (``schedule.get_schedule``), so
+        the generic value scan cannot tell them apart on its own. _SKIP_KEYS
+        covers the keys we know about; this cache covers every other key a
+        custom card may invent. A string is only skipped when it is BOTH absent
+        from hass.states AND a live service, so a deleted entity is still
+        reported.
+        """
+        self._registered_services = set()
+        try:
+            for domain, services in self.hass.services.async_services().items():
+                for service_name in services:
+                    self._registered_services.add(f"{domain}.{service_name}")
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.warning("[HACA Dashboard] Could not load services: %s", exc)
+        _LOGGER.warning(
+            "[HACA Dashboard] Registered services: %d", len(self._registered_services)
+        )
 
     # ── Known entities ────────────────────────────────────────────────────
 

@@ -5,6 +5,13 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
+## [1.7.7] — 2026-08-26 — Le scan des dashboards ne signale plus les actions comme entités manquantes
+
+### Corrigé
+
+- **Les actions utilisées par une carte étaient signalées comme entités manquantes** — Un nom d'action a exactement la même forme `domaine.objet` qu'une entité, si bien que le scan générique des dashboards récupérait toute valeur placée sous `action:` — la clé qu'utilisent les cartes personnalisées comme flex-table-card pour l'action qu'elles appellent, et le nom donné par Home Assistant à `service:` depuis 2024.8. Une carte contenant `action: schedule.get_schedule` produisait un problème `DASHBOARD_MISSING_ENTITY` pour une action qui fonctionne parfaitement. `action` et `perform_action` sont désormais ignorées comme `service` et `target`, et, quelle que soit la clé qui la porte, une chaîne correspondant à une action enregistrée n'est plus signalée. Les entités réellement supprimées restent signalées comme avant.
+
+---
 ## [1.7.6] — 2026-08-25 — Rapports authentifiés, scan de démarrage adaptatif, titres des Repairs corrigés, historique déplacé dans .storage
 
 ### Ajouté
