@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
+## [1.7.7] — 2026-08-26 — Dashboard scan no longer reports actions as missing entities
+
+### Fixed
+
+- **Actions used by a card were reported as missing entities** — An action name has the same `domain.object_id` shape as an entity, so the generic dashboard scan picked up any value under `action:` — the key custom cards such as flex-table-card use for the action they call, and the name Home Assistant gave `service:` in 2024.8. A card containing `action: schedule.get_schedule` produced a `DASHBOARD_MISSING_ENTITY` issue for an action that works perfectly. `action` and `perform_action` are now skipped like `service` and `target`, and, whatever key it sits under, a string matching a registered action is no longer reported. Entities that really were deleted are still reported as before.
+
+---
 ## [1.7.6] — 2026-08-25 — Authenticated reports, adaptive startup scan, Repairs titles fixed, history moved to .storage
 
 ### Added
