@@ -8,7 +8,8 @@ Card registration follows the official HA pattern:
   - Static path registered for /haca-cards/ serving JS files
   - Lovelace resources created via lovelace.resources.async_create_item
   - Registration happens via async_register_cards() called from async_setup
-  - Retry mechanism waits for lovelace.resources.loaded before registering
+  - The resource collection is loaded explicitly so registration never has to
+    wait for a browser to open a dashboard first
 
 Reference: https://community.home-assistant.io/t/974909
 """
@@ -30,6 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # ── Keys in hass.data to track registration state ──────────────────────────
 _STATIC_PATHS_KEY = f"{DOMAIN}_static_paths_registered"
+_CARDS_PATH_KEY = f"{DOMAIN}_cards_path_registered"
 _CARDS_REGISTERED_KEY = f"{DOMAIN}_cards_registered"
 
 # ── Base URL for card JS files ─────────────────────────────────────────────
@@ -66,13 +68,15 @@ async def async_register_cards(hass: HomeAssistant) -> None:
 
     # 1. Register static HTTP path for the card JS files
     www_dir = Path(__file__).parent / "www"
-    try:
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(CARDS_URL_BASE, str(www_dir), True)]
-        )
-        _LOGGER.debug("[HACA] Card static path registered: %s -> %s", CARDS_URL_BASE, www_dir)
-    except RuntimeError:
-        _LOGGER.debug("[HACA] Card static path already registered: %s", CARDS_URL_BASE)
+    if not hass.data.get(_CARDS_PATH_KEY):
+        try:
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(CARDS_URL_BASE, str(www_dir), True)]
+            )
+            _LOGGER.debug("[HACA] Card static path registered: %s -> %s", CARDS_URL_BASE, www_dir)
+        except Exception as exc:
+            _LOGGER.debug("[HACA] Card static path already registered (safe): %s", exc)
+        hass.data[_CARDS_PATH_KEY] = True
 
     # 2. Register Lovelace resources (only works in storage mode)
     lovelace = hass.data.get("lovelace")
@@ -95,23 +99,55 @@ async def async_register_cards(hass: HomeAssistant) -> None:
         )
         return
 
-    # 3. Wait for resources to be loaded, then register
-    await _async_wait_for_lovelace_resources(hass, lovelace, card_version)
+    # 3. Make sure the resource collection is loaded, then register
+    await _async_load_resources_and_register(hass, lovelace, card_version)
 
 
-async def _async_wait_for_lovelace_resources(
+async def _async_load_resources_and_register(
     hass: HomeAssistant, lovelace: Any, card_version: str
 ) -> None:
-    """Wait for Lovelace resources to load, then register card modules."""
+    """Load the Lovelace resource collection, then register the card modules.
+
+    `resources.loaded` only flips to True inside Home Assistant's own
+    `lovelace/resources` websocket handler — that is, when a browser loads a
+    dashboard. Waiting for the flag therefore guaranteed the registration
+    always landed *after* the frontend had already fetched and imported the
+    resource list for that page, leaving the dashboard with
+    "Custom element not found: haca-dashboard-card" until the next full
+    reload. Loading the collection ourselves (the same two lines HA runs in
+    that handler) removes the chicken-and-egg.
+    """
+    resources = lovelace.resources
+
+    if not getattr(resources, "loaded", False):
+        try:
+            await resources.async_load()
+            resources.loaded = True
+        except Exception as exc:  # storage unavailable / API changed
+            _LOGGER.debug("[HACA] Could not load Lovelace resources: %s", exc)
+            _async_retry_when_resources_load(hass, lovelace, card_version)
+            return
+
+    await _async_register_card_modules(hass, lovelace, card_version)
+
+
+def _async_retry_when_resources_load(
+    hass: HomeAssistant, lovelace: Any, card_version: str, attempt: int = 0
+) -> None:
+    """Fallback: poll `resources.loaded` if we could not load them ourselves."""
+    if attempt >= 12:  # ~1 minute, then give up rather than poll forever
+        _LOGGER.warning(
+            "[HACA] Lovelace resources never became available — cards not registered"
+        )
+        return
 
     async def _check_loaded(_now: Any) -> None:
-        if lovelace.resources.loaded:
+        if getattr(lovelace.resources, "loaded", False):
             await _async_register_card_modules(hass, lovelace, card_version)
         else:
-            _LOGGER.debug("[HACA] Lovelace resources not loaded yet, retrying in 5s")
-            async_call_later(hass, 5, _check_loaded)
+            _async_retry_when_resources_load(hass, lovelace, card_version, attempt + 1)
 
-    await _check_loaded(0)
+    async_call_later(hass, 5, _check_loaded)
 
 
 async def _async_register_card_modules(

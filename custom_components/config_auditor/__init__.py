@@ -289,21 +289,20 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """
     hass.data.setdefault(DOMAIN, {})
 
-    # Register Lovelace card resources
-    # If HA is already running, register immediately.
-    # Otherwise, wait for EVENT_HOMEASSISTANT_STARTED.
-    from homeassistant.core import CoreState
-
+    # Register Lovelace card resources as early as possible: the frontend
+    # imports the resource list once per page load, so a resource that lands
+    # after the browser connected stays unknown for that whole session
+    # ("Custom element not found: haca-dashboard-card").
     async def _setup_cards(_event=None) -> None:
         try:
             await async_register_cards(hass)
         except Exception as exc:
             _LOGGER.warning("[HACA] Card registration failed: %s", exc)
 
-    if hass.state == CoreState.running:
-        await _setup_cards()
-    else:
-        hass.bus.async_listen_once("homeassistant_started", _setup_cards)
+    await _setup_cards()
+    # Retried once HA is fully started, in case `lovelace` was not ready yet.
+    # async_register_cards() is idempotent, so this is a no-op if it worked.
+    hass.bus.async_listen_once("homeassistant_started", _setup_cards)
 
     return True
 
