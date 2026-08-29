@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,6 +20,12 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.util import slugify as ha_slugify
 
 from .translation_utils import TranslationHelper
+from .yaml_sources import (
+    iter_domain_files,
+    load_yaml_any,
+    resolve_config_sources,
+    walk_yaml_dir,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -285,10 +292,10 @@ class AutomationAnalyzer:
 
     async def _load_automation_configs(self) -> None:
         """Load automation configurations from all sources:
-        - automations.yaml (standard UI file)
+        - every file the `automation:` key resolves to (flat automations.yaml,
+          !include, or any of the !include_dir_* forms — see yaml_sources)
         - .storage/core.automation (UI automations in HA storage)
         - packages/*.yaml (homeassistant.packages)
-        - Files referenced via !include_dir_merge_list in configuration.yaml
         Deduplicates by unique_id.
         """
         self._automation_configs = {}
@@ -334,24 +341,51 @@ class AutomationAnalyzer:
             entity_id, enriched = _map_config_to_entity(config, source)
             self._automation_configs[entity_id] = enriched
 
-        # ── 1. automations.yaml ───────────────────────────────────────────
-        automations_file = config_dir / "automations.yaml"
-        if automations_file.exists():
-            try:
-                def _read_yaml_list(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        content = yaml.safe_load(f)
-                    return content if isinstance(content, list) else []
+        def _read_automation_sources(cfg_dir: str, wanted_kind: str) -> list[tuple[str, list]]:
+            """Read every automation file of one source kind ("file" or "dir").
 
-                automations = await self.hass.async_add_executor_job(
-                    _read_yaml_list, automations_file
-                )
-                for cfg in automations:
+            Runs in the executor: resolving the sources touches the filesystem
+            too, so the whole walk stays off the event loop.
+            """
+            results: list[tuple[str, list]] = []
+            for kind, source in resolve_config_sources(
+                cfg_dir, "automation", "automations.yaml"
+            ):
+                if kind != wanted_kind:
+                    continue
+                for path in ([source] if kind == "file" else walk_yaml_dir(source)):
+                    if not os.path.isfile(path):
+                        continue
+                    try:
+                        content = load_yaml_any(path)
+                    except Exception as exc:
+                        _LOGGER.error("Error loading %s: %s", path, exc)
+                        continue
+                    try:
+                        rel = os.path.relpath(path, cfg_dir)
+                    except ValueError:  # different drive (Windows dev setups)
+                        rel = path
+                    if isinstance(content, list):
+                        results.append((rel, content))
+                    elif isinstance(content, dict):
+                        results.append((rel, [content]))
+            return results
+
+        # ── 1. Flat files: automations.yaml, or whatever `automation: !include`
+        #       points at. A stale automations.yaml that configuration.yaml no
+        #       longer references is NOT read — HA does not read it either, and
+        #       auditing it produced findings on automations that do not exist.
+        try:
+            flat_results = await self.hass.async_add_executor_job(
+                _read_automation_sources, str(config_dir), "file"
+            )
+            for source_rel, flat_automations in flat_results:
+                for cfg in flat_automations:
                     if isinstance(cfg, dict):
-                        _register(cfg, "automations.yaml")
-                _LOGGER.debug("automations.yaml: loaded %d entries", len(automations))
-            except Exception as e:
-                _LOGGER.error("Error loading automations.yaml: %s", e, exc_info=True)
+                        _register(cfg, source_rel)
+            _LOGGER.debug("automation flat files: loaded %d file(s)", len(flat_results))
+        except Exception as e:
+            _LOGGER.error("Error loading automation files: %s", e, exc_info=True)
 
         # ── 2. .storage/core.automation (UI automations) ──────────────────
         storage_file = config_dir / ".storage" / "core.automation"
@@ -403,51 +437,24 @@ class AutomationAnalyzer:
             except Exception as e:
                 _LOGGER.error("Error loading packages/*.yaml: %s", e, exc_info=True)
 
-        # ── 4. configuration.yaml — !include_dir_merge_list ───────────────
-        config_yaml_path = config_dir / "configuration.yaml"
-        if config_yaml_path.exists():
-            try:
-                def _scan_config_includes(cfg_path: Path, cfg_dir: Path) -> list[tuple[str, list]]:
-                    """Detect and resolve !include_dir_merge_list automation directories."""
-                    results = []
-                    try:
-                        with open(cfg_path, "r", encoding="utf-8") as f:
-                            raw = f.read()
-                        # Detect: automation: !include_dir_merge_list <dir>
-                        import re as _re
-                        matches = _re.findall(
-                            r"^automation\s*:\s*!include_dir_merge_list\s+(\S+)",
-                            raw, _re.MULTILINE
-                        )
-                        for rel_dir in matches:
-                            target = cfg_dir / rel_dir
-                            if target.is_dir():
-                                for yaml_file in sorted(target.rglob("*.yaml")):
-                                    try:
-                                        with open(yaml_file, "r", encoding="utf-8") as f:
-                                            content = yaml.safe_load(f)
-                                        if isinstance(content, list):
-                                            rel = str(yaml_file.relative_to(cfg_dir))
-                                            results.append((rel, content))
-                                        elif isinstance(content, dict):
-                                            rel = str(yaml_file.relative_to(cfg_dir))
-                                            results.append((rel, [content]))
-                                    except Exception:
-                                        pass
-                    except Exception:
-                        pass
-                    return results
-
-                include_results = await self.hass.async_add_executor_job(
-                    _scan_config_includes, config_yaml_path, config_dir
-                )
-                for source_rel, inc_automations in include_results:
-                    for cfg in inc_automations:
-                        if isinstance(cfg, dict):
-                            _register(cfg, source_rel)
-                _LOGGER.debug("configuration.yaml includes: loaded automations from %d files", len(include_results))
-            except Exception as e:
-                _LOGGER.error("Error scanning configuration.yaml includes: %s", e, exc_info=True)
+        # ── 4. Split folders: automation: !include_dir_* <folder> ─────────
+        #       All four directory forms, and every labelled section
+        #       (`automation ui:` + `automation manual:`), not just the one
+        #       !include_dir_merge_list spelling.
+        try:
+            include_results = await self.hass.async_add_executor_job(
+                _read_automation_sources, str(config_dir), "dir"
+            )
+            for source_rel, inc_automations in include_results:
+                for cfg in inc_automations:
+                    if isinstance(cfg, dict):
+                        _register(cfg, source_rel)
+            _LOGGER.debug(
+                "configuration.yaml includes: loaded automations from %d files",
+                len(include_results),
+            )
+        except Exception as e:
+            _LOGGER.error("Error scanning configuration.yaml includes: %s", e, exc_info=True)
 
         _LOGGER.info(
             "Total automation configs loaded: %d (from %d unique sources)",
@@ -456,28 +463,42 @@ class AutomationAnalyzer:
         )
 
     async def _load_script_configs(self) -> None:
-        """Load script configurations from scripts.yaml.
-        
+        """Load script configurations from every file the `script:` key resolves to.
+
+        A flat scripts.yaml, a `!include`, or a split folder
+        (`script: !include_dir_merge_named ha_scripts/`) — all are read. Looking
+        only at <config>/scripts.yaml meant a split install was audited as
+        having zero scripts, silently, which reads as a clean bill of health.
+
         Uses the entity registry to resolve the ACTUAL entity_id for each script,
         because users may have renamed the entity_id via Settings → Entities.
         The YAML key stays the same, but the entity_id in HA's state machine changes.
         """
         self._script_configs.clear()  # Clear stale data from previous scans
         config_dir = Path(self.hass.config.config_dir)
-        scripts_file = config_dir / "scripts.yaml"
-        if not scripts_file.exists(): return
-        
+
+        def _read_all_scripts(cfg_dir: str) -> dict:
+            merged: dict = {}
+            for path in iter_domain_files(cfg_dir, "script", "scripts.yaml"):
+                try:
+                    content = load_yaml_any(path)
+                except Exception as exc:
+                    _LOGGER.error("Error loading %s: %s", path, exc)
+                    continue
+                if isinstance(content, dict):
+                    # !include_dir_merge_named semantics: one merged mapping
+                    merged.update(content)
+            return merged
+
         try:
-            def read_scripts():
-                with open(scripts_file, "r", encoding="utf-8") as f:
-                    content = yaml.safe_load(f)
-                    return content if content is not None else {}
-            
-            scripts = await self.hass.async_add_executor_job(read_scripts)
+            scripts = await self.hass.async_add_executor_job(
+                _read_all_scripts, str(config_dir)
+            )
+            if not scripts:
+                return
 
             # Build a map from original object_id to actual entity_id
             # (handles renamed scripts via entity registry)
-            from homeassistant.helpers import entity_registry as er
             ent_reg = er.async_get(self.hass)
             # Map: original_object_id → actual entity_id
             registry_map: dict[str, str] = {}
@@ -496,10 +517,14 @@ class AutomationAnalyzer:
                 actual_eid = registry_map.get(slug, f"script.{slug}")
                 self._script_configs[actual_eid] = config
         except Exception as e:
-            _LOGGER.error("Error loading scripts.yaml: %s", e)
+            _LOGGER.error("Error loading scripts: %s", e)
 
     async def _load_scene_configs(self) -> None:
-        """Load scene configurations from scenes.yaml.
+        """Load scene configurations from every file the `scene:` key resolves to.
+
+        Same story as scripts: a flat scenes.yaml, a `!include`, or a split
+        folder are all read, instead of returning empty for anything but
+        <config>/scenes.yaml.
 
         HA derives the entity_id from the scene *name* using slugify():
             scene.{slugify(name)}
@@ -507,17 +532,26 @@ class AutomationAnalyzer:
         """
         self._scene_configs.clear()  # Clear stale data from previous scans
         config_dir = Path(self.hass.config.config_dir)
-        scenes_file = config_dir / "scenes.yaml"
-        if not scenes_file.exists():
-            return
+
+        def _read_all_scenes(cfg_dir: str) -> list:
+            merged: list = []
+            for path in iter_domain_files(cfg_dir, "scene", "scenes.yaml"):
+                try:
+                    content = load_yaml_any(path)
+                except Exception as exc:
+                    _LOGGER.error("Error loading %s: %s", path, exc)
+                    continue
+                if isinstance(content, list):
+                    # !include_dir_merge_list semantics: one concatenated list
+                    merged.extend(content)
+                elif isinstance(content, dict):
+                    merged.append(content)
+            return merged
 
         try:
-            def read_scenes():
-                with open(scenes_file, "r", encoding="utf-8") as f:
-                    content = yaml.safe_load(f)
-                    return content if content is not None else []
-
-            scenes = await self.hass.async_add_executor_job(read_scenes)
+            scenes = await self.hass.async_add_executor_job(
+                _read_all_scenes, str(config_dir)
+            )
             for config in scenes:
                 if not isinstance(config, dict):
                     continue
@@ -529,7 +563,7 @@ class AutomationAnalyzer:
                 entity_id = f"scene.{ha_slugify(str(name_or_id))}"
                 self._scene_configs[entity_id] = config
         except Exception as e:
-            _LOGGER.error("Error loading scenes.yaml: %s", e)
+            _LOGGER.error("Error loading scenes: %s", e)
 
     # ═══════════════════════════════════════════════════════════════════════
     # v1.3.0 — Script graph analysis (a/)

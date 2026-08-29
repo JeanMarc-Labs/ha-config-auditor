@@ -37,6 +37,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components.http import HomeAssistantView
 
 from .const import DOMAIN
+from .yaml_sources import (
+    default_write_target,
+    is_within,
+    iter_domain_files,
+    load_yaml_ha,
+    parse_yaml_ha,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -605,27 +612,26 @@ async def _tool_get_automation(hass: HomeAssistant, params: dict) -> dict:
 
     # Tenter de lire le YAML depuis les fichiers de config
     import yaml
-    from pathlib import Path
 
     auto_id = attrs.get("id") or target_id.split(".")[-1]
     yaml_content = None
+    source_file = None
 
     try:
-        auto_file = Path(hass.config.config_dir) / "automations.yaml"
         friendly = attrs.get("friendly_name", "")
 
-        def _read_auto_yaml():
-            if not auto_file.exists():
-                return None
-            raw = auto_file.read_text(encoding="utf-8")
-            automations = yaml.safe_load(raw) or []
-            for auto in automations:
-                if str(auto.get("id", "")) == str(auto_id) or \
-                   auto.get("alias", "") == friendly:
-                    return yaml.dump(auto, allow_unicode=True, default_flow_style=False)
-            return None
-
-        yaml_content = await hass.async_add_executor_job(_read_auto_yaml)
+        _path, docs, index = await _async_scan_list_domain(
+            hass, "automation", "automations.yaml",
+            lambda auto: (
+                str(auto.get("id", "")) == str(auto_id)
+                or auto.get("alias", "") == friendly
+            ),
+        )
+        if index >= 0:
+            yaml_content = yaml.dump(
+                docs[index], allow_unicode=True, default_flow_style=False
+            )
+            source_file = _path
     except Exception as exc:
         _LOGGER.debug("[HACA MCP] YAML read error: %s", exc)
 
@@ -634,7 +640,12 @@ async def _tool_get_automation(hass: HomeAssistant, params: dict) -> dict:
         "alias": attrs.get("friendly_name", target_id),
         "state": state.state if state else "unknown",
         "last_triggered": attrs.get("last_triggered"),
-        "yaml": yaml_content or f"# YAML not available for {target_id}\n# Check automations.yaml",
+        "source_file": source_file,
+        "yaml": yaml_content or (
+            f"# YAML not available for {target_id}\n"
+            f"# Not found in any file the 'automation:' key resolves to — "
+            f"UI-managed or blueprint-based automations have no standalone YAML."
+        ),
     }
 
 
@@ -1222,7 +1233,7 @@ HA_CONTROL_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_create_script",
-        "description": "Create or update a script in scripts.yaml. ALWAYS call ha_backup_create first. Provide: alias, sequence. Call ha_reload_core after.",
+        "description": "Create or update a script, in whichever file the config `script:` key resolves to. ALWAYS call ha_backup_create first. Provide: alias, sequence. Call ha_reload_core after.",
         "inputSchema": {
             "type": "object",
             "required": ["script_id", "alias", "sequence"],
@@ -1370,9 +1381,25 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
     }
 
     try:
-        auto_file = Path(hass.config.config_dir) / "automations.yaml"
+        # Refuser un doublon d'alias dans N'IMPORTE quel fichier de la config,
+        # pas seulement dans automations.yaml.
+        existing_path, _docs, _idx = await _async_scan_list_domain(
+            hass, "automation", "automations.yaml",
+            lambda item: item.get("alias") == alias,
+        )
+        if existing_path is not None:
+            return {"error": f"Automation '{alias}' already exists in {existing_path}. "
+                             "Use ha_update_automation to modify it."}
 
-        # Lire les automations existantes
+        # Cible d'écriture : le fichier plat sur une install classique, un
+        # fichier dédié dans le dossier mergé sur une config splittée — jamais
+        # la racine de config, que HA ne lit plus dans ce cas.
+        auto_file = Path(
+            await _async_write_target(
+                hass, "automation", "automations.yaml", "haca_mcp.yaml"
+            )
+        )
+
         def _read_existing():
             if not auto_file.exists():
                 return []
@@ -1381,14 +1408,11 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
             return data if isinstance(data, list) else []
 
         existing: list = await hass.async_add_executor_job(_read_existing)
-
-        # Vérifier doublon par alias
-        for a in existing:
-            if isinstance(a, dict) and a.get("alias") == alias:
-                return {"error": f"Automation '{alias}' already exists. Use ha_update_automation to modify it."}
-
         existing.append(new_auto)
         new_yaml = yaml.dump(existing, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        await hass.async_add_executor_job(
+            lambda: auto_file.parent.mkdir(parents=True, exist_ok=True)
+        )
         await hass.async_add_executor_job(
             _atomic_write, auto_file, new_yaml
         )
@@ -1420,39 +1444,30 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
     await _auto_backup(hass, "_tool_ha_update_automation")
 
     try:
-        auto_file = Path(hass.config.config_dir) / "automations.yaml"
-
-        def _read_auto():
-            if not auto_file.exists():
-                return None
-            return auto_file.read_text(encoding="utf-8")
-
-        raw = await hass.async_add_executor_job(_read_auto)
-        if raw is None:
-            return {"error": "automations.yaml not found"}
-        automations = yaml.safe_load(raw) or []
-        if not isinstance(automations, list):
-            return {"error": "automations.yaml has unexpected format"}
-
-        # Find automation
-        target_idx = None
+        # Chercher l'automation dans TOUS les fichiers que la clé `automation:`
+        # résout, et n'écrire que dans celui qui la contient.
         search_name = entity_id.replace("automation.", "").replace("_", " ")
         state = hass.states.get(entity_id)
         friendly = state.attributes.get("friendly_name", "") if state else ""
 
-        for idx, auto in enumerate(automations):
-            if not isinstance(auto, dict):
-                continue
-            if (auto.get("alias", "").lower() == friendly.lower()
-                    or auto.get("alias", "").lower() == search_name.lower()
-                    or str(auto.get("id", "")) in entity_id):
-                target_idx = idx
-                break
+        def _matches(auto: dict) -> bool:
+            alias = (auto.get("alias") or "").lower()
+            return (
+                (bool(friendly) and alias == friendly.lower())
+                or alias == search_name.lower()
+                or (bool(auto.get("id")) and str(auto["id"]) in entity_id)
+            )
 
-        if target_idx is None:
-            return {"error": f"Automation '{entity_id}' not found in automations.yaml. "
+        found_path, automations, target_idx = await _async_scan_list_domain(
+            hass, "automation", "automations.yaml", _matches
+        )
+        if target_idx < 0:
+            files = await _async_domain_files(hass, "automation", "automations.yaml")
+            return {"error": f"Automation '{entity_id}' not found in any automation YAML file "
+                             f"({len(files)} scanned). "
                              f"Note: only YAML automations can be updated this way."}
 
+        auto_file = Path(found_path)
         auto = automations[target_idx]
 
         # Apply updates — accept both new format (triggers/actions/conditions) and legacy
@@ -1499,7 +1514,8 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
         return {
             "success": True,
             "alias": auto.get("alias"),
-            "message": f"Automation '{auto.get('alias')}' updated and reloaded.",
+            "file": str(auto_file),
+            "message": f"Automation '{auto.get('alias')}' updated in {auto_file} and reloaded.",
         }
     except Exception as exc:
         return {"error": f"Failed to update automation: {exc}"}
@@ -1718,7 +1734,18 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
     }
 
     try:
-        scripts_file = Path(hass.config.config_dir) / "scripts.yaml"
+        # Un script existant est réécrit dans SON fichier ; un nouveau va dans
+        # la cible d'écriture (scripts.yaml à plat, fichier dédié si splitté).
+        owner_path, _owner_data, _owner_key = await _async_scan_named_domain(
+            hass, "script", "scripts.yaml",
+            lambda key, _entry: key == script_id,
+        )
+        if owner_path is not None:
+            scripts_file = Path(owner_path)
+        else:
+            scripts_file = Path(
+                await _async_write_target(hass, "script", "scripts.yaml", "haca_mcp.yaml")
+            )
 
         def _read_scripts():
             if not scripts_file.exists():
@@ -1732,6 +1759,9 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
         action = "updated" if script_id in existing else "created"
         existing[script_id] = script_def
         new_yaml = yaml.dump(existing, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        await hass.async_add_executor_job(
+            lambda: scripts_file.parent.mkdir(parents=True, exist_ok=True)
+        )
         await _safe_write_and_reload(hass, scripts_file, new_yaml, "script")
 
         return {
@@ -1740,7 +1770,8 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
             "entity_id": f"script.{script_id}",
             "alias": alias,
             "action": action,
-            "message": f"Script '{alias}' {action} and reloaded. Call it with ha_call_service(domain='script', service='{script_id}').",
+            "file": str(scripts_file),
+            "message": f"Script '{alias}' {action} in {scripts_file} and reloaded. Call it with ha_call_service(domain='script', service='{script_id}').",
         }
     except Exception as exc:
         return {"error": f"Failed to create script: {exc}"}
@@ -2093,7 +2124,7 @@ _HA_EXTENDED_TOOLS: list[dict[str, Any]] = [
     {
         "name": "ha_remove_automation",
         "description": (
-            "Permanently delete an automation from automations.yaml. "
+            "Permanently delete an automation from the file that holds it. "
             "The automation is reloaded immediately after deletion. "
             "IMPORTANT: call ha_backup_create first if this is a destructive operation. "
             "Use haca_get_automation to inspect the automation before deleting."
@@ -2248,6 +2279,118 @@ async def _safe_write_and_reload(
             f"Reload failed after writing {path.name} — file restored to original. "
             f"Error: {reload_exc}"
         ) from reload_exc
+
+
+def _read_plain_yaml(path: str):
+    """Parse one config file with plain PyYAML, for the read-modify-write tools.
+
+    Deliberately NOT HA's loader: these paths dump the parsed data back to
+    disk, and HA's loader expands `!secret` / `!include`, which would inline a
+    secret in clear text or flatten an include into the file. A file carrying
+    HA tags fails to parse here and is skipped — the tool reports "not found"
+    instead of rewriting it wrongly.
+    """
+    import yaml
+
+    with open(path, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+async def _async_scan_list_domain(
+    hass: "HomeAssistant", key: str, default_filename: str, match
+) -> tuple[str | None, list, int]:
+    """Find an entry in a list-shaped domain (automation, scene).
+
+    Scans every file the domain key resolves to — a split config keeps its
+    entries in several files — and returns ``(path, documents, index)`` of the
+    first match, or ``(None, [], -1)``. Writes must go back to that one file.
+    """
+
+    def _scan() -> tuple[str | None, list, int]:
+        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
+            try:
+                data = _read_plain_yaml(path) or []
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for index, item in enumerate(data):
+                if isinstance(item, dict) and match(item):
+                    return path, data, index
+        return None, [], -1
+
+    return await hass.async_add_executor_job(_scan)
+
+
+async def _async_scan_named_domain(
+    hass: "HomeAssistant", key: str, default_filename: str, match
+) -> tuple[str | None, dict, str | None]:
+    """Find an entry in a mapping-shaped domain (script).
+
+    Returns ``(path, mapping, key_of_match)`` for the file that holds it, or
+    ``(None, {}, None)``.
+    """
+
+    def _scan() -> tuple[str | None, dict, str | None]:
+        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
+            try:
+                data = _read_plain_yaml(path) or {}
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            for entry_key, entry in data.items():
+                if isinstance(entry, dict) and match(entry_key, entry):
+                    return path, data, entry_key
+        return None, {}, None
+
+    return await hass.async_add_executor_job(_scan)
+
+
+async def _async_load_list_domain(
+    hass: "HomeAssistant", key: str, default_filename: str
+) -> list[tuple[str, list]]:
+    """Every (path, documents) pair for a list-shaped domain.
+
+    For callers that need several matching passes in priority order across the
+    whole config (exact id, then exact alias, then case-insensitive) rather
+    than a first-match-wins scan.
+    """
+
+    def _load() -> list[tuple[str, list]]:
+        loaded: list[tuple[str, list]] = []
+        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
+            try:
+                data = _read_plain_yaml(path) or []
+            except Exception:
+                continue
+            if isinstance(data, list):
+                loaded.append((path, data))
+        return loaded
+
+    return await hass.async_add_executor_job(_load)
+
+
+async def _async_domain_files(
+    hass: "HomeAssistant", key: str, default_filename: str
+) -> list[str]:
+    """Every file the domain key resolves to, resolved off the event loop."""
+    return await hass.async_add_executor_job(
+        iter_domain_files, hass.config.config_dir, key, default_filename
+    )
+
+
+async def _async_write_target(
+    hass: "HomeAssistant", key: str, default_filename: str, split_filename: str
+) -> str:
+    """Where a newly created entry should be written, off the event loop."""
+    return await hass.async_add_executor_job(
+        default_write_target,
+        hass.config.config_dir,
+        key,
+        default_filename,
+        split_filename,
+    )
 
 
 async def _async_read_file(hass: "HomeAssistant", path: str, encoding: str = "utf-8") -> str:
@@ -2483,27 +2626,12 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_remove_automation")
 
-    # Normalise: "automation.morning_routine" → look by entity_id or alias
-    lookup = identifier.lower()
-    if lookup.startswith("automation."):
-        lookup_field = "entity_id_or_alias"
-    else:
-        lookup_field = "alias"
-
     try:
-        auto_file = Path(hass.config.config_dir) / "automations.yaml"
-
-        def _read_auto():
-            if not auto_file.exists():
-                return None
-            return auto_file.read_text(encoding="utf-8")
-
-        raw = await hass.async_add_executor_job(_read_auto)
-        if raw is None:
-            return {"error": "automations.yaml not found"}
-        automations: list = yaml.safe_load(raw) or []
-        if not isinstance(automations, list):
-            return {"error": "automations.yaml is not a list"}
+        # Toutes les sources de la clé `automation:` — la passe de recherche
+        # doit rester globale (id exact d'abord, tous fichiers confondus).
+        loaded = await _async_load_list_domain(hass, "automation", "automations.yaml")
+        if not loaded:
+            return {"error": "no automation YAML file found"}
 
         # Find the automation — priority order (most precise first):
         # 1. Exact match on HA numeric id (most reliable — never ambiguous)
@@ -2515,51 +2643,62 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
         # because "Lumière salon" and "Lumiere salon" would both match the same slug.
         slug = identifier.removeprefix("automation.") if identifier.startswith("automation.") else None
 
+        found_path = None
+        found_docs: list = []
         found_idx = None
         found_alias = None
 
         # Pass 1 — exact id or exact entity_id slug
-        for i, a in enumerate(automations):
-            if not isinstance(a, dict):
-                continue
-            ha_id = str(a.get("id", "")).strip()
-            if ha_id and ha_id == (slug or identifier):
-                found_idx = i
-                found_alias = str(a.get("alias", "")).strip()
+        for path, automations in loaded:
+            for i, a in enumerate(automations):
+                if not isinstance(a, dict):
+                    continue
+                ha_id = str(a.get("id", "")).strip()
+                if ha_id and ha_id == (slug or identifier):
+                    found_path, found_docs, found_idx = path, automations, i
+                    found_alias = str(a.get("alias", "")).strip()
+                    break
+            if found_idx is not None:
                 break
 
         # Pass 2 — exact alias (case-sensitive, then case-insensitive)
         if found_idx is None:
             for sensitive in (True, False):
-                for i, a in enumerate(automations):
-                    if not isinstance(a, dict):
-                        continue
-                    alias_val = str(a.get("alias", "")).strip()
-                    cmp_id  = alias_val if sensitive else alias_val.lower()
-                    cmp_ref = identifier if sensitive else identifier.lower()
-                    if cmp_id == cmp_ref:
-                        found_idx = i
-                        found_alias = alias_val
+                for path, automations in loaded:
+                    for i, a in enumerate(automations):
+                        if not isinstance(a, dict):
+                            continue
+                        alias_val = str(a.get("alias", "")).strip()
+                        cmp_id  = alias_val if sensitive else alias_val.lower()
+                        cmp_ref = identifier if sensitive else identifier.lower()
+                        if cmp_id == cmp_ref:
+                            found_path, found_docs, found_idx = path, automations, i
+                            found_alias = alias_val
+                            break
+                    if found_idx is not None:
                         break
                 if found_idx is not None:
                     break
 
         if found_idx is None:
             return {
-                "error": f"Automation '{identifier}' not found in automations.yaml. "
+                "error": f"Automation '{identifier}' not found in any automation YAML file "
+                         f"({len(loaded)} scanned). "
                          f"Use ha_get_entities(domain='automation') to list available automations.",
             }
 
-        # Remove it
-        removed = automations.pop(found_idx)
-        new_yaml = yaml.dump(automations, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        # Remove it — rewriting only the file that actually holds it
+        auto_file = Path(found_path)
+        removed = found_docs.pop(found_idx)
+        new_yaml = yaml.dump(found_docs, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _safe_write_and_reload(hass, auto_file, new_yaml, "automation")
 
         return {
             "success": True,
             "removed_alias": found_alias,
             "removed_id": removed.get("id", ""),
-            "message": f"Automation '{found_alias}' deleted from automations.yaml and reloaded.",
+            "file": str(auto_file),
+            "message": f"Automation '{found_alias}' deleted from {auto_file} and reloaded.",
         }
 
     except Exception as exc:
@@ -2827,7 +2966,7 @@ _HA_MEDIUM_TOOLS: list[dict[str, Any]] = [
                 "include_orphans_check": {
                     "type": "boolean",
                     "default": True,
-                    "description": "If true, check each helper against automations.yaml and scripts.yaml to flag orphans.",
+                    "description": "If true, check each helper against every automation and script YAML file to flag orphans.",
                 },
             },
         },
@@ -3016,20 +3155,27 @@ async def _tool_ha_deep_search(hass: HomeAssistant, params: dict) -> dict:
 
     def _search_files() -> list[dict]:
         """Lecture + recherche dans le thread executor — avec timeout implicite."""
+        # Tous les fichiers des clés `automation:` / `script:` : sur une config
+        # splittée, chercher uniquement les fichiers plats ne trouvait rien.
         files_to_search: list[tuple[str, Path]] = []
         if scope in ("automations", "all"):
-            auto_file = config_dir / "automations.yaml"
-            if auto_file.exists():
-                files_to_search.append(("automation", auto_file))
+            files_to_search += [
+                ("automation", Path(p))
+                for p in iter_domain_files(str(config_dir), "automation", "automations.yaml")
+            ]
         if scope in ("scripts", "all"):
-            script_file = config_dir / "scripts.yaml"
-            if script_file.exists():
-                files_to_search.append(("script", script_file))
+            files_to_search += [
+                ("script", Path(p))
+                for p in iter_domain_files(str(config_dir), "script", "scripts.yaml")
+            ]
 
         results: list[dict] = []
         for kind, path in files_to_search:
-            raw = path.read_text(encoding="utf-8")
-            data = yaml.safe_load(raw) or {}
+            try:
+                raw = path.read_text(encoding="utf-8")
+                data = yaml.safe_load(raw) or {}
+            except Exception:
+                continue
             items = data if isinstance(data, list) else [
                 {"id": k, "alias": k, **v} for k, v in data.items()
                 if isinstance(v, dict)
@@ -3140,7 +3286,6 @@ _HELPER_DOMAINS = {
 
 async def _tool_ha_config_list_helpers(hass: HomeAssistant, params: dict) -> dict:
     """List helper entities, optionally flagging orphans."""
-    import yaml
     from pathlib import Path
     from homeassistant.helpers import entity_registry as er
 
@@ -3158,11 +3303,19 @@ async def _tool_ha_config_list_helpers(hass: HomeAssistant, params: dict) -> dic
             config_dir = Path(hass.config.config_dir)
 
             def _read_corpus():
+                # Tous les fichiers d'automations et de scripts : avec une
+                # config splittée, un corpus limité aux fichiers plats est vide
+                # et TOUS les helpers ressortent comme orphelins.
                 corpus = ""
-                for fname in ("automations.yaml", "scripts.yaml"):
-                    fpath = config_dir / fname
-                    if fpath.exists():
-                        corpus += fpath.read_text(encoding="utf-8")
+                for key, default in (
+                    ("automation", "automations.yaml"),
+                    ("script", "scripts.yaml"),
+                ):
+                    for fpath in iter_domain_files(str(config_dir), key, default):
+                        try:
+                            corpus += Path(fpath).read_text(encoding="utf-8")
+                        except Exception:
+                            continue
                 return corpus
 
             reference_corpus = await hass.async_add_executor_job(_read_corpus)
@@ -3192,7 +3345,7 @@ async def _tool_ha_config_list_helpers(hass: HomeAssistant, params: dict) -> dic
             "total": len(helpers),
             "orphan_count": orphan_count if include_orphans_check else None,
             "helpers": helpers,
-            "note": f"{orphan_count} helper(s) not referenced in automations.yaml or scripts.yaml." if include_orphans_check and orphan_count else "",
+            "note": f"{orphan_count} helper(s) not referenced in any automation or script YAML file." if include_orphans_check and orphan_count else "",
         }
 
     except Exception as exc:
@@ -3904,7 +4057,7 @@ async def _tool_ha_create_blueprint(hass: HomeAssistant, params: dict) -> dict:
     # ── Step 4: write the file ────────────────────────────────────────────────
     slug_name = _slugify(blueprint_name, 60)
     bp_dir = hass.config.path("blueprints", "automation", "haca")
-    await hass.async_add_executor_job(os.makedirs, bp_dir, 0o777, True)
+    await hass.async_add_executor_job(os.makedirs, bp_dir, 0o755, True)
     bp_path = os.path.join(bp_dir, f"{slug_name}.yaml")
 
     try:
@@ -3962,42 +4115,46 @@ async def _tool_ha_get_script(hass: HomeAssistant, params: dict) -> dict:
     if not script_ref:
         return {"error": "entity_id required (e.g. 'script.morning_routine' or alias)"}
 
-    scripts_path = hass.config.path("scripts.yaml")
-    try:
-        _raw = await _async_read_file(hass, scripts_path)
-        all_scripts: dict = _yaml.safe_load(_raw) or {}
-    except FileNotFoundError:
-        return {"error": f"scripts.yaml not found at {scripts_path}"}
-    except Exception as exc:
-        return {"error": f"Failed to read scripts.yaml: {exc}"}
-
     # Normalise ref → slug
     slug = script_ref.replace("script.", "").strip()
-    # Try exact match first, then alias search
-    found_key = None
-    found_data = None
-    for key, val in all_scripts.items():
+
+    def _matches(key: str, val: dict) -> bool:
         if key == slug:
-            found_key, found_data = key, val
-            break
-        if isinstance(val, dict):
-            alias = val.get("alias", "") or val.get("sequence", [{}])[0] if val.get("sequence") else ""
-            if str(alias).lower() == script_ref.lower():
-                found_key, found_data = key, val
-                break
+            return True
+        alias = val.get("alias", "")
+        return bool(alias) and str(alias).lower() == script_ref.lower()
+
+    # Cherche dans TOUS les fichiers que la clé `script:` résout — un
+    # `!include_dir_merge_named` répartit les scripts sur plusieurs fichiers.
+    found_path, all_scripts, found_key = await _async_scan_named_domain(
+        hass, "script", "scripts.yaml", _matches
+    )
 
     if found_key is None:
+        files = await _async_domain_files(hass, "script", "scripts.yaml")
+        available: list[str] = []
+        for path in files:
+            try:
+                data = await hass.async_add_executor_job(_read_plain_yaml, path)
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                available.extend(data.keys())
         return {
-            "error": f"Script '{script_ref}' not found in scripts.yaml",
-            "available_slugs": list(all_scripts.keys())[:20],
+            "error": f"Script '{script_ref}' not found in any script YAML file "
+                     f"({len(files)} scanned)",
+            "files_scanned": files,
+            "available_slugs": available[:20],
         }
 
+    found_data = all_scripts[found_key]
     return {
         "slug": found_key,
         "entity_id": f"script.{found_key}",
         "alias": found_data.get("alias", found_key) if isinstance(found_data, dict) else found_key,
         "description": found_data.get("description", "") if isinstance(found_data, dict) else "",
         "mode": found_data.get("mode", "single") if isinstance(found_data, dict) else "single",
+        "source_file": found_path,
         "yaml": _yaml.dump({found_key: found_data}, allow_unicode=True, default_flow_style=False),
         "data": found_data,
     }
@@ -4010,20 +4167,20 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
     if not script_ref:
         return {"error": "entity_id required"}
 
-    scripts_path
-
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_update_script")
-    scripts_path = hass.config.path("scripts.yaml")
-    try:
-        _raw_scripts_path = await _async_read_file(hass, scripts_path)
-        all_scripts: dict = _yaml.safe_load(_raw_scripts_path) or {}
-    except Exception as exc:
-        return {"error": f"Failed to read scripts.yaml: {exc}"}
 
     slug = script_ref.replace("script.", "").strip()
-    if slug not in all_scripts:
-        return {"error": f"Script '{slug}' not found", "available": list(all_scripts.keys())[:20]}
+    scripts_path, all_scripts, found_key = await _async_scan_named_domain(
+        hass, "script", "scripts.yaml", lambda key, _entry: key == slug,
+    )
+    if found_key is None:
+        files = await _async_domain_files(hass, "script", "scripts.yaml")
+        return {
+            "error": f"Script '{slug}' not found in any script YAML file "
+                     f"({len(files)} scanned)",
+            "files_scanned": files,
+        }
 
     current = all_scripts[slug] if isinstance(all_scripts[slug], dict) else {}
     # Apply updates
@@ -4040,7 +4197,7 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
         _scripts_content = _yaml.dump(all_scripts, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _async_write_file(hass, scripts_path, _scripts_content)
     except Exception as exc:
-        return {"error": f"Failed to write scripts.yaml: {exc}"}
+        return {"error": f"Failed to write {scripts_path}: {exc}"}
 
     try:
         await hass.services.async_call("script", "reload", blocking=True)
@@ -4050,7 +4207,8 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
     return {
         "success": True,
         "entity_id": f"script.{slug}",
-        "message": f"Script '{slug}' updated and reloaded.",
+        "file": scripts_path,
+        "message": f"Script '{slug}' updated in {scripts_path} and reloaded.",
     }
 
 
@@ -4061,27 +4219,27 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
     if not script_ref:
         return {"error": "entity_id required"}
 
-    scripts_path
-
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_remove_script")
-    scripts_path = hass.config.path("scripts.yaml")
-    try:
-        _raw_scripts_path = await _async_read_file(hass, scripts_path)
-        all_scripts: dict = _yaml.safe_load(_raw_scripts_path) or {}
-    except Exception as exc:
-        return {"error": f"Failed to read scripts.yaml: {exc}"}
 
     slug = script_ref.replace("script.", "").strip()
-    if slug not in all_scripts:
-        return {"error": f"Script '{slug}' not found", "available": list(all_scripts.keys())[:20]}
+    scripts_path, all_scripts, found_key = await _async_scan_named_domain(
+        hass, "script", "scripts.yaml", lambda key, _entry: key == slug,
+    )
+    if found_key is None:
+        files = await _async_domain_files(hass, "script", "scripts.yaml")
+        return {
+            "error": f"Script '{slug}' not found in any script YAML file "
+                     f"({len(files)} scanned)",
+            "files_scanned": files,
+        }
 
     removed = all_scripts.pop(slug)
     try:
         _scripts_content = _yaml.dump(all_scripts, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _async_write_file(hass, scripts_path, _scripts_content)
     except Exception as exc:
-        return {"error": f"Failed to write scripts.yaml: {exc}"}
+        return {"error": f"Failed to write {scripts_path}: {exc}"}
 
     try:
         await hass.services.async_call("script", "reload", blocking=True)
@@ -4093,7 +4251,8 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
         "success": True,
         "deleted": slug,
         "alias": alias,
-        "message": f"Script '{alias}' deleted from scripts.yaml.",
+        "file": scripts_path,
+        "message": f"Script '{alias}' deleted from {scripts_path}.",
     }
 
 
@@ -4106,39 +4265,49 @@ async def _tool_ha_get_scene(hass: HomeAssistant, params: dict) -> dict:
     if not scene_ref:
         return {"error": "entity_id required (e.g. 'scene.soiree' or alias 'Soirée')"}
 
-    scenes_path = hass.config.path("scenes.yaml")
-    try:
-        _raw_scenes_path = await _async_read_file(hass, scenes_path)
-        all_scenes: list = _yaml.safe_load(_raw_scenes_path) or []
-    except FileNotFoundError:
-        return {"error": f"scenes.yaml not found at {scenes_path}"}
-    except Exception as exc:
-        return {"error": f"Failed to read scenes.yaml: {exc}"}
-
     slug = scene_ref.replace("scene.", "").strip().lower()
-    for scene in all_scenes:
-        if not isinstance(scene, dict):
-            continue
+
+    def _matches(scene: dict) -> bool:
         sid = str(scene.get("id", "")).lower()
         sname = str(scene.get("name", "")).lower()
-        if sid == slug or sname == slug or sname == scene_ref.lower():
-            return {
-                "id": scene.get("id"),
-                "name": scene.get("name"),
-                "entity_id": f"scene.{scene.get('id', slug)}",
-                "entities": scene.get("entities", {}),
-                "yaml": _yaml.dump(scene, allow_unicode=True, default_flow_style=False),
-            }
+        return sid == slug or sname == slug or sname == scene_ref.lower()
 
+    found_path, all_scenes, index = await _async_scan_list_domain(
+        hass, "scene", "scenes.yaml", _matches
+    )
+    if index >= 0:
+        scene = all_scenes[index]
+        return {
+            "id": scene.get("id"),
+            "name": scene.get("name"),
+            "entity_id": f"scene.{scene.get('id', slug)}",
+            "entities": scene.get("entities", {}),
+            "source_file": found_path,
+            "yaml": _yaml.dump(scene, allow_unicode=True, default_flow_style=False),
+        }
+
+    files = await _async_domain_files(hass, "scene", "scenes.yaml")
+    available: list = []
+    for path in files:
+        try:
+            data = await hass.async_add_executor_job(_read_plain_yaml, path)
+        except Exception:
+            continue
+        if isinstance(data, list):
+            available.extend(
+                s.get("name") or s.get("id") for s in data if isinstance(s, dict)
+            )
     return {
-        "error": f"Scene '{scene_ref}' not found",
-        "available": [s.get("name") or s.get("id") for s in all_scenes if isinstance(s, dict)][:20],
+        "error": f"Scene '{scene_ref}' not found in any scene YAML file "
+                 f"({len(files)} scanned)",
+        "files_scanned": files,
+        "available": available[:20],
     }
 
 
 async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
     """Create a new scene in scenes.yaml."""
-    import yaml as _yaml, re
+    import yaml as _yaml
     name = params.get("name", "").strip()
     entities = params.get("entities")
     if not name:
@@ -4147,19 +4316,27 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
         return {"error": "entities dict required, e.g. {'light.salon': {'state': 'on', 'brightness': 200}}"}
 
     slug = _slugify(name)
-    scenes_path = hass.config.path("scenes.yaml")
+
+    # Doublon cherché dans toute la config, pas seulement dans scenes.yaml
+    dup_path, _dup_docs, dup_idx = await _async_scan_list_domain(
+        hass, "scene", "scenes.yaml", lambda s: s.get("id") == slug
+    )
+    if dup_idx >= 0:
+        return {"error": f"Scene with id '{slug}' already exists in {dup_path}. "
+                         "Use ha_update_scene to modify."}
+
+    scenes_path = await _async_write_target(
+        hass, "scene", "scenes.yaml", "haca_mcp.yaml"
+    )
     try:
         _raw_scenes_path = await _async_read_file(hass, scenes_path)
         all_scenes: list = _yaml.safe_load(_raw_scenes_path) or []
     except FileNotFoundError:
         all_scenes = []
     except Exception as exc:
-        return {"error": f"Failed to read scenes.yaml: {exc}"}
-
-    # Check duplicate
-    for s in all_scenes:
-        if isinstance(s, dict) and s.get("id") == slug:
-            return {"error": f"Scene with id '{slug}' already exists. Use ha_update_scene to modify."}
+        return {"error": f"Failed to read {scenes_path}: {exc}"}
+    if not isinstance(all_scenes, list):
+        return {"error": f"{scenes_path} does not contain a list of scenes"}
 
     new_scene: dict = {"id": slug, "name": name, "entities": entities}
     if params.get("icon"):
@@ -4167,10 +4344,15 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
     all_scenes.append(new_scene)
 
     try:
+        import os as _os
+
+        await hass.async_add_executor_job(
+            _os.makedirs, _os.path.dirname(scenes_path), 0o755, True
+        )
         _sc = _yaml.dump(all_scenes, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _async_write_file(hass, scenes_path, _sc)
     except Exception as exc:
-        return {"error": f"Failed to write scenes.yaml: {exc}"}
+        return {"error": f"Failed to write {scenes_path}: {exc}"}
 
     try:
         await hass.services.async_call("scene", "reload", blocking=True)
@@ -4181,7 +4363,8 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
         "success": True,
         "id": slug,
         "entity_id": f"scene.{slug}",
-        "message": f"Scene '{name}' created (scene.{slug}).",
+        "file": scenes_path,
+        "message": f"Scene '{name}' created in {scenes_path} (scene.{slug}).",
     }
 
 
@@ -4192,29 +4375,22 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
     if not scene_ref:
         return {"error": "entity_id required"}
 
-    scenes_path
-
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_update_scene")
-    scenes_path = hass.config.path("scenes.yaml")
-    try:
-        _raw_scenes_path = await _async_read_file(hass, scenes_path)
-        all_scenes: list = _yaml.safe_load(_raw_scenes_path) or []
-    except Exception as exc:
-        return {"error": f"Failed to read scenes.yaml: {exc}"}
 
     slug = scene_ref.replace("scene.", "").strip().lower()
-    found_idx = None
-    for i, s in enumerate(all_scenes):
-        if isinstance(s, dict) and (
+    scenes_path, all_scenes, found_idx = await _async_scan_list_domain(
+        hass, "scene", "scenes.yaml",
+        lambda s: (
             str(s.get("id", "")).lower() == slug
             or str(s.get("name", "")).lower() == scene_ref.lower()
-        ):
-            found_idx = i
-            break
-
-    if found_idx is None:
-        return {"error": f"Scene '{scene_ref}' not found"}
+        ),
+    )
+    if found_idx < 0:
+        files = await _async_domain_files(hass, "scene", "scenes.yaml")
+        return {"error": f"Scene '{scene_ref}' not found in any scene YAML file "
+                         f"({len(files)} scanned)",
+                "files_scanned": files}
 
     scene = all_scenes[found_idx]
     for field in ("name", "icon"):
@@ -4228,7 +4404,7 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
         _sc = _yaml.dump(all_scenes, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _async_write_file(hass, scenes_path, _sc)
     except Exception as exc:
-        return {"error": f"Failed to write scenes.yaml: {exc}"}
+        return {"error": f"Failed to write {scenes_path}: {exc}"}
 
     try:
         await hass.services.async_call("scene", "reload", blocking=True)
@@ -4238,7 +4414,8 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
     return {
         "success": True,
         "entity_id": f"scene.{scene.get('id', slug)}",
-        "message": f"Scene '{scene.get('name', slug)}' updated and reloaded.",
+        "file": scenes_path,
+        "message": f"Scene '{scene.get('name', slug)}' updated in {scenes_path} and reloaded.",
     }
 
 
@@ -4249,38 +4426,31 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
     if not scene_ref:
         return {"error": "entity_id required"}
 
-    scenes_path
-
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_remove_scene")
-    scenes_path = hass.config.path("scenes.yaml")
-    try:
-        _raw_scenes_path = await _async_read_file(hass, scenes_path)
-        all_scenes: list = _yaml.safe_load(_raw_scenes_path) or []
-    except Exception as exc:
-        return {"error": f"Failed to read scenes.yaml: {exc}"}
 
     slug = scene_ref.replace("scene.", "").strip().lower()
-    original_len = len(all_scenes)
-    removed_name = None
-    new_scenes = []
-    for s in all_scenes:
-        if isinstance(s, dict) and (
+    scenes_path, all_scenes, found_idx = await _async_scan_list_domain(
+        hass, "scene", "scenes.yaml",
+        lambda s: (
             str(s.get("id", "")).lower() == slug
             or str(s.get("name", "")).lower() == scene_ref.lower()
-        ):
-            removed_name = s.get("name") or s.get("id")
-            continue
-        new_scenes.append(s)
+        ),
+    )
+    if found_idx < 0:
+        files = await _async_domain_files(hass, "scene", "scenes.yaml")
+        return {"error": f"Scene '{scene_ref}' not found in any scene YAML file "
+                         f"({len(files)} scanned)",
+                "files_scanned": files}
 
-    if len(new_scenes) == original_len:
-        return {"error": f"Scene '{scene_ref}' not found"}
+    removed = all_scenes.pop(found_idx)
+    removed_name = removed.get("name") or removed.get("id")
 
     try:
-        _sc = _yaml.dump(new_scenes, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        _sc = _yaml.dump(all_scenes, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _async_write_file(hass, scenes_path, _sc)
     except Exception as exc:
-        return {"error": f"Failed to write scenes.yaml: {exc}"}
+        return {"error": f"Failed to write {scenes_path}: {exc}"}
 
     try:
         await hass.services.async_call("scene", "reload", blocking=True)
@@ -4290,15 +4460,34 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
     return {
         "success": True,
         "deleted": removed_name or scene_ref,
-        "message": f"Scene '{removed_name or scene_ref}' deleted from scenes.yaml.",
+        "file": scenes_path,
+        "message": f"Scene '{removed_name or scene_ref}' deleted from {scenes_path}.",
     }
 
 
 # ── BLUEPRINTS ────────────────────────────────────────────────────────────────
 
+def _resolve_blueprint_path(hass: "HomeAssistant", path_ref: str) -> tuple[str | None, dict | None]:
+    """Resolve a blueprint path reference and confirm it stays under /config/blueprints/.
+
+    Returns ``(path, None)`` or ``(None, error_dict)``. Both absolute paths and
+    ``..`` segments are rejected once resolved: these tools are driven by an
+    LLM, and an unchecked path turns them into arbitrary file read / write /
+    delete over the whole config directory.
+    """
+    import os
+
+    bp_base = hass.config.path("blueprints")
+    fpath = path_ref if os.path.isabs(path_ref) else os.path.join(bp_base, path_ref)
+
+    if not is_within(fpath, bp_base):
+        return None, {"error": "path must stay inside /config/blueprints/"}
+    return os.path.normpath(fpath), None
+
+
 async def _tool_ha_list_blueprints(hass: HomeAssistant, params: dict) -> dict:
     """List all installed blueprints (automation + script domains)."""
-    import os, yaml as _yaml
+    import os
     domain_filter = params.get("domain", "").strip().lower() or None
     bp_base = hass.config.path("blueprints")
     results: list[dict] = []
@@ -4319,9 +4508,11 @@ async def _tool_ha_list_blueprints(hass: HomeAssistant, params: dict) -> dict:
                 fpath = os.path.join(root, fname)
                 rel_path = os.path.relpath(fpath, bp_base)
                 try:
-                    _raw_bp = await _async_read_file(hass, str(fpath))
-                    data = _yaml.safe_load(_raw_bp) or {}
-                    bp_meta = data.get("blueprint", {})
+                    # HA's loader, not safe_load: !input is a standard HA tag
+                    # and PyYAML has no constructor for it, so every real
+                    # blueprint used to come back as {"path", "error"}.
+                    data = await hass.async_add_executor_job(load_yaml_ha, str(fpath))
+                    bp_meta = data.get("blueprint", {}) if isinstance(data, dict) else {}
                     results.append({
                         "domain": domain,
                         "path": rel_path,
@@ -4341,27 +4532,29 @@ async def _tool_ha_list_blueprints(hass: HomeAssistant, params: dict) -> dict:
 
 async def _tool_ha_get_blueprint(hass: HomeAssistant, params: dict) -> dict:
     """Read the full YAML of an installed blueprint."""
-    import os, yaml as _yaml
+    import os
     path_ref = params.get("path", "").strip()
     if not path_ref:
         return {"error": "path required (relative to /config/blueprints/, e.g. 'automation/haca/my_bp.yaml')"}
 
-    # Accept both absolute and relative paths
-    if os.path.isabs(path_ref):
-        fpath = path_ref
-    else:
-        fpath = hass.config.path("blueprints", path_ref)
+    fpath, err = _resolve_blueprint_path(hass, path_ref)
+    if err:
+        return err
 
     if not os.path.isfile(fpath):
         return {"error": f"Blueprint file not found: {fpath}"}
 
     try:
         content = await _async_read_file(hass, fpath)
-        data = _yaml.safe_load(content) or {}
+        # HA's loader resolves !input; PyYAML's safe_load raises on it.
+        data = await hass.async_add_executor_job(load_yaml_ha, fpath)
     except Exception as exc:
         return {"error": f"Failed to read blueprint: {exc}"}
 
-    bp_meta = data.get("blueprint", {})
+    bp_meta = data.get("blueprint", {}) if isinstance(data, dict) else {}
+    # "parsed" is deliberately not returned: the body holds Input objects,
+    # which are not JSON-serialisable. `yaml` (raw text) is the source of
+    # truth for any edit, and the metadata below is plain and JSON-safe.
     return {
         "path": fpath,
         "name": bp_meta.get("name", ""),
@@ -4369,13 +4562,12 @@ async def _tool_ha_get_blueprint(hass: HomeAssistant, params: dict) -> dict:
         "domain": bp_meta.get("domain", "automation"),
         "inputs": bp_meta.get("input", {}),
         "yaml": content,
-        "parsed": data,
     }
 
 
 async def _tool_ha_update_blueprint(hass: HomeAssistant, params: dict) -> dict:
-    """Update an existing blueprint file (overwrite YAML content or patch metadata)."""
-    import os, yaml as _yaml
+    """Replace an existing blueprint file with new YAML, written verbatim."""
+    import os
     path_ref = params.get("path", "").strip()
     if not path_ref:
         return {"error": "path required (relative to /config/blueprints/)"}
@@ -4383,43 +4575,32 @@ async def _tool_ha_update_blueprint(hass: HomeAssistant, params: dict) -> dict:
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_update_blueprint")
 
-    if os.path.isabs(path_ref):
-        fpath = path_ref
-    else:
-        fpath = hass.config.path("blueprints", path_ref)
+    fpath, err = _resolve_blueprint_path(hass, path_ref)
+    if err:
+        return err
 
     if not os.path.isfile(fpath):
         return {"error": f"Blueprint file not found: {fpath}. Use ha_create_blueprint to create it."}
 
+    # Field-level patching is gone: it round-tripped the file through
+    # yaml.dump(), which cannot represent HA's !input tags — so it only ever
+    # "worked" on blueprints that had no inputs, and silently mangled the rest.
+    new_yaml = params.get("yaml")
+    if not new_yaml:
+        return {"error": "pass the full blueprint as yaml= — field-level patching is "
+                         "unavailable because HA !input tags do not round-trip "
+                         "through a YAML dump. Read the current file with "
+                         "ha_get_blueprint(path), edit the text, send it back."}
+
     try:
-        _raw_fpath = await _async_read_file(hass, fpath)
-        data: dict = _yaml.safe_load(_raw_fpath) or {}
+        parsed = await hass.async_add_executor_job(parse_yaml_ha, new_yaml)
     except Exception as exc:
-        return {"error": f"Failed to read blueprint: {exc}"}
-
-    # If full yaml provided, replace entirely
-    if params.get("yaml"):
-        try:
-            data = _yaml.safe_load(params["yaml"]) or {}
-        except Exception as exc:
-            return {"error": f"Provided YAML is invalid: {exc}"}
-    else:
-        # Patch individual fields
-        bp = data.setdefault("blueprint", {})
-        for field in ("name", "description", "source_url"):
-            if params.get(field) is not None:
-                bp[field] = params[field]
-        if params.get("inputs") is not None:
-            bp["input"] = params["inputs"]
-        # Patch automation body
-        for key in ("triggers", "trigger", "conditions", "condition",
-                     "actions", "action", "mode", "variables"):
-            if params.get(key) is not None:
-                data[key] = params[key]
+        return {"error": f"Provided YAML is invalid: {exc}"}
+    if not isinstance(parsed, dict) or "blueprint" not in parsed:
+        return {"error": "YAML has no top-level 'blueprint:' key"}
 
     try:
-        _bp_out = _yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
-        await _async_write_file(hass, str(fpath), _bp_out)
+        await _async_write_file(hass, str(fpath), new_yaml)  # verbatim
     except Exception as exc:
         return {"error": f"Failed to write blueprint: {exc}"}
 
@@ -4431,7 +4612,7 @@ async def _tool_ha_update_blueprint(hass: HomeAssistant, params: dict) -> dict:
     return {
         "success": True,
         "path": fpath,
-        "name": data.get("blueprint", {}).get("name", ""),
+        "name": parsed["blueprint"].get("name", "") if isinstance(parsed["blueprint"], dict) else "",
         "message": f"Blueprint updated at {fpath}. Reloaded.",
     }
 
@@ -4446,18 +4627,15 @@ async def _tool_ha_remove_blueprint(hass: HomeAssistant, params: dict) -> dict:
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_remove_blueprint")
 
-    if os.path.isabs(path_ref):
-        fpath = path_ref
-    else:
-        fpath = hass.config.path("blueprints", path_ref)
+    # Safety: must really resolve inside /config/blueprints/. A bare
+    # startswith() on the joined path let "../../secrets.yaml" through, since
+    # the unresolved string still began with the base directory.
+    fpath, err = _resolve_blueprint_path(hass, path_ref)
+    if err:
+        return {"error": "Cannot delete files outside /config/blueprints/"}
 
     if not os.path.isfile(fpath):
         return {"error": f"Blueprint file not found: {fpath}"}
-
-    # Safety: must be inside /config/blueprints/
-    bp_base = hass.config.path("blueprints")
-    if not fpath.startswith(bp_base):
-        return {"error": "Cannot delete files outside /config/blueprints/"}
 
     try:
         await hass.async_add_executor_job(os.remove, fpath)
@@ -4478,7 +4656,7 @@ async def _tool_ha_remove_blueprint(hass: HomeAssistant, params: dict) -> dict:
 
 async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
     """Import a community blueprint from a URL (raw YAML) into /config/blueprints/automation/imported/."""
-    import os, re, yaml as _yaml
+    import os
     import aiohttp
     url = params.get("url", "").strip()
     if not url:
@@ -4494,27 +4672,30 @@ async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to fetch URL: {exc}"}
 
     try:
-        data = _yaml.safe_load(content) or {}
+        # HA's parser: most community blueprints use !input, which safe_load
+        # cannot construct — the import used to fail on them outright.
+        data = await hass.async_add_executor_job(parse_yaml_ha, content)
     except Exception as exc:
         return {"error": f"Downloaded content is not valid YAML: {exc}"}
 
-    if "blueprint" not in data:
+    if not isinstance(data, dict) or "blueprint" not in data:
         return {"error": "Downloaded YAML has no 'blueprint:' key — not a valid HA blueprint"}
 
+    bp_block = data["blueprint"] if isinstance(data["blueprint"], dict) else {}
+
     # Build filename from blueprint name
-    bp_name = data["blueprint"].get("name", "imported_blueprint")
+    bp_name = bp_block.get("name", "imported_blueprint")
     slug = _slugify(bp_name, 60)
-    domain = data["blueprint"].get("domain", "automation")
+    domain = bp_block.get("domain", "automation")
 
     out_dir = hass.config.path("blueprints", domain, "imported")
-    await hass.async_add_executor_job(os.makedirs, out_dir, 0o777, True)
+    await hass.async_add_executor_job(os.makedirs, out_dir, 0o755, True)
     out_path = os.path.join(out_dir, f"{slug}.yaml")
 
-    # Store source_url in blueprint metadata
-    data["blueprint"]["source_url"] = url
-
     try:
-        _import_content = f"# Imported by HACA from: {url}\n\n" + _yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        # Written verbatim: re-dumping would drop every !input tag. Provenance
+        # goes in a header comment instead of a source_url mutation.
+        _import_content = f"# Imported by HACA from: {url}\n\n{content}"
         await _async_write_file(hass, out_path, _import_content)
     except Exception as exc:
         return {"error": f"Failed to write blueprint: {exc}"}
@@ -4529,7 +4710,7 @@ async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
         "path": out_path,
         "name": bp_name,
         "domain": domain,
-        "inputs": list(data["blueprint"].get("input", {}).keys()),
+        "inputs": list(bp_block.get("input", {}).keys()),
         "message": (
             f"Blueprint '{bp_name}' imported to {out_path}. "
             "Visible in Settings → Blueprints."
@@ -5271,13 +5452,13 @@ _NEW_TOOLS_V151: list[dict[str, Any]] = [
     {"name": "ha_get_script", "description": "Read a script's full YAML config. Use BEFORE ha_update_script. Accepts entity_id or alias.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string", "description": "script entity_id or alias"}}}},
-    {"name": "ha_update_script", "description": "Update a script in scripts.yaml. ALWAYS call ha_get_script first, then ha_backup_create before modifying.",
+    {"name": "ha_update_script", "description": "Update a script, writing back to the file that holds it. ALWAYS call ha_get_script first, then ha_backup_create before modifying.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string"}, "alias": {"type": "string"},
                      "description": {"type": "string"}, "mode": {"type": "string"},
                      "sequence": {"type": "array"}, "variables": {"type": "object"},
                      "icon": {"type": "string"}}}},
-    {"name": "ha_remove_script", "description": "Delete a script from scripts.yaml. ALWAYS call ha_backup_create first. Ask user confirmation.",
+    {"name": "ha_remove_script", "description": "Delete a script from the file that holds it. ALWAYS call ha_backup_create first. Ask user confirmation.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string"}}}},
     # ── Scenes ─────────────────────────────────────────────────────────────
@@ -5308,14 +5489,14 @@ _NEW_TOOLS_V151: list[dict[str, Any]] = [
         "description": "Relative path from /config/blueprints/, e.g. 'automation/haca/my_bp.yaml'"}}}},
     {"name": "ha_update_blueprint",
      "description": (
-         "Update an existing blueprint file. Provide 'yaml' for full replacement, "
-         "or individual fields (name, description, inputs, triggers, actions) for partial update."
+         "Replace an existing blueprint file with new YAML, written verbatim. "
+         "Read the current text with ha_get_blueprint(path), edit it, send it back as 'yaml'. "
+         "Field-level patching is not available: HA's !input tags do not survive a YAML round-trip."
      ),
-     "inputSchema": {"type": "object", "required": ["path"],
-      "properties": {"path": {"type": "string"}, "yaml": {"type": "string"},
-                     "name": {"type": "string"}, "description": {"type": "string"},
-                     "inputs": {"type": "object"}, "triggers": {"type": "array"},
-                     "actions": {"type": "array"}, "mode": {"type": "string"}}}},
+     "inputSchema": {"type": "object", "required": ["path", "yaml"],
+      "properties": {"path": {"type": "string"},
+                     "yaml": {"type": "string",
+                              "description": "Full blueprint YAML, including the top-level 'blueprint:' key"}}}},
     {"name": "ha_remove_blueprint",
      "description": "Delete a blueprint YAML file from /config/blueprints/. Irreversible — call ha_backup_create first.",
      "inputSchema": {"type": "object", "required": ["path"],

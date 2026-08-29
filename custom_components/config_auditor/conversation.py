@@ -8,6 +8,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant, Context
 
 from .const import DOMAIN
+from .yaml_sources import iter_domain_files, load_yaml_any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -449,7 +450,6 @@ def _get_local_fallback_explanation(hass: HomeAssistant, issue_data: dict) -> st
 async def analyze_complexity_ai(hass: HomeAssistant, row: dict) -> dict:
     """AI analysis for a complex automation/script: explain + propose a split."""
     import re as _re
-    from pathlib import Path as _Path
 
     entity_id  = row.get("entity_id", "")
     alias      = row.get("alias", entity_id)
@@ -461,20 +461,38 @@ async def analyze_complexity_ai(hass: HomeAssistant, row: dict) -> dict:
 
     yaml_config = ""
     try:
-        automations_file = _Path(hass.config.config_dir) / "automations.yaml"
-        scripts_file     = _Path(hass.config.config_dir) / "scripts.yaml"
-        target_file = scripts_file if entity_id.startswith("script.") else automations_file
+        is_script = entity_id.startswith("script.")
+        domain_key = "script" if is_script else "automation"
+        default_file = "scripts.yaml" if is_script else "automations.yaml"
         slug = entity_id.split(".", 1)[-1]
 
         def _read():
+            """Scan every file the domain key resolves to, both YAML shapes.
+
+            Scripts are a named mapping and automations a list; the previous
+            version parsed both as a list, so a script was never found even on
+            a flat install.
+            """
             import yaml as _yaml
-            data = _yaml.safe_load(target_file.read_text(encoding="utf-8")) or []
-            if not isinstance(data, list):
-                data = [data]
-            for item in data:
-                if isinstance(item, dict):
-                    if item.get("alias") == alias or str(item.get("id", "")) == slug:
-                        return _yaml.dump(item, allow_unicode=True, default_flow_style=False)
+            for path in iter_domain_files(str(hass.config.config_dir), domain_key, default_file):
+                try:
+                    data = load_yaml_any(path)
+                except Exception:
+                    continue
+                if isinstance(data, dict) and is_script:
+                    for key, item in data.items():
+                        if not isinstance(item, dict):
+                            continue
+                        if key == slug or item.get("alias") == alias:
+                            return _yaml.dump({key: item}, allow_unicode=True,
+                                              default_flow_style=False)
+                    continue
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    if isinstance(item, dict):
+                        if item.get("alias") == alias or str(item.get("id", "")) == slug:
+                            return _yaml.dump(item, allow_unicode=True,
+                                              default_flow_style=False)
             return ""
 
         yaml_config = await hass.async_add_executor_job(_read)

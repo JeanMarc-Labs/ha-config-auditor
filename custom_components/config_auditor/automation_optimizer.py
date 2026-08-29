@@ -18,6 +18,7 @@ import yaml
 from homeassistant.core import HomeAssistant
 
 from .const import BACKUP_DIR
+from .yaml_sources import iter_domain_files
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,10 +43,47 @@ class AutomationOptimizer:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self._automations_file = Path(hass.config.config_dir) / "automations.yaml"
-        self._scripts_file = Path(hass.config.config_dir) / "scripts.yaml"
+        self._config_dir = str(hass.config.config_dir)
         self._backup_dir = Path(hass.config.config_dir) / BACKUP_DIR
         self._backup_dir.mkdir(exist_ok=True)
+
+    # ── Source resolution ──────────────────────────────────────────────────────
+
+    def _find_owning_file(self, entity_id: str) -> tuple[Path | None, list, int]:
+        """Locate the YAML file that actually holds one automation.
+
+        Returns ``(path, documents, index)`` — the file, its parsed list of
+        automations, and the position of the match — or ``(None, [], -1)``.
+        With a split config the entry lives in one of several files, so writes
+        must land on that file rather than on <config>/automations.yaml, which
+        HA may not even read.
+
+        Parsed with plain ``yaml.safe_load``: a file carrying HA tags
+        (``!secret``, ``!include``) is skipped rather than rewritten with those
+        tags expanded, which would inline secrets in clear text.
+        """
+        slug = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+        fallback: tuple[Path | None, list, int] = (None, [], -1)
+
+        for path in iter_domain_files(self._config_dir, "automation", "automations.yaml"):
+            try:
+                data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                data = [data]
+            for index, item in enumerate(data):
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id", ""))
+                item_alias = (item.get("alias") or "").lower().replace(" ", "_")
+                if item_id == slug or item_alias == slug or item.get("alias") == slug:
+                    return Path(path), data, index
+                if fallback[0] is None:
+                    candidate = (item.get("alias") or item.get("id") or "").lower().replace(" ", "_")
+                    if candidate == slug:
+                        fallback = (Path(path), data, index)
+        return fallback
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -177,7 +215,7 @@ class AutomationOptimizer:
                     ),
                 }
 
-        backup_path = await self._create_backup()
+        backup_path = await self._create_backup(entity_id)
 
         try:
             result = await self.hass.async_add_executor_job(
@@ -196,28 +234,13 @@ class AutomationOptimizer:
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     async def _load_yaml(self, entity_id: str) -> str:
-        """Load raw YAML for one automation from automations.yaml."""
-        slug = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+        """Load raw YAML for one automation, wherever its file lives."""
 
         def _read() -> str:
-            data = yaml.safe_load(self._automations_file.read_text(encoding="utf-8")) or []
-            if not isinstance(data, list):
-                data = [data]
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                item_id = str(item.get("id", ""))
-                item_alias = (item.get("alias") or "").lower().replace(" ", "_")
-                if item_id == slug or item_alias == slug or item.get("alias") == slug:
-                    return yaml.dump(item, allow_unicode=True, default_flow_style=False)
-            # fallback: entity_id suffix match
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                candidate = (item.get("alias") or item.get("id") or "").lower().replace(" ", "_")
-                if candidate == slug:
-                    return yaml.dump(item, allow_unicode=True, default_flow_style=False)
-            return ""
+            _path, data, index = self._find_owning_file(entity_id)
+            if index < 0:
+                return ""
+            return yaml.dump(data[index], allow_unicode=True, default_flow_style=False)
 
         try:
             return await self.hass.async_add_executor_job(_read)
@@ -355,39 +378,40 @@ class AutomationOptimizer:
         return result
 
     def _write_automations(self, entity_id: str, new_docs: list[dict]) -> None:
-        """Remove old automation from automations.yaml and append new docs."""
-        slug = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
-        data = yaml.safe_load(self._automations_file.read_text(encoding="utf-8")) or []
-        if not isinstance(data, list):
-            data = [data]
+        """Replace one automation with new docs, in the file that holds it."""
+        target, data, index = self._find_owning_file(entity_id)
+        if target is None or index < 0:
+            raise ValueError(
+                f"Automation '{entity_id}' not found in any file the "
+                f"'automation:' key resolves to"
+            )
 
-        # Remove old entry
-        filtered = []
-        for item in data:
-            if not isinstance(item, dict):
-                filtered.append(item)
-                continue
-            item_id    = str(item.get("id", ""))
-            item_alias = (item.get("alias") or "").lower().replace(" ", "_")
-            if item_id != slug and item_alias != slug and item.get("alias") != slug:
-                filtered.append(item)
-
-        # Append new docs
+        filtered = [item for i, item in enumerate(data) if i != index]
         filtered.extend(new_docs)
 
-        with open(self._automations_file, "w", encoding="utf-8") as f:
+        with open(target, "w", encoding="utf-8") as f:
             yaml.dump(filtered, f, allow_unicode=True, default_flow_style=False,
                       sort_keys=False)
 
-    async def _create_backup(self) -> Path:
-        """Backup automations.yaml before any write."""
+    async def _create_backup(self, entity_id: str | None = None) -> Path:
+        """Backup the file about to be written, before any write."""
         from datetime import datetime
         import shutil
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = self._backup_dir / f"automations_optim_{timestamp}.yaml"
 
-        def _do():
-            shutil.copy2(self._automations_file, backup_file)
+        def _do() -> Path:
+            source: Path | None = None
+            if entity_id:
+                source = self._find_owning_file(entity_id)[0]
+            if source is None:
+                files = iter_domain_files(
+                    self._config_dir, "automation", "automations.yaml"
+                )
+                source = Path(files[0]) if files else None
+            if source is None:
+                raise FileNotFoundError("no automation YAML file to back up")
+            backup_file = self._backup_dir / f"{source.stem}_optim_{timestamp}.yaml"
+            shutil.copy2(source, backup_file)
+            return backup_file
 
-        await self.hass.async_add_executor_job(_do)
-        return backup_file
+        return await self.hass.async_add_executor_job(_do)
