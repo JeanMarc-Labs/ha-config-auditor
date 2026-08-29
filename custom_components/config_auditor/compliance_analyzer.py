@@ -26,6 +26,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
+from .yaml_sources import iter_domain_files, load_yaml_any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -304,23 +305,50 @@ class ComplianceAnalyzer:
         except Exception as exc:
             _LOGGER.debug("[HACA Compliance] Label check error: %s", exc)
 
+    # ── Lecture YAML (toutes les sources, pas seulement les fichiers plats) ──
+
+    def _read_all_automations(self) -> list:
+        """Every automation entry, wherever `automation:` points."""
+        merged: list = []
+        cfg_dir = str(self._hass.config.config_dir)
+        for path in iter_domain_files(cfg_dir, "automation", "automations.yaml"):
+            try:
+                content = load_yaml_any(path)
+            except Exception as exc:
+                _LOGGER.debug("[HACA Compliance] Skipping %s: %s", path, exc)
+                continue
+            if isinstance(content, list):
+                merged.extend(content)
+            elif isinstance(content, dict):
+                merged.append(content)
+        return merged
+
+    def _read_all_scripts(self) -> dict:
+        """Every script entry, wherever `script:` points."""
+        merged: dict = {}
+        cfg_dir = str(self._hass.config.config_dir)
+        for path in iter_domain_files(cfg_dir, "script", "scripts.yaml"):
+            try:
+                content = load_yaml_any(path)
+            except Exception as exc:
+                _LOGGER.debug("[HACA Compliance] Skipping %s: %s", path, exc)
+                continue
+            if isinstance(content, dict):
+                merged.update(content)
+        return merged
+
     # ── Check e4 : Automations sans description ───────────────────────────
 
     async def _check_automations_description(self) -> None:
         """Détecte les automations YAML sans champ description."""
         try:
-            import yaml
-            from pathlib import Path
-
-            auto_file = Path(self._hass.config.config_dir) / "automations.yaml"
-            if not auto_file.exists():
-                return
-
-            raw = await self._hass.async_add_executor_job(
-                auto_file.read_text, "utf-8"
+            # Every file the `automation:` key resolves to — a split config
+            # keeps its entries in several files, and none of them is
+            # <config>/automations.yaml.
+            automations = await self._hass.async_add_executor_job(
+                self._read_all_automations
             )
-            automations = yaml.safe_load(raw) or []
-            if not isinstance(automations, list):
+            if not automations:
                 return
 
             for auto in automations:
@@ -353,18 +381,13 @@ class ComplianceAnalyzer:
     async def _check_automations_unique_id(self) -> None:
         """Détecte les automations YAML sans 'id' (bloque l'édition dans l'UI HA)."""
         try:
-            import yaml
-            from pathlib import Path
-
-            auto_file = Path(self._hass.config.config_dir) / "automations.yaml"
-            if not auto_file.exists():
-                return
-
-            raw = await self._hass.async_add_executor_job(
-                auto_file.read_text, "utf-8"
+            # Every file the `automation:` key resolves to — a split config
+            # keeps its entries in several files, and none of them is
+            # <config>/automations.yaml.
+            automations = await self._hass.async_add_executor_job(
+                self._read_all_automations
             )
-            automations = yaml.safe_load(raw) or []
-            if not isinstance(automations, list):
+            if not automations:
                 return
 
             for auto in automations:
@@ -398,18 +421,10 @@ class ComplianceAnalyzer:
     async def _check_scripts_metadata(self) -> None:
         """Détecte les scripts sans description."""
         try:
-            import yaml
-            from pathlib import Path
-
-            scripts_file = Path(self._hass.config.config_dir) / "scripts.yaml"
-            if not scripts_file.exists():
-                return
-
-            raw = await self._hass.async_add_executor_job(
-                scripts_file.read_text, "utf-8"
+            scripts = await self._hass.async_add_executor_job(
+                self._read_all_scripts
             )
-            scripts = yaml.safe_load(raw) or {}
-            if not isinstance(scripts, dict):
+            if not scripts:
                 return
 
             for script_id, script_def in scripts.items():
