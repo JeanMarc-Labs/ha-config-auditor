@@ -1,4 +1,4 @@
-// HACA-BUILD: 5843fe2b  2026-08-26T06:58:52Z
+// HACA-BUILD: 923ba9c9  2026-08-29T13:48:18Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -4482,6 +4482,60 @@ function _updateTypeCounts(el) {
       });
     }
 
+    // Le dashboard généré embarque `custom:haca-dashboard-card`. Cet élément
+    // n'existe que si le navigateur a importé le module de la carte, et le
+    // frontend HA n'importe la liste des ressources Lovelace qu'une seule fois
+    // par chargement de page. Comme on crée le dashboard puis qu'on y navigue
+    // côté client (pushState), la ressource fraîchement enregistrée n'a jamais
+    // été importée : "Custom element not found: haca-dashboard-card".
+    //
+    // On s'assure donc que la ressource existe (on la crée si le backend n'a
+    // pas pu), puis on importe le module dans le document PARENT : le panel
+    // tourne dans une iframe same-origin avec son propre registre d'éléments,
+    // le définir ici ne servirait à rien pour le dashboard.
+    async _ensureDashboardCardLoaded() {
+      const CARD_PATH = '/haca-cards/haca-dashboard-card.js';
+      const TAG = 'haca-dashboard-card';
+      const top = window.parent || window;
+
+      try {
+        if (top.customElements?.get(TAG)) return true;
+
+        const hass = this._hass;
+        const resources = await hass.callWS({ type: 'lovelace/resources' });
+        const found = (resources || []).find(
+          r => String(r.url || '').split('?')[0] === CARD_PATH
+        );
+
+        let url;
+        if (found) {
+          url = found.url;
+        } else {
+          const created = await hass.callWS({
+            type: 'lovelace/resources/create',
+            res_type: 'module',
+            url: CARD_PATH,
+          });
+          url = created?.url || CARD_PATH;
+        }
+
+        const doc = top.document;
+        await new Promise((resolve, reject) => {
+          const script = doc.createElement('script');
+          script.type = 'module';
+          script.src = url;
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('module load failed: ' + url));
+          doc.head.appendChild(script);
+        });
+
+        return !!top.customElements?.get(TAG);
+      } catch (err) {
+        console.warn('[HACA] haca-dashboard-card unavailable, omitted from the dashboard:', err);
+        return false;
+      }
+    }
+
     async _createHacaDashboard() {
       const hass = this._hass;
       const t = (k) => this.t('dashboard.' + k);
@@ -4581,8 +4635,11 @@ function _updateTypeCounts(el) {
         });
       }
 
-      // Custom cards
-      cards.push({ type: 'custom:haca-dashboard-card' });
+      // Custom cards — omises si le module ne peut pas être chargé, sinon le
+      // dashboard s'ouvre sur "Custom element not found".
+      if (await this._ensureDashboardCardLoaded()) {
+        cards.push({ type: 'custom:haca-dashboard-card' });
+      }
 
       // Open panel button
       cards.push({
