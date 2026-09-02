@@ -1,4 +1,4 @@
-// HACA-BUILD: 71a22c2a  2026-09-02T08:33:58Z
+// HACA-BUILD: 71e6729f  2026-09-02T09:20:54Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -718,6 +718,21 @@ function _updateTypeCounts(el) {
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   }
 
+  // Variables de thème HA réellement utilisées par le panneau. _syncTheme()
+  // découvre dynamiquement toutes les custom properties du parent, mais copie
+  // celles-ci quoi qu'il arrive : filet de sécurité si la découverte échoue
+  // (feuilles cross-origin, navigateur qui n'énumère pas les custom
+  // properties sur getComputedStyle).
+  const _HACA_THEME_VARS = [
+    '--primary-background-color', '--secondary-background-color',
+    '--card-background-color', '--code-background-color',
+    '--primary-text-color', '--secondary-text-color', '--disabled-text-color',
+    '--divider-color', '--primary-color', '--rgb-primary-color',
+    '--accent-color', '--error-color', '--warning-color', '--success-color',
+    '--info-color', '--disabled-color',
+    '--ha-card-box-shadow', '--code-font-family',
+  ];
+
   // ── Surveillance log ────────────────────────────────────────────────────────
   // Persiste dans window._HACA_LOG pour survivre aux navigations dans le même
   function _hlog() {} // logging désactivé en production
@@ -851,11 +866,13 @@ function _updateTypeCounts(el) {
       const wasNull = !this._hass;
       this._hass = hass;
       this._updateLogo();
-      if (wasNull) {
-        this._syncTheme(); // calcule _dark et _themeVars avant le premier render
-      }
-      // Doit suivre _syncTheme : la détection lit --primary-background-color
-      // qui n'est propagé dans l'iframe qu'après l'injection des règles parent.
+      // Resync à chaque hass : HA en émet un nouveau quand le thème change ou
+      // quand il bascule light/dark. _syncTheme() s'auto-gate sur une signature
+      // O(1), le coût par tick est négligeable — sans ça le panneau gardait le
+      // thème du premier hass jusqu'au rechargement de l'onglet.
+      this._syncTheme();
+      // Doit suivre _syncTheme : la détection lit --primary-background-color,
+      // corrigé dans l'iframe seulement après la copie des variables parent.
       this._updateDarkAttr();
       if (wasNull) {
         _hlog('INF', 'set hass(): first hass | connected=' + this._connected + ' fullyReady=' + this._fullyReady);
@@ -917,49 +934,117 @@ function _updateTypeCounts(el) {
       }
     }
 
+    // Propage le thème HA du document parent dans l'iframe du panneau.
+    //
+    // Le panneau est enregistré avec embed_iframe: True → il vit dans un
+    // document séparé, qui embarque le :root { … } clair de base de la
+    // frontend HA (--primary-background-color:#fafafa, --card-background-
+    // color:#fff …). Rien de l'extérieur ne s'y applique.
+    //
+    // Historique : on recopiait les règles html/:root du parent + son style
+    // inline enveloppé dans `html { … }`. Deux défauts fatals :
+    //   1. `html { … }` a une spécificité de 0,0,1 contre 0,1,0 pour le
+    //      `:root { … }` clair de l'iframe → le clair gagnait pour toute
+    //      propriété qu'il définit (cartes blanches, texte clair du thème
+    //      sombre par-dessus → illisible).
+    //   2. Selon la version de HA, le thème actif est livré tantôt en style
+    //      inline sur <html>, tantôt via une <style>, tantôt via
+    //      document.adoptedStyleSheets — qui n'apparaît PAS dans
+    //      document.styleSheets. Une copie de règles rate ces cas.
+    // On lit donc la valeur CALCULÉE de chaque variable sur le <html> parent
+    // et on la pose en inline + !important sur le <html> de l'iframe : ça bat
+    // n'importe quelle feuille de style, quel que soit le véhicule utilisé
+    // par HA.
     _syncTheme() {
       try {
-        const parentDoc = window.parent?.document;
-        if (!parentDoc) return;
+        // Hors iframe (window.parent === window) il n'y a rien à propager, et
+        // recopier son propre computed style en !important figerait le thème :
+        // HA ne pourrait plus le changer par-dessus. On sort.
+        const pDoc  = window.parent !== window ? window.parent?.document : null;
+        const pRoot = pDoc && pDoc.documentElement;
+        if (pRoot) {
+          const pcs = window.parent.getComputedStyle(pRoot);
 
-        // Collecter toutes les règles html/root du parent
-        const parts = [];
-        for (const sheet of parentDoc.styleSheets) {
-          try {
-            for (const rule of sheet.cssRules) {
-              const sel = rule.selectorText;
-              if (sel === 'html' || sel === ':root') {
-                parts.push(rule.cssText);
+          // Sonde O(1) : set hass() appelle _syncTheme() à chaque changement
+          // d'état HA (plusieurs fois par seconde sur une install chargée).
+          // Sérialiser pRoot.style.cssText coûterait ~45 Ko de CSS par tick ;
+          // deux valeurs calculées suffisent à détecter un changement de thème
+          // ou une bascule light/dark.
+          const sig = (this._hass?.themes?.theme || '') + '|' +
+                      (this._hass?.themes?.darkMode ?? '') + '|' +
+                      pcs.getPropertyValue('--primary-background-color') + '|' +
+                      pcs.getPropertyValue('--card-background-color');
+
+          if (sig !== this._themeSig) {
+            this._themeSig = sig;
+
+            // ── 1. Quelles custom properties copier ? ──────────────────────
+            // On ne collecte que des NOMS ; la valeur vient toujours du
+            // computed style, donc peu importe comment HA l'a livrée.
+            const names = new Set(_HACA_THEME_VARS);
+            let enumerated = 0;
+            // Chromium 118+ et navigateurs récents : les custom properties
+            // sont énumérables sur le computed style — chemin direct.
+            try {
+              for (const n of pcs) {
+                if (n.startsWith('--')) { names.add(n); enumerated++; }
+              }
+            } catch(_) {}
+            // Repli pour les navigateurs qui ne les énumèrent pas : style
+            // inline + toutes les feuilles, adoptedStyleSheets comprises.
+            if (!enumerated) {
+              for (const n of pRoot.style.cssText.match(/--[\w-]+/g) || []) names.add(n);
+              const sheets = [...pDoc.styleSheets, ...(pDoc.adoptedStyleSheets || [])];
+              for (const sheet of sheets) {
+                try {
+                  for (const rule of sheet.cssRules) {
+                    // cssText d'une @media/@layer/@supports contient tout son
+                    // bloc : les règles imbriquées sont couvertes.
+                    const m = rule.cssText && rule.cssText.match(/--[\w-]+/g);
+                    if (m) for (const n of m) names.add(n);
+                  }
+                } catch(_) {} // feuille cross-origin
               }
             }
-          } catch(_) {} // feuilles cross-origin ignorées
-        }
-        // HA applique les thèmes personnalisés via des styles INLINE sur <html>
-        // (document.documentElement.style.setProperty('--…', value)), pas via
-        // stylesheets. Ces déclarations sont invisibles à l'itération ci-dessus,
-        // donc on récupère cssText du style inline parent et on l'injecte comme
-        // règle html { … } dans l'iframe.
-        try {
-          const inlineCss = parentDoc.documentElement.style.cssText;
-          if (inlineCss && inlineCss.trim()) {
-            parts.push(`html { ${inlineCss} }`);
+
+            // ── 2. Appliquer les valeurs calculées du parent ───────────────
+            // Les custom properties étant héritées, tout le shadow DOM du
+            // panneau (et les modals appendues à document.body) suit.
+            // L'héritage ne transporte PAS le !important : le panneau peut
+            // toujours redéfinir une variable sur :host (cf. --mdc-icon-size).
+            const s = document.documentElement.style;
+            for (const n of names) {
+              const v = pcs.getPropertyValue(n).trim();
+              if (v) s.setProperty(n, v, 'important');
+            }
+
+            // Contrôles natifs (ascenseurs, <select>, cases à cocher) : non
+            // couverts par les --*, il faut propager color-scheme.
+            const cs = pcs.colorScheme;
+            s.colorScheme = (cs && cs !== 'normal' && cs !== 'light dark')
+              ? cs
+              : (this._isDarkMode() ? 'dark' : 'light');
+
+            // Fond réel de l'iframe. --primary-background-color d'abord : il
+            // est toujours défini par les thèmes HA, alors que
+            // pcs.backgroundColor peut remonter rgba(0,0,0,0) → canvas blanc
+            // et retour du flash au boot.
+            const transparent = /^rgba\(0,\s*0,\s*0,\s*0\)$/;
+            const bg = pcs.getPropertyValue('--primary-background-color').trim() ||
+                       (transparent.test(pcs.backgroundColor) ? '' : pcs.backgroundColor) ||
+                       '#fafafa';
+            const fg = pcs.getPropertyValue('--primary-text-color').trim() || pcs.color;
+            s.background = bg;
+            document.body.style.background = bg;
+            if (fg) document.body.style.color = fg;
+
+            // La <style> de l'ancienne stratégie n'a plus lieu d'être et
+            // porterait le :root clair recopié du parent.
+            document.getElementById('_haca_theme_sync')?.remove();
+
+            this._updateDarkAttr();
           }
-        } catch(_) {}
-        if (!parts.length) return;
-
-        // Injecter dans <head> de l'iframe
-        let el = document.getElementById('_haca_theme_sync');
-        if (!el) {
-          el = document.createElement('style');
-          el.id = '_haca_theme_sync';
-          document.head.appendChild(el);
         }
-        el.textContent = parts.join('\n');
-
-        // Corriger le fond body de l'iframe (évite le flash noir)
-        document.documentElement.style.background = 'var(--primary-background-color)';
-        document.body.style.background = 'var(--primary-background-color)';
-        document.body.style.color = 'var(--primary-text-color)';
 
         // Styles globaux : ha-icon size + hover des boutons dans les modals
         // Doit être dans <head> car les modals sont appendées à document.body (hors shadow DOM)
@@ -1018,10 +1103,10 @@ function _updateTypeCounts(el) {
       //      iframes HA does not always populate the full themes sub-object,
       //      so we accept this only when it's clearly set (typeof === boolean).
       //   2. Luminance of --primary-background-color. _syncTheme() copies the
-      //      parent document's html/:root rules into the iframe, so this var
-      //      reflects HA's active theme even when hass.themes is incomplete.
-      //      This also Just Works with custom themes whose darkMode flag is
-      //      unreliable.
+      //      parent's computed value into the iframe (inline + !important), so
+      //      this var reflects HA's active theme even when hass.themes is
+      //      incomplete. This also Just Works with custom themes whose darkMode
+      //      flag is unreliable.
       //   3. OS prefers-color-scheme as last resort (before _syncTheme has
       //      had a chance to run, e.g. during connectedCallback).
       const haDark = this._hass?.themes?.darkMode;
