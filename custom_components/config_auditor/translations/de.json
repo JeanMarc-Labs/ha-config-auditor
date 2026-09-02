@@ -1104,7 +1104,7 @@
       "script_no_description": "Skript '{alias}' hat keine Beschreibung. Fügen Sie ein 'description:' Feld hinzu, um zu dokumentieren, was es tut.",
       "entity_no_area": "Entität '{name}' ({entity_id}) hat keinen Bereich zugewiesen. Weisen Sie ihn über Einstellungen → Geräte zu.",
       "entities_no_area_bulk": "{count} physische Entitäten haben keinen Bereich zugewiesen. Weisen Sie Bereiche über Einstellungen → Geräte & Dienste → Geräte zu.",
-      "yaml_file_not_loaded": "'{file}' liegt in einem Ordner, den '{key}:' zusammenführt, aber Home Assistant führt dort nur '*.yaml'-Dateien zusammen — diese Datei wird nie geladen, und was sie definiert, existiert nicht. Benennen Sie sie mit der Endung '.yaml' um."
+      "yaml_file_not_loaded": "'{file}' liegt in einem Ordner, den '{key}:' zusammenführt, aber Home Assistant führt dort nur '*.yaml'-Dateien zusammen — und keine Datei in diesem Ordner bindet sie ein, sie wird also nie geladen und was sie definiert, existiert nicht. Benennen Sie sie in '.yaml' um, wenn sie geladen werden soll, oder löschen Sie sie, wenn sie ein Überbleibsel ist. Bindet eine Datei außerhalb dieses Ordners sie per '!include' ein, ignorieren Sie diesen Hinweis — das Umbenennen würde diesen Include zerstören."
     },
     "tab_tooltips": {
       "issues": "Audit-Probleme — Automationen, Entitäten, Skripte, Szenen, Blueprints, Sicherheit",

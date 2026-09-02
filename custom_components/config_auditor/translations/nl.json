@@ -1104,7 +1104,7 @@
       "script_no_description": "Script '{alias}' heeft geen beschrijving. Voeg een 'description:' veld toe om te documenteren wat het doet.",
       "entity_no_area": "Entiteit '{name}' ({entity_id}) heeft geen zone toegewezen. Wijs deze toe via Instellingen → Apparaten.",
       "entities_no_area_bulk": "{count} fysieke entiteiten hebben geen zone toegewezen. Wijs zones toe via Instellingen → Apparaten & Diensten → Apparaten.",
-      "yaml_file_not_loaded": "'{file}' staat in een map die door '{key}:' wordt samengevoegd, maar Home Assistant voegt daar alleen '*.yaml'-bestanden samen — dit bestand wordt nooit geladen en wat het definieert bestaat niet. Hernoem het met de extensie '.yaml'."
+      "yaml_file_not_loaded": "'{file}' staat in een map die door '{key}:' wordt samengevoegd, maar Home Assistant voegt daar alleen '*.yaml'-bestanden samen — en geen enkel bestand in die map haalt het binnen, dus het wordt nooit geladen en wat het definieert bestaat niet. Hernoem het naar '.yaml' als het geladen moet worden, of verwijder het als het een restant is. Haalt een bestand buiten die map het op met '!include', negeer deze melding dan — hernoemen zou die include breken."
     },
     "tab_tooltips": {
       "issues": "Auditproblemen — automaties, entiteiten, scripts, scènes, blauwdrukken, beveiliging",

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from typing import NamedTuple
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +34,41 @@ _DIR_TAGS = (
     "!include_dir_named",
 )
 _FILE_TAG = "!include"
+
+# HA's `*.yaml` glob runs through fnmatch/normcase: on a case-insensitive
+# filesystem (macOS, Windows) it matches `Foo.YAML`, on a case-sensitive one
+# (the containers and HAOS images almost everyone runs) it does not. The
+# extension test has to follow the filesystem to stay identical to HA —
+# lowercasing unconditionally would audit files HA skips, which is the exact
+# bug this module was written to close.
+_CASE_INSENSITIVE_FS = os.path.normcase("A") == "a"
+
+# `!include some/where/fragment.yml` — a literal path, never a template, and
+# `!include_dir_*` cannot match (`_` is not `\s`). Used to tell a `.yml` that is
+# genuinely dead from one a sibling file pulls in explicitly.
+_INCLUDE_RE = re.compile(r"!include\s+\S*?([\w.\-]+\.ya?ml)\b")
+_INCLUDE_READ_LIMIT = 1_000_000
+
+
+def _has_ext(name: str, *extensions: str) -> bool:
+    """True when *name* carries one of *extensions*, the way HA's glob sees it."""
+    return (name.lower() if _CASE_INSENSITIVE_FS else name).endswith(extensions)
+
+
+def _is_dead_extension(name: str) -> bool:
+    """True for a YAML-looking file HA's ``*.yaml`` glob will not pick up.
+
+    ``.yml`` everywhere, plus every case variant of ``.yaml`` on a
+    case-sensitive filesystem: ``Config.YAML`` is loaded on macOS and skipped on
+    the Linux containers, and only the second case is dead configuration.
+    """
+    lowered = name.lower()
+    if not lowered.endswith((".yaml", ".yml")):
+        return False
+    if _CASE_INSENSITIVE_FS:
+        return lowered.endswith(".yml")
+    return not name.endswith(".yaml")
+
 
 # ("file", path) -> a single YAML file; ("dir", path) -> a folder of YAML files
 Source = tuple[str, str]
@@ -144,26 +181,93 @@ def walk_yaml_dir(directory: str) -> list[str]:
             d for d in dirs if not d.startswith(".") and d != "__pycache__"
         )
         for name in sorted(files):
-            if name.startswith(".") or not name.endswith(".yaml"):
+            if name.startswith(".") or not _has_ext(name, ".yaml"):
                 continue
             found.append(os.path.join(root, name))
     return found
 
 
-def find_unloaded_yaml_files(
-    config_dir: str, key: str, default_filename: str
-) -> list[str]:
-    """``.yml`` files sitting in a folder HA merges — dead config, silently.
+def resolve_packages_sources(config_dir: str) -> list[Source]:
+    """Sources declared by ``homeassistant: packages:`` — nothing by default.
 
-    Only directory sources are scanned: ``automation: !include foo.yml`` is a
-    single file and loads fine, it is the ``!include_dir_*`` glob that is
-    ``*.yaml``-only. Returns absolute paths, same walk rules as
-    :func:`walk_yaml_dir`.
+    ``packages:`` differs from the domain keys on two counts, and both were
+    getting in the way of a correct audit: it is nested one level under
+    ``homeassistant:``, so :func:`resolve_config_sources` (top level only, by
+    design) cannot see it, and it has **no default location** — a ``packages/``
+    folder that is not declared is not loaded by Home Assistant, so auditing
+    one produced findings on entries that do not exist.
+
+    Both spellings are returned: ``packages: !include_dir_named pkgs/`` gives a
+    directory source, an inline mapping gives one source per ``!include``d
+    value. An empty list means HA loads no packages at all.
     """
-    found: list[str] = []
-    seen: set[str] = set()
+    try:
+        with open(os.path.join(config_dir, "configuration.yaml"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return []
 
-    for kind, source in resolve_config_sources(config_dir, key, default_filename):
+    sources: list[Source] = []
+    in_ha_block = False
+    mapping_indent: int | None = None
+
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+
+        if indent == 0:
+            in_ha_block = line.partition(":")[0].rstrip() == "homeassistant"
+            mapping_indent = None
+            continue
+        if not in_ha_block:
+            continue
+
+        if mapping_indent is not None:
+            if indent > mapping_indent:
+                # `pack_name: !include packages/pack.yaml` inside the mapping.
+                source = _as_source(_clean_value(line.partition(":")[2]), config_dir)
+                if source is not None:
+                    sources.append(source)
+                continue
+            mapping_indent = None  # dedented out of the packages mapping
+
+        head, sep, rest = line.partition(":")
+        if not sep or head.strip() != "packages":
+            continue
+        value = _clean_value(rest)
+        if value:
+            source = _as_source(value, config_dir)
+            if source is not None:
+                sources.append(source)
+        else:
+            mapping_indent = indent
+
+    return sources
+
+
+def find_unloaded_in_sources(sources: list[Source]) -> list[str]:
+    """``.yml`` files sitting in a merged folder that nothing pulls in.
+
+    Only directory sources are walked: ``automation: !include foo.yml`` is a
+    single file and loads fine, it is the ``!include_dir_*`` glob that is
+    ``*.yaml``-only.
+
+    A ``.yml`` named by an explicit ``!include`` from a sibling file **is**
+    loaded — ``!include`` takes a literal path and is not extension-restricted
+    — so the walk collects the ``!include`` targets at the same time and drops
+    those candidates. Without that pass the check told the user to rename a
+    file that is in use, and the rename breaks the config twice over: the old
+    name 404s, and the renamed file is then swept up by the ``*.yaml`` glob as
+    a top-level entry whose shape is wrong. Matching is on the basename, so two
+    same-named ``.yml`` in different folders suppress each other — the right
+    trade for a compliance hint, whose cost of a false positive is a user
+    breaking a working config.
+    """
+    candidates: list[str] = []
+    included: set[str] = set()
+
+    for kind, source in sources:
         if kind != "dir" or not os.path.isdir(source):
             continue
         for root, dirs, files in os.walk(source, followlinks=False):
@@ -171,15 +275,38 @@ def find_unloaded_yaml_files(
                 d for d in dirs if not d.startswith(".") and d != "__pycache__"
             )
             for name in sorted(files):
-                if name.startswith(".") or not name.endswith(".yml"):
+                if name.startswith(".") or not name.lower().endswith((".yaml", ".yml")):
                     continue
                 path = os.path.join(root, name)
-                marker = os.path.normcase(os.path.abspath(path))
-                if marker in seen:
+                if _is_dead_extension(name):
+                    candidates.append(path)
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        text = fh.read(_INCLUDE_READ_LIMIT)
+                except (OSError, UnicodeDecodeError):
                     continue
-                seen.add(marker)
-                found.append(path)
+                included.update(_INCLUDE_RE.findall(text))
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        if os.path.basename(path) in included:
+            continue
+        marker = os.path.normcase(os.path.abspath(path))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        found.append(path)
     return found
+
+
+def find_unloaded_yaml_files(
+    config_dir: str, key: str, default_filename: str
+) -> list[str]:
+    """:func:`find_unloaded_in_sources` for a top-level domain key."""
+    return find_unloaded_in_sources(
+        resolve_config_sources(config_dir, key, default_filename)
+    )
 
 
 def iter_domain_files(
@@ -205,6 +332,138 @@ def iter_domain_files(
             seen.add(marker)
             found.append(path)
     return found
+
+
+class ListScan(NamedTuple):
+    """One pass over a list-shaped domain (automation, scene).
+
+    ``files`` and ``skipped`` come from the same walk as the match, so the miss
+    path can name what it searched and what it had to pass over without
+    re-parsing the domain — which is exactly what it used to do, twice, on a
+    folder that had just failed to yield a match.
+    """
+
+    path: str | None
+    documents: list
+    index: int
+    files: list[str]
+    skipped: list[str]
+
+
+class NamedScan(NamedTuple):
+    """One pass over a mapping-shaped domain (script). See :class:`ListScan`."""
+
+    path: str | None
+    mapping: dict
+    key: str | None
+    files: list[str]
+    skipped: list[str]
+
+
+class DomainLoad(NamedTuple):
+    """Every parsed file of a list-shaped domain, plus what could not be read."""
+
+    loaded: list[tuple[str, list]]
+    files: list[str]
+    skipped: list[str]
+
+
+def read_plain_yaml(path: str):
+    """Parse one config file with plain PyYAML, for the read-modify-write paths.
+
+    Deliberately NOT HA's loader: these paths dump the parsed data back to
+    disk, and HA's loader expands ``!secret`` / ``!include``, which would
+    inline a secret in clear text or flatten an include into the file. A file
+    carrying HA tags fails to parse here and is skipped — the caller reports
+    "not found" instead of rewriting it wrongly. Use :func:`load_yaml_any` for
+    read-only inspection.
+    """
+    import yaml
+
+    with open(path, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def scan_list_domain(
+    config_dir: str, key: str, default_filename: str, match
+) -> ListScan:
+    """Find an entry in a list-shaped domain (automation, scene).
+
+    Scans every file the domain key resolves to — a split config keeps its
+    entries in several files — and returns the ``(path, documents, index)`` of
+    the first match, with ``index`` at ``-1`` on a miss. Writes must go back to
+    that one file.
+    """
+    files = iter_domain_files(config_dir, key, default_filename)
+    skipped: list[str] = []
+    for path in files:
+        try:
+            data = read_plain_yaml(path) or []
+        except Exception:  # noqa: BLE001 — HA tags or a syntax error
+            skipped.append(path)
+            continue
+        if not isinstance(data, list):
+            continue
+        for index, item in enumerate(data):
+            if isinstance(item, dict) and match(item):
+                return ListScan(path, data, index, files, skipped)
+    return ListScan(None, [], -1, files, skipped)
+
+
+def scan_named_domain(
+    config_dir: str, key: str, default_filename: str, match
+) -> NamedScan:
+    """Find an entry in a mapping-shaped domain (script).
+
+    Returns the ``(path, mapping, key_of_match)`` of the file that holds it,
+    with ``key`` at ``None`` on a miss.
+    """
+    files = iter_domain_files(config_dir, key, default_filename)
+    skipped: list[str] = []
+    for path in files:
+        try:
+            data = read_plain_yaml(path) or {}
+        except Exception:  # noqa: BLE001
+            skipped.append(path)
+            continue
+        if not isinstance(data, dict):
+            continue
+        for entry_key, entry in data.items():
+            if isinstance(entry, dict) and match(entry_key, entry):
+                return NamedScan(path, data, entry_key, files, skipped)
+    return NamedScan(None, {}, None, files, skipped)
+
+
+def load_list_domain(config_dir: str, key: str, default_filename: str) -> DomainLoad:
+    """Every ``(path, documents)`` pair for a list-shaped domain.
+
+    For callers that need several matching passes in priority order across the
+    whole config (exact id, then registry unique_id, then alias) rather than a
+    first-match-wins scan.
+    """
+    files = iter_domain_files(config_dir, key, default_filename)
+    loaded: list[tuple[str, list]] = []
+    skipped: list[str] = []
+    for path in files:
+        try:
+            data = read_plain_yaml(path) or []
+        except Exception:  # noqa: BLE001
+            skipped.append(path)
+            continue
+        if isinstance(data, list):
+            loaded.append((path, data))
+    return DomainLoad(loaded, files, skipped)
+
+
+def write_yaml_documents(path: str, documents, sort_keys: bool = False) -> None:
+    """Dump a parsed domain file back to disk, preserving key order by default."""
+    import yaml
+
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.dump(
+            documents, fh, allow_unicode=True,
+            default_flow_style=False, sort_keys=sort_keys,
+        )
 
 
 def is_split_config(config_dir: str, key: str, default_filename: str) -> bool:

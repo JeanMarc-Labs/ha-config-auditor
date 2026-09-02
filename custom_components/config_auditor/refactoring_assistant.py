@@ -13,8 +13,31 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import BACKUP_DIR
+from .yaml_sources import (
+    iter_domain_files,
+    load_list_domain,
+    scan_named_domain,
+    write_yaml_documents,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_BACKUP_NAME_RE = re.compile(
+    r"^(?P<stem>.+)_(?P<ts>\d{8}_\d{6})(?:_(?P<seq>\d+))?\.yaml$"
+)
+
+
+def _backup_stem(path: Path) -> str | None:
+    """The source file's stem behind a `<stem>_<YYYYmmdd_HHMMSS>.yaml` backup.
+
+    Backups are named after the file they copy, so a split config's backups no
+    longer all claim to be `automations_*`. Returns None for anything that is
+    not a HACA backup name, which keeps the listing and the pruning off
+    unrelated files a user may have dropped in the directory.
+    """
+    match = _BACKUP_NAME_RE.match(path.name)
+    return match.group("stem") if match else None
 
 
 def _build_description_fallback(alias: str, config: dict, is_script: bool) -> str:
@@ -112,16 +135,155 @@ def _build_description_fallback(alias: str, config: dict, is_script: bool) -> st
         return f"Automation avec {n_triggers} déclencheur(s) et {n_actions} action(s)."
 
 
+def _match_automation(
+    loaded: list[tuple[str, list]], automation_id: str, unique_id: str | None
+) -> tuple[Path | None, list, int]:
+    """Locate an automation across every file the `automation:` key resolves to.
+
+    Priority, most precise first: the YAML `id`, the registry `unique_id` (which
+    HA sets to that same `id`, so an `entity_id` resolves exactly), then the
+    alias in its several spellings, then the positional fallback the
+    `automation.unknown_<n>` form relies on. Returns `(file, documents, index)`
+    so the caller can write back to the one file that holds it.
+    """
+    def _passes(predicate) -> tuple[Path | None, list, int]:
+        for path, automations in loaded:
+            for index, item in enumerate(automations):
+                if isinstance(item, dict) and predicate(item):
+                    return Path(path), automations, index
+        return None, [], -1
+
+    def _slug(value: str) -> str:
+        return value.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
+
+    # 1. exact YAML id, then the registry's unique_id for an entity_id
+    for wanted in (automation_id, unique_id):
+        if not wanted:
+            continue
+        hit = _passes(lambda a, w=wanted: str(a.get("id", "")) == w)
+        if hit[2] >= 0:
+            return hit
+
+    # 2. alias, exact then slugified
+    for predicate in (
+        lambda a: a.get("alias") == automation_id,
+        lambda a: bool(a.get("alias")) and _slug(str(a["alias"])) == automation_id,
+    ):
+        hit = _passes(predicate)
+        if hit[2] >= 0:
+            return hit
+
+    # 3. `automation.<something>` — alias slug or plain alias behind the prefix
+    if automation_id.startswith("automation."):
+        name = automation_id[len("automation."):]
+        for predicate in (
+            lambda a: bool(a.get("alias")) and _slug(str(a["alias"])) == name,
+            lambda a: bool(a.get("alias")) and str(a["alias"]).lower() == name.lower(),
+            lambda a: str(a.get("id", "")) == name,
+        ):
+            hit = _passes(predicate)
+            if hit[2] >= 0:
+                return hit
+
+    # 4. `automation.unknown_<id|alias|position>` — the entity had no name
+    if automation_id.startswith("automation.unknown_"):
+        rest = automation_id[len("automation.unknown_"):]
+        for predicate in (
+            lambda a: str(a.get("id", "")) == rest,
+            lambda a: bool(a.get("alias")) and _slug(str(a["alias"])) == rest,
+        ):
+            hit = _passes(predicate)
+            if hit[2] >= 0:
+                return hit
+        try:  # positional, counted across the files in merge order
+            wanted_pos = int(rest)
+        except ValueError:
+            return None, [], -1
+        position = 0
+        for path, automations in loaded:
+            for index in range(len(automations)):
+                if position == wanted_pos:
+                    return Path(path), automations, index
+                position += 1
+
+    return None, [], -1
+
+
 class RefactoringAssistant:
     """Assistant for automated refactoring with preview and backup."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize refactoring assistant."""
         self.hass = hass
+        self._config_dir = str(hass.config.config_dir)
         self._backup_dir = Path(hass.config.config_dir) / BACKUP_DIR
         self._backup_dir.mkdir(exist_ok=True)
-        self._automations_file = Path(hass.config.config_dir) / "automations.yaml"
-        self._scripts_file = Path(hass.config.config_dir) / "scripts.yaml"
+        # No `_automations_file` / `_scripts_file`: which file holds an entry is
+        # a per-target question, not an install-wide constant. With a split
+        # config (`automation: !include_dir_merge_list automations/`) the flat
+        # paths do not exist, and every service here failed on
+        # `[Errno 2] .../automations.yaml`. Each read-modify-write now locates
+        # the holding file first and writes back only there.
+
+    # ── Locating the file that holds an entry ─────────────────────────────
+    #   Everything below writes back to the one file a target actually lives
+    #   in, resolved through the shared yaml_sources helpers, so a split
+    #   config behaves exactly like a flat one.
+
+    async def _async_locate_automation(
+        self, automation_id: str
+    ) -> tuple[Path | None, list, int]:
+        """``(file, documents, index)`` for an automation, whatever the layout.
+
+        ``automation_id`` may be the YAML ``id``, an alias, or an ``entity_id``.
+        The entity registry is consulted first for the ``entity_id`` form: HA
+        stores a YAML automation's ``id`` as its ``unique_id``, which is exact,
+        where re-slugifying the alias is a guess that two aliases can share.
+        """
+        unique_id: str | None = None
+        if automation_id.startswith("automation."):
+            try:
+                entry = er.async_get(self.hass).async_get(automation_id)
+                unique_id = entry.unique_id if entry and entry.unique_id else None
+            except Exception:  # noqa: BLE001 — registry unavailable: fall through
+                unique_id = None
+
+        load = await self.hass.async_add_executor_job(
+            load_list_domain, self._config_dir, "automation", "automations.yaml"
+        )
+        if load.skipped:
+            # Plain PyYAML on a write path, so a file carrying !secret or
+            # !include is passed over rather than rewritten with the tag lost.
+            _LOGGER.debug(
+                "Automation lookup skipped %d unparseable file(s): %s",
+                len(load.skipped), ", ".join(load.skipped),
+            )
+        return _match_automation(load.loaded, automation_id, unique_id)
+
+    async def _async_locate_script(
+        self, entity_id: str
+    ) -> tuple[Path | None, dict, str | None]:
+        """``(file, mapping, key)`` for a script, whatever the layout."""
+        script_key = entity_id.replace("script.", "").strip()
+
+        def _matches(key: str, cfg: dict) -> bool:
+            if key == script_key:
+                return True
+            alias = cfg.get("alias") or ""
+            return bool(alias) and (
+                str(alias).lower() == script_key.lower()
+                or str(alias).lower().replace(" ", "_") == script_key
+            )
+
+        scan = await self.hass.async_add_executor_job(
+            scan_named_domain, self._config_dir, "script", "scripts.yaml", _matches
+        )
+        if scan.key is None and scan.skipped:
+            _LOGGER.debug(
+                "Script lookup skipped %d unparseable file(s): %s",
+                len(scan.skipped), ", ".join(scan.skipped),
+            )
+        return (Path(scan.path) if scan.path else None), scan.mapping, scan.key
 
     async def preview_device_id_fix(self, automation_id: str, location: str | None = None) -> dict[str, Any]:
         """Preview device_id to entity_id conversion without applying.
@@ -433,52 +595,41 @@ class RefactoringAssistant:
                 "message": "Dry run complete. No changes applied."
             }
         
-        # Create backup
-        backup_path = await self._create_backup()
-        
+        target, automations, index = await self._async_locate_automation(automation_id)
+        if index < 0:
+            return {"success": False, "error": f"Automation not found: {automation_id}"}
+
+        backup_path = await self._create_backup(target)
+
         try:
-            # Load all automations
-            def read_automations():
-                with open(self._automations_file, "r", encoding="utf-8") as f:
-                    return yaml.safe_load(f) or []
-            
-            automations = await self.hass.async_add_executor_job(read_automations)
-            
-            # Find and modify the automation
-            for automation in automations:
-                if automation.get("id") == automation_id:
-                    
-                    # Apply changes per section
-                    for change in preview["changes"]:
-                        section = change["section"]
-                        idx = change["index"]
-                        
-                        # Detect correct key for each section
-                        if section == "trigger":
-                            key = "triggers" if "triggers" in automation else "trigger"
-                        elif section == "condition":
-                            key = "conditions" if "conditions" in automation else "condition"
-                        elif section == "action":
-                            key = "actions" if "actions" in automation else "action"
-                        else:
-                            continue
-                        
-                        items = automation.get(key, [])
-                        if not isinstance(items, list):
-                            items = [items] if items else []
-                        if idx < len(items):
-                            items[idx] = change["to"]
-                        automation[key] = items
-                    
-                    break
-            
-            # Save modified automations
-            def write_automations():
-                with open(self._automations_file, "w", encoding="utf-8") as f:
-                    yaml.dump(automations, f, default_flow_style=False, allow_unicode=True)
-            
-            await self.hass.async_add_executor_job(write_automations)
-            
+            automation = automations[index]
+
+            # Apply changes per section
+            for change in preview["changes"]:
+                section = change["section"]
+                idx = change["index"]
+
+                # Detect correct key for each section
+                if section == "trigger":
+                    key = "triggers" if "triggers" in automation else "trigger"
+                elif section == "condition":
+                    key = "conditions" if "conditions" in automation else "condition"
+                elif section == "action":
+                    key = "actions" if "actions" in automation else "action"
+                else:
+                    continue
+
+                items = automation.get(key, [])
+                if not isinstance(items, list):
+                    items = [items] if items else []
+                if idx < len(items):
+                    items[idx] = change["to"]
+                automation[key] = items
+
+            await self.hass.async_add_executor_job(
+                write_yaml_documents, str(target), automations
+            )
+
             return {
                 "success": True,
                 "automation_id": automation_id,
@@ -574,31 +725,22 @@ class RefactoringAssistant:
                 "message": "Dry run complete. No changes applied."
             }
         
-        backup_path = await self._create_backup()
-        
+        target, automations, index = await self._async_locate_automation(automation_id)
+        if index < 0:
+            return {"success": False, "error": f"Automation not found: {automation_id}"}
+
+        backup_path = await self._create_backup(target)
+
         try:
-            def read_automations():
-                with open(self._automations_file, "r", encoding="utf-8") as f:
-                    return yaml.safe_load(f) or []
-            
-            automations = await self.hass.async_add_executor_job(read_automations)
-            
-            for automation in automations:
-                if automation.get("id") == automation_id:
-                    automation["mode"] = new_mode
-                    
-                    if new_mode in ["queued", "parallel"]:
-                        if "max" not in automation:
-                            automation["max"] = 10
-                    
-                    break
-            
-            def write_automations():
-                with open(self._automations_file, "w", encoding="utf-8") as f:
-                    yaml.dump(automations, f, default_flow_style=False, allow_unicode=True)
-            
-            await self.hass.async_add_executor_job(write_automations)
-            
+            automation = automations[index]
+            automation["mode"] = new_mode
+            if new_mode in ["queued", "parallel"] and "max" not in automation:
+                automation["max"] = 10
+
+            await self.hass.async_add_executor_job(
+                write_yaml_documents, str(target), automations
+            )
+
             return {
                 "success": True,
                 "automation_id": automation_id,
@@ -692,35 +834,29 @@ class RefactoringAssistant:
                 "message": "Dry run complete."
             }
             
-        backup_path = await self._create_backup()
-        
+        target, automations, index = await self._async_locate_automation(automation_id)
+        if index < 0:
+            return {"success": False, "error": f"Automation not found: {automation_id}"}
+
+        backup_path = await self._create_backup(target)
+
         try:
-            def read_automations():
-                with open(self._automations_file, "r", encoding="utf-8") as f:
-                    return yaml.safe_load(f) or []
-            
-            automations = await self.hass.async_add_executor_job(read_automations)
-            
-            for automation in automations:
-                if automation.get("id") == automation_id:
-                    cond_key = "conditions" if "conditions" in automation else "condition"
-                    items = automation.get(cond_key, [])
-                    if not isinstance(items, list):
-                        items = [items] if items else []
-                        
-                    for change in preview["changes"]:
-                        idx = change["index"]
-                        if idx < len(items):
-                            items[idx] = change["to"]
-                    automation[cond_key] = items
-                    break
-            
-            def write_automations():
-                with open(self._automations_file, "w", encoding="utf-8") as f:
-                    yaml.dump(automations, f, default_flow_style=False, allow_unicode=True)
-            
-            await self.hass.async_add_executor_job(write_automations)
-            
+            automation = automations[index]
+            cond_key = "conditions" if "conditions" in automation else "condition"
+            items = automation.get(cond_key, [])
+            if not isinstance(items, list):
+                items = [items] if items else []
+
+            for change in preview["changes"]:
+                idx = change["index"]
+                if idx < len(items):
+                    items[idx] = change["to"]
+            automation[cond_key] = items
+
+            await self.hass.async_add_executor_job(
+                write_yaml_documents, str(target), automations
+            )
+
             return {
                 "success": True,
                 "automation_id": automation_id,
@@ -758,20 +894,19 @@ class RefactoringAssistant:
             try:
                 _LOGGER.debug("Scanning backups in: %s", self._backup_dir)
                 for entry in self._backup_dir.iterdir():
-                    if entry.is_file() and entry.name.startswith("automations_") and entry.name.endswith(".yaml"):
+                    # Any `<source stem>_<timestamp>.yaml`, not just
+                    # `automations_*`: a split config backs up the file that
+                    # holds the entry, which is rarely named automations.yaml.
+                    if entry.is_file() and _backup_stem(entry):
                         try:
                             stat = entry.stat()
                             # Parser la date depuis le nom de fichier (automations_YYYYMMDD_HHMMSS.yaml)
                             # Plus fiable que st_mtime qui reflète l'heure de copie/restauration
                             created_iso = datetime.fromtimestamp(stat.st_mtime).isoformat()
                             try:
-                                stem = entry.stem  # ex: automations_20260224_182358
-                                parts = stem.split("_", 1)
-                                if len(parts) == 2:
-                                    ts_str = parts[1].replace("_", "")  # 20260224182358
-                                    if len(ts_str) == 14:
-                                        parsed = datetime.strptime(ts_str, "%Y%m%d%H%M%S")
-                                        created_iso = parsed.isoformat()
+                                ts_str = _BACKUP_NAME_RE.match(entry.name).group("ts")
+                                parsed = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
+                                created_iso = parsed.isoformat()
                             except Exception:
                                 pass  # garder st_mtime si parsing impossible
                             results.append({
@@ -779,12 +914,13 @@ class RefactoringAssistant:
                                 "name": entry.name,
                                 "size": stat.st_size,
                                 "created": created_iso,
+                                "source": _backup_stem(entry) + ".yaml",
                             })
                         except Exception as err:
                             _LOGGER.warning("Error reading backup file %s: %s", entry.name, err)
                             
                 # Sort by reverse chronological order (newest first) based on created timestamp
-                results.sort(key=lambda x: x["created"], reverse=True)
+                results.sort(key=lambda x: (x["created"], x["name"]), reverse=True)
                 return results[:10]
                 
             except Exception as err:
@@ -825,20 +961,39 @@ class RefactoringAssistant:
                 "error": "Backup file not found"
             }
         
+        # ── Which file does this backup belong to? ────────────────────────
+        # The backup is named after its source (`<stem>_<timestamp>.yaml`), so
+        # the destination is the automation file with that stem. Restoring
+        # blindly to `<config>/automations.yaml` — what this did before — wrote
+        # a file HA does not read on a split config, silently restoring nothing.
+        destination = await self.hass.async_add_executor_job(
+            self._resolve_restore_target, backup_file
+        )
+        if destination is None:
+            stem = _backup_stem(backup_file) or "?"
+            return {
+                "success": False,
+                "error": (
+                    f"Cannot tell which file '{backup_file.name}' belongs to: no "
+                    f"automation file named '{stem}.yaml' is loaded by 'automation:' "
+                    f"any more. Restore it by hand."
+                ),
+            }
+
         try:
             # Create backup of current state before restore
-            pre_restore_backup = await self._create_backup()
-            
-            # Copy backup to automations.yaml
+            pre_restore_backup = await self._create_backup(destination)
+
             def restore():
                 import shutil
-                shutil.copy2(backup_file, self._automations_file)
-            
+                shutil.copy2(backup_file, destination)
+
             await self.hass.async_add_executor_job(restore)
-            
+
             return {
                 "success": True,
                 "restored_from": str(backup_file),
+                "restored_to": str(destination),
                 "backup_before_restore": str(pre_restore_backup),
                 "message": "Backup restored. Restart Home Assistant to apply."
             }
@@ -849,6 +1004,34 @@ class RefactoringAssistant:
                 "success": False,
                 "error": str(e)
             }
+
+    def _resolve_restore_target(self, backup_file: Path) -> Path | None:
+        """The automation file a backup came from, or None when it is gone.
+
+        Matches on the stem the backup name carries. Refuses an ambiguous match
+        — two files of that name in different sub-folders of a merged directory
+        — rather than picking one and overwriting the wrong config.
+        """
+        stem = _backup_stem(backup_file)
+        if not stem:
+            return None
+        candidates = [
+            Path(p)
+            for p in iter_domain_files(self._config_dir, "automation", "automations.yaml")
+            if Path(p).stem == stem
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            # A flat install whose automations.yaml does not exist yet still has
+            # a well-defined destination.
+            flat = Path(self._config_dir) / f"{stem}.yaml"
+            return flat if stem == "automations" else None
+        _LOGGER.warning(
+            "restore_backup: '%s' matches %d files, refusing to guess: %s",
+            backup_file.name, len(candidates), [str(c) for c in candidates],
+        )
+        return None
 
     async def create_backup(self) -> dict[str, Any]:
         """Create a manual backup."""
@@ -904,27 +1087,59 @@ class RefactoringAssistant:
                 "error": str(e)
             }
 
-    async def _create_backup(self) -> Path:
-        """Create backup of automations.yaml."""
+    async def _create_backup(self, target: Path | str | None = None) -> Path:
+        """Back up the file about to be written, before any write.
+
+        Named after the file it copies — `automations_<ts>.yaml` on a flat
+        install, exactly as before, `<name>_<ts>.yaml` for a file inside a
+        merged folder — which is what lets :meth:`restore_backup` put it back
+        where it came from. Falls back to the first file the `automation:` key
+        resolves to when no target is given (a manual backup).
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = self._backup_dir / f"automations_{timestamp}.yaml"
-        
-        def create_backup():
+
+        def _do() -> Path:
             import shutil
-            shutil.copy2(self._automations_file, backup_file)
-        
-        await self.hass.async_add_executor_job(create_backup)
-        
+
+            source = Path(target) if target else None
+            if source is None:
+                files = iter_domain_files(
+                    self._config_dir, "automation", "automations.yaml"
+                )
+                source = Path(files[0]) if files else None
+            if source is None or not source.is_file():
+                raise FileNotFoundError(
+                    "no automation YAML file to back up — `automation:` resolves "
+                    "to nothing that exists on disk"
+                )
+            # One-second timestamps collide: two operations in the same second
+            # produced the same name, and the second silently overwrote the
+            # first. `restore_backup` takes a pre-restore snapshot, so that
+            # collision could destroy the very backup being restored — the
+            # restore then copied the file onto itself and changed nothing.
+            backup_file = self._backup_dir / f"{source.stem}_{timestamp}.yaml"
+            sequence = 2
+            while backup_file.exists():
+                backup_file = self._backup_dir / f"{source.stem}_{timestamp}_{sequence}.yaml"
+                sequence += 1
+            shutil.copy2(source, backup_file)
+            return backup_file
+
+        backup_file = await self.hass.async_add_executor_job(_do)
+
         # Cleanup old backups (keep last 10)
         await self._cleanup_old_backups()
-        
+
         _LOGGER.info("Created backup: %s", backup_file)
         return backup_file
 
     async def _cleanup_old_backups(self):
         """Keep only the last 10 backups (runs in executor to avoid blocking)."""
         def _do_cleanup():
-            backups = sorted(self._backup_dir.glob("automations_*.yaml"), reverse=True)
+            backups = sorted(
+                (p for p in self._backup_dir.glob("*.yaml") if _backup_stem(p)),
+                key=lambda p: p.name, reverse=True,
+            )
             for old_backup in backups[10:]:
                 try:
                     old_backup.unlink()
@@ -935,110 +1150,23 @@ class RefactoringAssistant:
         await self.hass.async_add_executor_job(_do_cleanup)
 
     async def _load_automation_by_id(self, automation_id: str) -> dict | None:
-        """Load a specific automation configuration by ID, alias, or entity_id."""
-        
-        def read_automations():
-            with open(self._automations_file, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or []
-        
+        """Load an automation configuration by ID, alias, or entity_id."""
         try:
-            automations = await self.hass.async_add_executor_job(read_automations)
-            
-            # 1. Search by precise 'id'
-            for automation in automations:
-                if automation.get("id") == automation_id:
-                    return automation
-            
-            # 2. Search by 'alias' (common if 'id' is missing)
-            for automation in automations:
-                alias = automation.get("alias")
-                if alias and (alias == automation_id or alias.lower().replace(" ", "_").replace(".", "_") == automation_id):
-                    return automation
-            
-            # 3. Handle entity_id format (e.g., "automation.presence_entree_2")
-            # Extract the automation name from entity_id and search by alias
-            if automation_id.startswith("automation."):
-                automation_name = automation_id.replace("automation.", "")
-                
-                # Try to find by alias that matches the entity name
-                for automation in automations:
-                    alias = automation.get("alias")
-                    if alias:
-                        generated_alias = alias.lower().replace(' ', '_').replace('-', '_')
-                        if generated_alias == automation_name:
-                            return automation
-                
-                # Try to find by exact alias match
-                for automation in automations:
-                    alias = automation.get("alias")
-                    if alias and alias.lower() == automation_name.lower():
-                        return automation
-            
-            # 4. Handle "unknown" entity_id fallback (fix for the reported issue)
-            # If automation_id looks like "automation.unknown_123456", try to find by the original ID
-            if automation_id.startswith("automation.unknown_"):
-                # Extract the original ID or index from the unknown string
-                original_part = automation_id.replace("automation.unknown_", "")
-                
-                # Try to find automation by original ID
-                for automation in automations:
-                    if automation.get("id") == original_part:
-                        return automation
-                
-                # Try to find automation by alias that matches the original part
-                for automation in automations:
-                    alias = automation.get("alias")
-                    if alias:
-                        generated_alias = alias.lower().replace(' ', '_').replace('-', '_')
-                        if generated_alias == original_part:
-                            return automation
-                
-                # Try to parse as index (if it's a number)
-                try:
-                    index = int(original_part)
-                    if 0 <= index < len(automations):
-                        return automations[index]
-                except ValueError:
-                    pass
-            
-            # 5. Try to resolve via entity registry (if automation_id is an entity_id)
-            if automation_id.startswith("automation."):
-                entity_reg = er.async_get(self.hass)
-                entity_entry = entity_reg.async_get(automation_id)
-                if entity_entry and entity_entry.unique_id:
-                    # Search by unique_id (which should match the automation's id in YAML)
-                    for automation in automations:
-                        if automation.get("id") == entity_entry.unique_id:
-                            return automation
-            
-            return None
-            
+            _path, documents, index = await self._async_locate_automation(automation_id)
+            return documents[index] if index >= 0 else None
         except Exception as e:
             _LOGGER.error("Error loading automation: %s", e)
             return None
 
     async def _load_script_by_entity_id(self, entity_id: str) -> dict | None:
-        """Load a specific script configuration by entity_id (e.g. 'script.my_script')."""
-        def read_scripts():
-            if not self._scripts_file.exists():
-                return {}
-            with open(self._scripts_file, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-
+        """Load a script configuration by entity_id (e.g. 'script.my_script')."""
         try:
-            scripts = await self.hass.async_add_executor_job(read_scripts)
-            # scripts.yaml is a dict keyed by script alias/id
-            script_key = entity_id.replace("script.", "")
-            if script_key in scripts:
-                config = scripts[script_key]
-                config["_script_key"] = script_key
-                return config
-            # Fallback: search by alias
-            for key, cfg in scripts.items():
-                if isinstance(cfg, dict) and cfg.get("alias", "").lower().replace(" ", "_") == script_key:
-                    cfg["_script_key"] = key
-                    return cfg
-            return None
+            _path, scripts, key = await self._async_locate_script(entity_id)
+            if key is None:
+                return None
+            config = scripts[key]
+            config["_script_key"] = key
+            return config
         except Exception:
             return None
 
@@ -1125,32 +1253,23 @@ class RefactoringAssistant:
             Replacement entity. Empty string = remove the reference.
         """
         try:
-            config = await self._load_automation_by_id(automation_id)
-            if not config:
+            target, automations, index = await self._async_locate_automation(automation_id)
+            if index < 0:
                 return {"success": False, "error": f"Automation not found: {automation_id}"}
+            config = automations[index]
 
-            backup_path = await self._create_backup()
+            backup_path = await self._create_backup(target)
             _LOGGER.info("Backup created before zombie fix: %s", backup_path)
 
             changed = self._replace_entity_in_config(config, old_entity_id, new_entity_id)
             if not changed:
                 return {"success": False, "error": f"{old_entity_id} not found in automation config"}
 
-            # Save back to automations.yaml
-            def read_and_write():
-                with open(self._automations_file, "r", encoding="utf-8") as f:
-                    automations = yaml.safe_load(f) or []
-                # Replace the matching automation in the list
-                auto_id = config.get("id")
-                alias   = config.get("alias")
-                for i, auto in enumerate(automations):
-                    if (auto_id and auto.get("id") == auto_id) or                        (alias and auto.get("alias") == alias):
-                        automations[i] = config
-                        break
-                with open(self._automations_file, "w", encoding="utf-8") as f:
-                    yaml.dump(automations, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-            await self.hass.async_add_executor_job(read_and_write)
+            # The entry was mutated in place inside the documents of the file
+            # that holds it — no second lookup, no risk of matching a namesake.
+            await self.hass.async_add_executor_job(
+                write_yaml_documents, str(target), automations
+            )
 
             # Reload automations so the change takes effect in HA
             await self.hass.services.async_call(
@@ -1306,6 +1425,7 @@ class RefactoringAssistant:
             "alias": alias,
             "suggestion": suggestion,
         }
+
     async def apply_description_fix(self, entity_id: str, description: str) -> dict[str, Any]:
         """Write a description field into an automation or script YAML config."""
         if not entity_id or not description:
@@ -1313,66 +1433,34 @@ class RefactoringAssistant:
 
         is_script = entity_id.startswith("script.")
 
-        # ── Resolve automation_id ─────────────────────────────────────────
         if is_script:
-            target_id = None  # scripts are matched by entity key, not by id field
+            target, scripts, key = await self._async_locate_script(entity_id)
+            if key is None:
+                return {
+                    "success": False,
+                    "error": f"Script '{entity_id}' not found in any script YAML file",
+                }
         else:
-            registry = er.async_get(self.hass)
-            entry = registry.async_get(entity_id)
-            if entry and entry.unique_id:
-                target_id = entry.unique_id
-            else:
-                target_id = entity_id.replace("automation.", "")
+            target, automations, index = await self._async_locate_automation(entity_id)
+            if index < 0:
+                return {
+                    "success": False,
+                    "error": f"Automation '{entity_id}' not found in any automation YAML file",
+                }
 
-        backup_path = await self._create_backup()
+        backup_path = await self._create_backup(target)
 
         try:
             if is_script:
-                # ── Scripts ───────────────────────────────────────────────
-                script_key = entity_id.replace("script.", "")
-
-                def _read_scripts():
-                    with open(self._scripts_file, "r", encoding="utf-8") as f:
-                        return yaml.safe_load(f) or {}
-
-                def _write_scripts(data):
-                    with open(self._scripts_file, "w", encoding="utf-8") as f:
-                        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-
-                scripts = await self.hass.async_add_executor_job(_read_scripts)
-
-                if script_key not in scripts:
-                    return {"success": False, "error": f"Script '{script_key}' not found in scripts.yaml"}
-
-                scripts[script_key]["description"] = description
-                await self.hass.async_add_executor_job(_write_scripts, scripts)
-
+                scripts[key]["description"] = description
+                documents = scripts
             else:
-                # ── Automations ───────────────────────────────────────────
-                def _read_automations():
-                    with open(self._automations_file, "r", encoding="utf-8") as f:
-                        return yaml.safe_load(f) or []
+                automations[index]["description"] = description
+                documents = automations
 
-                def _write_automations(data):
-                    with open(self._automations_file, "w", encoding="utf-8") as f:
-                        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-
-                automations = await self.hass.async_add_executor_job(_read_automations)
-
-                found = False
-                for automation in automations:
-                    if automation.get("id") == target_id:
-                        automation["description"] = description
-                        found = True
-                        break
-
-                if not found:
-                    return {
-                        "success": False,
-                        "error": f"Automation '{target_id}' not found in automations.yaml",
-                    }
-
-                await self.hass.async_add_executor_job(_write_automations, automations)
+            await self.hass.async_add_executor_job(
+                write_yaml_documents, str(target), documents
+            )
 
             return {
                 "success": True,

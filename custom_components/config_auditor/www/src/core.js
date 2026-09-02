@@ -458,8 +458,17 @@
                       pcs.getPropertyValue('--primary-background-color') + '|' +
                       pcs.getPropertyValue('--card-background-color');
 
-          if (sig !== this._themeSig) {
+          // La signature rate l'édition d'un thème EN PLACE qui ne touche pas
+          // à ces deux fonds : changer --primary-color ou --primary-text-color
+          // laissait le panneau sur les anciennes couleurs jusqu'au rechargement
+          // de l'onglet. HA remplace l'objet de définition du thème à chaque
+          // frontend.reload_themes, donc un test d'identité — toujours O(1) —
+          // rattrape ce cas sans revenir à la sérialisation du cssText.
+          const themeDef = this._hass?.themes?.themes?.[this._hass?.themes?.theme];
+
+          if (sig !== this._themeSig || themeDef !== this._themeDefRef) {
             this._themeSig = sig;
+            this._themeDefRef = themeDef;
 
             // ── 1. Quelles custom properties copier ? ──────────────────────
             // On ne collecte que des NOMS ; la valeur vient toujours du
@@ -520,10 +529,6 @@
             s.background = bg;
             document.body.style.background = bg;
             if (fg) document.body.style.color = fg;
-
-            // La <style> de l'ancienne stratégie n'a plus lieu d'être et
-            // porterait le :root clair recopié du parent.
-            document.getElementById('_haca_theme_sync')?.remove();
 
             this._updateDarkAttr();
           }

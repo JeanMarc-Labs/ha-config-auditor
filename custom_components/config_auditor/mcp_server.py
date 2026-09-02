@@ -38,11 +38,18 @@ from homeassistant.components.http import HomeAssistantView
 
 from .const import DOMAIN
 from .yaml_sources import (
+    DomainLoad,
+    ListScan,
+    NamedScan,
     default_write_target,
     is_within,
     iter_domain_files,
+    load_list_domain,
     load_yaml_ha,
     parse_yaml_ha,
+    read_plain_yaml,
+    scan_list_domain,
+    scan_named_domain,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -620,18 +627,18 @@ async def _tool_get_automation(hass: HomeAssistant, params: dict) -> dict:
     try:
         friendly = attrs.get("friendly_name", "")
 
-        _path, docs, index = await _async_scan_list_domain(
+        scan = await _async_scan_list_domain(
             hass, "automation", "automations.yaml",
             lambda auto: (
                 str(auto.get("id", "")) == str(auto_id)
                 or auto.get("alias", "") == friendly
             ),
         )
-        if index >= 0:
+        if scan.index >= 0:
             yaml_content = yaml.dump(
-                docs[index], allow_unicode=True, default_flow_style=False
+                scan.documents[scan.index], allow_unicode=True, default_flow_style=False
             )
-            source_file = _path
+            source_file = scan.path
     except Exception as exc:
         _LOGGER.debug("[HACA MCP] YAML read error: %s", exc)
 
@@ -1424,12 +1431,12 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
     try:
         # Refuser un doublon d'alias dans N'IMPORTE quel fichier de la config,
         # pas seulement dans automations.yaml.
-        existing_path, _docs, _idx = await _async_scan_list_domain(
+        existing = await _async_scan_list_domain(
             hass, "automation", "automations.yaml",
             lambda item: item.get("alias") == alias,
         )
-        if existing_path is not None:
-            return {"error": f"Automation '{alias}' already exists in {existing_path}. "
+        if existing.path is not None:
+            return {"error": f"Automation '{alias}' already exists in {existing.path}. "
                              "Use ha_update_automation to modify it."}
 
         # Cible d'écriture : le fichier plat sur une install classique, un
@@ -1499,20 +1506,19 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
                 or (bool(auto.get("id")) and str(auto["id"]) in entity_id)
             )
 
-        found_path, automations, target_idx = await _async_scan_list_domain(
+        scan = await _async_scan_list_domain(
             hass, "automation", "automations.yaml", _matches
         )
-        if target_idx < 0:
-            files = await _async_domain_files(hass, "automation", "automations.yaml")
-            skipped = await _async_skipped_files(hass, "automation", "automations.yaml")
+        if scan.index < 0:
             return {"error": f"Automation '{entity_id}' not found in any automation YAML file "
-                             f"({len(files)} scanned). "
+                             f"({len(scan.files)} scanned). "
                              f"Note: only YAML automations can be updated this way."
-                             + _skipped_note(skipped),
-                    "skipped_files": skipped}
+                             + _skipped_note(scan.skipped),
+                    "skipped_files": scan.skipped}
 
-        auto_file = Path(found_path)
-        auto = automations[target_idx]
+        auto_file = Path(scan.path)
+        automations = scan.documents
+        auto = automations[scan.index]
 
         # Apply updates — accept both new format (triggers/actions/conditions) and legacy
         if params.get("alias"):
@@ -1551,7 +1557,7 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
         if params.get("mode"):
             auto["mode"] = params["mode"]
 
-        automations[target_idx] = auto
+        automations[scan.index] = auto
         new_yaml = yaml.dump(automations, allow_unicode=True, default_flow_style=False, sort_keys=False)
         await _safe_write_and_reload(hass, auto_file, new_yaml, "automation")
 
@@ -1780,12 +1786,12 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
     try:
         # Un script existant est réécrit dans SON fichier ; un nouveau va dans
         # la cible d'écriture (scripts.yaml à plat, fichier dédié si splitté).
-        owner_path, _owner_data, _owner_key = await _async_scan_named_domain(
+        owner = await _async_scan_named_domain(
             hass, "script", "scripts.yaml",
             lambda key, _entry: key == script_id,
         )
-        if owner_path is not None:
-            scripts_file = Path(owner_path)
+        if owner.path is not None:
+            scripts_file = Path(owner.path)
         else:
             scripts_file = Path(
                 await _async_write_target(hass, "script", "scripts.yaml", "haca_mcp.yaml")
@@ -2326,43 +2332,8 @@ async def _safe_write_and_reload(
 
 
 def _read_plain_yaml(path: str):
-    """Parse one config file with plain PyYAML, for the read-modify-write tools.
-
-    Deliberately NOT HA's loader: these paths dump the parsed data back to
-    disk, and HA's loader expands `!secret` / `!include`, which would inline a
-    secret in clear text or flatten an include into the file. A file carrying
-    HA tags fails to parse here and is skipped — the tool reports "not found"
-    instead of rewriting it wrongly.
-    """
-    import yaml
-
-    with open(path, encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
-
-
-async def _async_skipped_files(
-    hass: "HomeAssistant", key: str, default_filename: str
-) -> list[str]:
-    """Files the read-modify-write path could not parse, and therefore skipped.
-
-    :func:`_read_plain_yaml` is plain PyYAML on purpose, so a file carrying
-    `!secret` or `!include` raises and is passed over — the right call on a
-    write path, since re-dumping it would inline the secret in clear text. But
-    the entry the caller asked for may well be sitting in that file, and a bare
-    "not found" sent them looking for a script that plainly exists and runs.
-    Only ever called on the miss path, so the double parse costs nothing.
-    """
-
-    def _scan() -> list[str]:
-        skipped: list[str] = []
-        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
-            try:
-                _read_plain_yaml(path)
-            except Exception:  # noqa: BLE001 — any parse failure means skipped
-                skipped.append(path)
-        return skipped
-
-    return await hass.async_add_executor_job(_scan)
+    """Plain-PyYAML read for the read-modify-write tools — see yaml_sources."""
+    return read_plain_yaml(path)
 
 
 def _skipped_note(skipped: list[str]) -> str:
@@ -2380,85 +2351,28 @@ def _skipped_note(skipped: list[str]) -> str:
 
 async def _async_scan_list_domain(
     hass: "HomeAssistant", key: str, default_filename: str, match
-) -> tuple[str | None, list, int]:
-    """Find an entry in a list-shaped domain (automation, scene).
-
-    Scans every file the domain key resolves to — a split config keeps its
-    entries in several files — and returns ``(path, documents, index)`` of the
-    first match, or ``(None, [], -1)``. Writes must go back to that one file.
-    """
-
-    def _scan() -> tuple[str | None, list, int]:
-        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
-            try:
-                data = _read_plain_yaml(path) or []
-            except Exception:
-                continue
-            if not isinstance(data, list):
-                continue
-            for index, item in enumerate(data):
-                if isinstance(item, dict) and match(item):
-                    return path, data, index
-        return None, [], -1
-
-    return await hass.async_add_executor_job(_scan)
+) -> ListScan:
+    """:func:`yaml_sources.scan_list_domain`, off the event loop."""
+    return await hass.async_add_executor_job(
+        scan_list_domain, hass.config.config_dir, key, default_filename, match
+    )
 
 
 async def _async_scan_named_domain(
     hass: "HomeAssistant", key: str, default_filename: str, match
-) -> tuple[str | None, dict, str | None]:
-    """Find an entry in a mapping-shaped domain (script).
-
-    Returns ``(path, mapping, key_of_match)`` for the file that holds it, or
-    ``(None, {}, None)``.
-    """
-
-    def _scan() -> tuple[str | None, dict, str | None]:
-        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
-            try:
-                data = _read_plain_yaml(path) or {}
-            except Exception:
-                continue
-            if not isinstance(data, dict):
-                continue
-            for entry_key, entry in data.items():
-                if isinstance(entry, dict) and match(entry_key, entry):
-                    return path, data, entry_key
-        return None, {}, None
-
-    return await hass.async_add_executor_job(_scan)
+) -> NamedScan:
+    """:func:`yaml_sources.scan_named_domain`, off the event loop."""
+    return await hass.async_add_executor_job(
+        scan_named_domain, hass.config.config_dir, key, default_filename, match
+    )
 
 
 async def _async_load_list_domain(
     hass: "HomeAssistant", key: str, default_filename: str
-) -> list[tuple[str, list]]:
-    """Every (path, documents) pair for a list-shaped domain.
-
-    For callers that need several matching passes in priority order across the
-    whole config (exact id, then exact alias, then case-insensitive) rather
-    than a first-match-wins scan.
-    """
-
-    def _load() -> list[tuple[str, list]]:
-        loaded: list[tuple[str, list]] = []
-        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
-            try:
-                data = _read_plain_yaml(path) or []
-            except Exception:
-                continue
-            if isinstance(data, list):
-                loaded.append((path, data))
-        return loaded
-
-    return await hass.async_add_executor_job(_load)
-
-
-async def _async_domain_files(
-    hass: "HomeAssistant", key: str, default_filename: str
-) -> list[str]:
-    """Every file the domain key resolves to, resolved off the event loop."""
+) -> DomainLoad:
+    """:func:`yaml_sources.load_list_domain`, off the event loop."""
     return await hass.async_add_executor_job(
-        iter_domain_files, hass.config.config_dir, key, default_filename
+        load_list_domain, hass.config.config_dir, key, default_filename
     )
 
 
@@ -2711,19 +2625,37 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
     try:
         # Toutes les sources de la clé `automation:` — la passe de recherche
         # doit rester globale (id exact d'abord, tous fichiers confondus).
-        loaded = await _async_load_list_domain(hass, "automation", "automations.yaml")
+        load = await _async_load_list_domain(hass, "automation", "automations.yaml")
+        loaded = load.loaded
         if not loaded:
             return {"error": "no automation YAML file found"}
 
         # Find the automation — priority order (most precise first):
         # 1. Exact match on HA numeric id (most reliable — never ambiguous)
-        # 2. Exact match on entity_id slug (automation.xxx)
+        # 2. The entity registry's unique_id for an `automation.<slug>` ref
         # 3. Exact case-sensitive alias match
         # 4. Case-insensitive alias match (last resort — may be ambiguous)
         #
         # The old slugify heuristic (alias.lower().replace(" ","_")) is removed
         # because "Lumière salon" and "Lumiere salon" would both match the same slug.
+        # The registry replaces it without the ambiguity: a YAML automation's
+        # entity slug comes from slugify(alias) and is written nowhere in the
+        # file, but HA stores its `id:` as the entity's unique_id. Without this
+        # pass the full entity_id — the form every other tool reports back —
+        # resolved only when the slug happened to equal the id.
         slug = identifier.removeprefix("automation.") if identifier.startswith("automation.") else None
+
+        unique_id: str | None = None
+        if identifier.startswith("automation."):
+            try:
+                from homeassistant.helpers import entity_registry as er
+
+                entry = er.async_get(hass).async_get(identifier)
+                if entry and entry.unique_id:
+                    unique_id = str(entry.unique_id).strip()
+            except Exception:  # noqa: BLE001 — registry unavailable, fall through
+                unique_id = None
+        wanted_ids = {v for v in (slug or identifier, unique_id) if v}
 
         found_path = None
         found_docs: list = []
@@ -2736,7 +2668,7 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
                 if not isinstance(a, dict):
                     continue
                 ha_id = str(a.get("id", "")).strip()
-                if ha_id and ha_id == (slug or identifier):
+                if ha_id and ha_id in wanted_ids:
                     found_path, found_docs, found_idx = path, automations, i
                     found_alias = str(a.get("alias", "")).strip()
                     break
@@ -2752,8 +2684,11 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
                             continue
                         alias_val = str(a.get("alias", "")).strip()
                         cmp_id  = alias_val if sensitive else alias_val.lower()
-                        cmp_ref = identifier if sensitive else identifier.lower()
-                        if cmp_id == cmp_ref:
+                        # `slug` too: the alias never carries the domain prefix.
+                        refs = {identifier, slug} - {None}
+                        if not sensitive:
+                            refs = {r.lower() for r in refs}
+                        if cmp_id in refs:
                             found_path, found_docs, found_idx = path, automations, i
                             found_alias = alias_val
                             break
@@ -2763,13 +2698,12 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
                     break
 
         if found_idx is None:
-            skipped = await _async_skipped_files(hass, "automation", "automations.yaml")
             return {
                 "error": f"Automation '{identifier}' not found in any automation YAML file "
-                         f"({len(loaded)} scanned). "
+                         f"({len(load.files)} scanned). "
                          f"Use ha_get_entities(domain='automation') to list available automations."
-                         + _skipped_note(skipped),
-                "skipped_files": skipped,
+                         + _skipped_note(load.skipped),
+                "skipped_files": load.skipped,
             }
 
         # Remove it — rewriting only the file that actually holds it
@@ -4234,28 +4168,29 @@ async def _tool_ha_get_script(hass: HomeAssistant, params: dict) -> dict:
 
     # Cherche dans TOUS les fichiers que la clé `script:` résout — un
     # `!include_dir_merge_named` répartit les scripts sur plusieurs fichiers.
-    found_path, all_scripts, found_key = await _async_scan_named_domain(
-        hass, "script", "scripts.yaml", _matches
-    )
+    scan = await _async_scan_named_domain(hass, "script", "scripts.yaml", _matches)
 
-    if found_key is None:
-        files = await _async_domain_files(hass, "script", "scripts.yaml")
+    if scan.key is None:
+        # The slug hint re-reads only the files the scan could parse; the scan
+        # itself already told us which ones it had to pass over.
         available: list[str] = []
-        for path in files:
+        for path in scan.files:
+            if path in scan.skipped:
+                continue
             try:
                 data = await hass.async_add_executor_job(_read_plain_yaml, path)
             except Exception:
                 continue
             if isinstance(data, dict):
                 available.extend(data.keys())
-        skipped = await _async_skipped_files(hass, "script", "scripts.yaml")
         return {
             "error": f"Script '{script_ref}' not found in any script YAML file "
-                     f"({len(files)} scanned)" + _skipped_note(skipped),
-            "files_scanned": files,
-            "skipped_files": skipped,
+                     f"({len(scan.files)} scanned)" + _skipped_note(scan.skipped),
+            "files_scanned": scan.files,
+            "skipped_files": scan.skipped,
             "available_slugs": available[:20],
         }
+    found_path, all_scripts, found_key = scan.path, scan.mapping, scan.key
 
     found_data = all_scripts[found_key]
     return {
@@ -4281,18 +4216,17 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
     await _auto_backup(hass, "_tool_ha_update_script")
 
     slug = script_ref.replace("script.", "").strip()
-    scripts_path, all_scripts, found_key = await _async_scan_named_domain(
+    scan = await _async_scan_named_domain(
         hass, "script", "scripts.yaml", lambda key, _entry: key == slug,
     )
-    if found_key is None:
-        files = await _async_domain_files(hass, "script", "scripts.yaml")
-        skipped = await _async_skipped_files(hass, "script", "scripts.yaml")
+    if scan.key is None:
         return {
             "error": f"Script '{slug}' not found in any script YAML file "
-                     f"({len(files)} scanned)" + _skipped_note(skipped),
-            "files_scanned": files,
-            "skipped_files": skipped,
+                     f"({len(scan.files)} scanned)" + _skipped_note(scan.skipped),
+            "files_scanned": scan.files,
+            "skipped_files": scan.skipped,
         }
+    scripts_path, all_scripts = scan.path, scan.mapping
 
     current = all_scripts[slug] if isinstance(all_scripts[slug], dict) else {}
     # Apply updates
@@ -4335,18 +4269,17 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
     await _auto_backup(hass, "_tool_ha_remove_script")
 
     slug = script_ref.replace("script.", "").strip()
-    scripts_path, all_scripts, found_key = await _async_scan_named_domain(
+    scan = await _async_scan_named_domain(
         hass, "script", "scripts.yaml", lambda key, _entry: key == slug,
     )
-    if found_key is None:
-        files = await _async_domain_files(hass, "script", "scripts.yaml")
-        skipped = await _async_skipped_files(hass, "script", "scripts.yaml")
+    if scan.key is None:
         return {
             "error": f"Script '{slug}' not found in any script YAML file "
-                     f"({len(files)} scanned)" + _skipped_note(skipped),
-            "files_scanned": files,
-            "skipped_files": skipped,
+                     f"({len(scan.files)} scanned)" + _skipped_note(scan.skipped),
+            "files_scanned": scan.files,
+            "skipped_files": scan.skipped,
         }
+    scripts_path, all_scripts = scan.path, scan.mapping
 
     removed = all_scripts.pop(slug)
     try:
@@ -4386,23 +4319,24 @@ async def _tool_ha_get_scene(hass: HomeAssistant, params: dict) -> dict:
         sname = str(scene.get("name", "")).lower()
         return sid == slug or sname == slug or sname == scene_ref.lower()
 
-    found_path, all_scenes, index = await _async_scan_list_domain(
-        hass, "scene", "scenes.yaml", _matches
-    )
-    if index >= 0:
-        scene = all_scenes[index]
+    scan = await _async_scan_list_domain(hass, "scene", "scenes.yaml", _matches)
+    if scan.index >= 0:
+        scene = scan.documents[scan.index]
         return {
             "id": scene.get("id"),
             "name": scene.get("name"),
             "entity_id": f"scene.{scene.get('id', slug)}",
             "entities": scene.get("entities", {}),
-            "source_file": found_path,
+            "source_file": scan.path,
             "yaml": _yaml.dump(scene, allow_unicode=True, default_flow_style=False),
         }
 
-    files = await _async_domain_files(hass, "scene", "scenes.yaml")
+    # The name hint re-reads only the files the scan could parse; the scan
+    # itself already told us which ones it had to pass over.
     available: list = []
-    for path in files:
+    for path in scan.files:
+        if path in scan.skipped:
+            continue
         try:
             data = await hass.async_add_executor_job(_read_plain_yaml, path)
         except Exception:
@@ -4411,12 +4345,11 @@ async def _tool_ha_get_scene(hass: HomeAssistant, params: dict) -> dict:
             available.extend(
                 s.get("name") or s.get("id") for s in data if isinstance(s, dict)
             )
-    skipped = await _async_skipped_files(hass, "scene", "scenes.yaml")
     return {
         "error": f"Scene '{scene_ref}' not found in any scene YAML file "
-                 f"({len(files)} scanned)" + _skipped_note(skipped),
-        "files_scanned": files,
-        "skipped_files": skipped,
+                 f"({len(scan.files)} scanned)" + _skipped_note(scan.skipped),
+        "files_scanned": scan.files,
+        "skipped_files": scan.skipped,
         "available": available[:20],
     }
 
@@ -4434,11 +4367,11 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
     slug = _slugify(name)
 
     # Doublon cherché dans toute la config, pas seulement dans scenes.yaml
-    dup_path, _dup_docs, dup_idx = await _async_scan_list_domain(
+    duplicate = await _async_scan_list_domain(
         hass, "scene", "scenes.yaml", lambda s: s.get("id") == slug
     )
-    if dup_idx >= 0:
-        return {"error": f"Scene with id '{slug}' already exists in {dup_path}. "
+    if duplicate.index >= 0:
+        return {"error": f"Scene with id '{slug}' already exists in {duplicate.path}. "
                          "Use ha_update_scene to modify."}
 
     scenes_path = await _async_write_target(
@@ -4495,20 +4428,19 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
     await _auto_backup(hass, "_tool_ha_update_scene")
 
     slug = scene_ref.replace("scene.", "").strip().lower()
-    scenes_path, all_scenes, found_idx = await _async_scan_list_domain(
+    scan = await _async_scan_list_domain(
         hass, "scene", "scenes.yaml",
         lambda s: (
             str(s.get("id", "")).lower() == slug
             or str(s.get("name", "")).lower() == scene_ref.lower()
         ),
     )
-    if found_idx < 0:
-        files = await _async_domain_files(hass, "scene", "scenes.yaml")
-        skipped = await _async_skipped_files(hass, "scene", "scenes.yaml")
+    if scan.index < 0:
         return {"error": f"Scene '{scene_ref}' not found in any scene YAML file "
-                         f"({len(files)} scanned)" + _skipped_note(skipped),
-                "files_scanned": files,
-                "skipped_files": skipped}
+                         f"({len(scan.files)} scanned)" + _skipped_note(scan.skipped),
+                "files_scanned": scan.files,
+                "skipped_files": scan.skipped}
+    scenes_path, all_scenes, found_idx = scan.path, scan.documents, scan.index
 
     scene = all_scenes[found_idx]
     for field in ("name", "icon"):
@@ -4548,20 +4480,19 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
     await _auto_backup(hass, "_tool_ha_remove_scene")
 
     slug = scene_ref.replace("scene.", "").strip().lower()
-    scenes_path, all_scenes, found_idx = await _async_scan_list_domain(
+    scan = await _async_scan_list_domain(
         hass, "scene", "scenes.yaml",
         lambda s: (
             str(s.get("id", "")).lower() == slug
             or str(s.get("name", "")).lower() == scene_ref.lower()
         ),
     )
-    if found_idx < 0:
-        files = await _async_domain_files(hass, "scene", "scenes.yaml")
-        skipped = await _async_skipped_files(hass, "scene", "scenes.yaml")
+    if scan.index < 0:
         return {"error": f"Scene '{scene_ref}' not found in any scene YAML file "
-                         f"({len(files)} scanned)" + _skipped_note(skipped),
-                "files_scanned": files,
-                "skipped_files": skipped}
+                         f"({len(scan.files)} scanned)" + _skipped_note(scan.skipped),
+                "files_scanned": scan.files,
+                "skipped_files": scan.skipped}
+    scenes_path, all_scenes, found_idx = scan.path, scan.documents, scan.index
 
     removed = all_scenes.pop(found_idx)
     removed_name = removed.get("name") or removed.get("id")
@@ -5531,13 +5462,6 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
         "configuration.yaml", "ui-lovelace.yaml",
     }
     basename = os.path.basename(filename)
-    if basename not in _ALLOWED and not basename.startswith("packages/"):
-        return {
-            "error": (
-                f"'{basename}' is not in the allowed write list: {sorted(_ALLOWED)}. "
-                "Use ha_create_automation/ha_create_script for automation changes."
-            )
-        }
 
     if os.path.isabs(filename):
         fpath = filename
@@ -5549,6 +5473,21 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
     fpath_real  = os.path.realpath(fpath)
     if not fpath_real.startswith(config_root + os.sep) and fpath_real != config_root:
         return {"error": f"Cannot write files outside {config_root} (resolved: {fpath_real})"}
+
+    # A package file is allowed on top of the flat list. The test used to read
+    # `basename.startswith("packages/")` — `os.path.basename()` never returns a
+    # separator, so that branch could never fire and every package write was
+    # refused. It now runs on the RESOLVED path, after the traversal guard, so
+    # `packages/../secrets.yaml` cannot ride in on the prefix.
+    in_packages = is_within(fpath_real, os.path.join(config_root, "packages"))
+    if basename not in _ALLOWED and not in_packages:
+        return {
+            "error": (
+                f"'{basename}' is not in the allowed write list: {sorted(_ALLOWED)}, "
+                f"plus any file under 'packages/'. "
+                "Use ha_create_automation/ha_create_script for automation changes."
+            )
+        }
 
     # Backup automatique avant toute écriture
     await _auto_backup(hass, f"update_config_file:{basename}")

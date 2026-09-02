@@ -1104,7 +1104,7 @@
       "script_no_description": "Skrypt '{alias}' nie ma opisu. Dodaj pole 'description:', aby udokumentować co robi.",
       "entity_no_area": "Encja '{name}' ({entity_id}) nie ma przypisanego obszaru. Przypisz go przez Ustawienia → Urządzenia.",
       "entities_no_area_bulk": "{count} encji fizycznych nie ma przypisanego obszaru. Przypisz obszary przez Ustawienia → Urządzenia i Usługi → Urządzenia.",
-      "yaml_file_not_loaded": "Plik '{file}' znajduje się w folderze scalanym przez '{key}:', ale Home Assistant scala tam wyłącznie pliki '*.yaml' — ten plik nigdy nie jest wczytywany, a to, co definiuje, nie istnieje. Zmień jego rozszerzenie na '.yaml'."
+      "yaml_file_not_loaded": "Plik '{file}' znajduje się w folderze scalanym przez '{key}:', ale Home Assistant scala tam wyłącznie pliki '*.yaml' — i żaden plik w tym folderze go nie dołącza, więc nigdy nie jest wczytywany, a to, co definiuje, nie istnieje. Zmień jego rozszerzenie na '.yaml', jeśli ma być wczytywany, albo usuń go, jeśli to pozostałość. Jeśli plik spoza tego folderu dołącza go przez '!include', zignoruj to ostrzeżenie — zmiana nazwy zepsułaby ten include."
     },
     "tab_tooltips": {
       "issues": "Problemy audytu — automatyzacje, encje, skrypty, sceny, schematy, bezpieczeństwo",

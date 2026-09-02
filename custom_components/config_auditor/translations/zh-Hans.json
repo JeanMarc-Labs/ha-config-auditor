@@ -1104,7 +1104,7 @@
       "script_no_description": "脚本 '{alias}' 没有描述。请添加 'description:' 字段来记录其功能。",
       "entity_no_area": "实体 '{name}' ({entity_id}) 没有分配区域。请通过设置 → 设备进行分配。",
       "entities_no_area_bulk": "{count} 个物理实体没有分配区域。请通过设置 → 设备与服务 → 设备分配区域。",
-      "yaml_file_not_loaded": "'{file}' 位于 '{key}:' 合并的文件夹中，但 Home Assistant 在该处只合并 '*.yaml' 文件——此文件从未被加载，其中定义的内容并不存在。请将其扩展名改为 '.yaml'。"
+      "yaml_file_not_loaded": "'{file}' 位于 '{key}:' 合并的文件夹中，但 Home Assistant 在该处只合并 '*.yaml' 文件，而且该文件夹内没有任何文件引入它——因此此文件从未被加载，其中定义的内容并不存在。若需要加载，请将其扩展名改为 '.yaml'；若是遗留文件，请删除。如果该文件夹之外的文件通过 '!include' 引用了它，请忽略此提示——重命名会破坏该 include。"
     },
     "tab_tooltips": {
       "issues": "审计问题 — 自动化、实体、脚本、场景、蓝图、安全",

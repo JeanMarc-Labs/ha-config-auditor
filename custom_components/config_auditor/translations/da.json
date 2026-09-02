@@ -1104,7 +1104,7 @@
       "script_no_description": "Scriptet '{alias}' har ingen beskrivelse. Tilføj et 'description:' felt for at dokumentere, hvad det gør.",
       "entity_no_area": "Enheden '{name}' ({entity_id}) har intet område tildelt. Tildel det via Indstillinger → Enheder.",
       "entities_no_area_bulk": "{count} fysiske enheder har intet område tildelt. Tildel områder via Indstillinger → Enheder & Tjenester → Enheder.",
-      "yaml_file_not_loaded": "'{file}' ligger i en mappe, der flettes af '{key}:', men Home Assistant fletter kun '*.yaml'-filer der — denne fil indlæses aldrig, og det, den definerer, findes ikke. Omdøb den med endelsen '.yaml'."
+      "yaml_file_not_loaded": "'{file}' ligger i en mappe, der flettes af '{key}:', men Home Assistant fletter kun '*.yaml'-filer der — og ingen fil i mappen henter den ind, så den indlæses aldrig, og det, den definerer, findes ikke. Omdøb den til '.yaml', hvis den skal indlæses, eller slet den, hvis den er en rest. Hvis en fil uden for mappen henter den med '!include', så ignorer dette — en omdøbning ville bryde den include."
     },
     "tab_tooltips": {
       "issues": "Revisionsproblemer — automatiseringer, enheder, scripts, scener, blueprints, sikkerhed",

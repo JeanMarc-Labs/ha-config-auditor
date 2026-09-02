@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -21,6 +22,7 @@ from .const import (
     BURST_WINDOW_MINUTES,
 )
 from .translation_utils import TranslationHelper
+from .yaml_sources import load_yaml_any, resolve_packages_sources, walk_yaml_dir
 
 
 def _get_noisy_exclude_patterns(hass: HomeAssistant) -> list[str]:
@@ -631,7 +633,6 @@ class PerformanceAnalyzer:
         config_dir_path = None
         try:
             from pathlib import Path as _Path
-            import yaml as _yaml
             config_dir_path = _Path(self.hass.config.config_dir)
         except Exception:
             pass
@@ -640,48 +641,47 @@ class PerformanceAnalyzer:
         template_configs: dict[str, dict] = {}
         if config_dir_path:
             def _load_template_yaml(cfg_dir):
-                """Load template: platform entries from configuration.yaml and packages."""
+                """Load `platform: template` sensor entries from configuration.yaml
+                and from wherever `homeassistant: packages:` points.
+
+                Both reads go through `load_yaml_any`: plain `safe_load` raised on
+                the first `!include` — which nearly every configuration.yaml has —
+                and on any package carrying a `!secret`, and the bare `except:
+                pass` around it turned that into "no template sensors found".
+                """
                 results = {}
-                # configuration.yaml
-                cfg_yaml = cfg_dir / "configuration.yaml"
-                if cfg_yaml.exists():
+
+                def _collect(content) -> None:
+                    if not isinstance(content, dict):
+                        return
+                    for section in ("sensor", "binary_sensor"):
+                        items = content.get(section, [])
+                        if isinstance(items, dict):
+                            items = [items]
+                        for item in (items if isinstance(items, list) else []):
+                            if isinstance(item, dict) and item.get("platform") == "template":
+                                sensors = item.get("sensors", {})
+                                if not isinstance(sensors, dict):
+                                    continue
+                                for tpl in sensors.values():
+                                    if isinstance(tpl, dict):
+                                        uid = tpl.get("unique_id", tpl.get("friendly_name", ""))
+                                        results[f"template_cfg_{uid}"] = tpl
+
+                paths = [str(cfg_dir / "configuration.yaml")]
+                # `packages:` is nested under `homeassistant:` and has no default:
+                # an undeclared `packages/` folder is not loaded by HA, and a
+                # `packages:` pointing elsewhere used to be missed entirely.
+                for kind, source in resolve_packages_sources(str(cfg_dir)):
+                    paths.extend(walk_yaml_dir(source) if kind == "dir" else [source])
+
+                for path in paths:
+                    if not os.path.isfile(path):
+                        continue
                     try:
-                        with open(cfg_yaml, "r", encoding="utf-8") as f:
-                            content = _yaml.safe_load(f)
-                        if isinstance(content, dict):
-                            for section in ("sensor", "binary_sensor"):
-                                items = content.get(section, [])
-                                if isinstance(items, dict):
-                                    items = [items]
-                                for item in (items if isinstance(items, list) else []):
-                                    if isinstance(item, dict) and item.get("platform") == "template":
-                                        for tpl in item.get("sensors", {}).values():
-                                            if isinstance(tpl, dict):
-                                                uid = tpl.get("unique_id", tpl.get("friendly_name", ""))
-                                                results[f"template_cfg_{uid}"] = tpl
-                    except Exception:
-                        pass
-                # packages/
-                pkgs = cfg_dir / "packages"
-                if pkgs.is_dir():
-                    for yf in sorted(pkgs.rglob("*.yaml")):
-                        try:
-                            with open(yf, "r", encoding="utf-8") as f:
-                                content = _yaml.safe_load(f)
-                            if not isinstance(content, dict):
-                                continue
-                            for section in ("sensor", "binary_sensor"):
-                                items = content.get(section, [])
-                                if isinstance(items, dict):
-                                    items = [items]
-                                for item in (items if isinstance(items, list) else []):
-                                    if isinstance(item, dict) and item.get("platform") == "template":
-                                        for tpl in item.get("sensors", {}).values():
-                                            if isinstance(tpl, dict):
-                                                uid = tpl.get("unique_id", tpl.get("friendly_name", ""))
-                                                results[f"template_cfg_{uid}"] = tpl
-                        except Exception:
-                            pass
+                        _collect(load_yaml_any(path))
+                    except Exception as exc:  # noqa: BLE001 — genuine parse error
+                        _LOGGER.debug("Template YAML: skipped %s (%s)", path, exc)
                 return results
 
             try:

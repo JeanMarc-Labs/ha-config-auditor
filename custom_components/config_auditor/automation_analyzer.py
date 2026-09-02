@@ -11,8 +11,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
@@ -24,6 +22,7 @@ from .yaml_sources import (
     iter_domain_files,
     load_yaml_any,
     resolve_config_sources,
+    resolve_packages_sources,
     walk_yaml_dir,
 )
 
@@ -295,7 +294,7 @@ class AutomationAnalyzer:
         - every file the `automation:` key resolves to (flat automations.yaml,
           !include, or any of the !include_dir_* forms — see yaml_sources)
         - .storage/core.automation (UI automations in HA storage)
-        - packages/*.yaml (homeassistant.packages)
+        - the files `homeassistant: packages:` resolves to (nothing by default)
         Deduplicates by unique_id.
         """
         self._automation_configs = {}
@@ -404,38 +403,63 @@ class AutomationAnalyzer:
             except Exception as e:
                 _LOGGER.error("Error loading .storage/core.automation: %s", e, exc_info=True)
 
-        # ── 3. packages/*.yaml (homeassistant.packages) ───────────────────
-        packages_dir = config_dir / "packages"
-        if packages_dir.is_dir():
+        # ── 3. packages (homeassistant: packages:) ────────────────────────
+        #   Routed through the shared resolver like every other domain since
+        #   1.7.7: `<config>/packages` was hardcoded, so a `packages:` pointing
+        #   elsewhere audited nothing while an undeclared `packages/` folder —
+        #   which HA does not load — was audited anyway, producing findings on
+        #   automations that do not exist. `walk_yaml_dir` also drops the `.yml`
+        #   HA's glob skips, and `load_yaml_any` keeps a package carrying
+        #   `!secret` / `!include` readable instead of dropping it in silence.
+        pkg_sources = await self.hass.async_add_executor_job(
+            resolve_packages_sources, str(config_dir)
+        )
+        if pkg_sources:
             try:
-                def _read_packages(pkg_dir: Path) -> list[tuple[str, list]]:
+                def _read_packages(sources: list) -> list[tuple[str, list]]:
                     results = []
-                    for yaml_file in sorted(pkg_dir.rglob("*.yaml")):
+                    paths: list[str] = []
+                    for kind, source in sources:
+                        if kind == "dir":
+                            paths.extend(walk_yaml_dir(source))
+                        elif os.path.isfile(source):
+                            paths.append(source)
+                    for yaml_file in paths:
                         try:
-                            with open(yaml_file, "r", encoding="utf-8") as f:
-                                content = yaml.safe_load(f)
-                            if not isinstance(content, dict):
-                                continue
-                            # Support top-level 'automation:' or nested under 'homeassistant:'
-                            automations_raw = content.get("automation", [])
-                            if not automations_raw:
-                                automations_raw = content.get("homeassistant", {}).get("automation", [])
-                            if isinstance(automations_raw, dict):
-                                automations_raw = [automations_raw]
-                            if automations_raw:
-                                results.append((str(yaml_file.relative_to(pkg_dir.parent)), automations_raw))
-                        except Exception:
-                            pass
+                            content = load_yaml_any(yaml_file)
+                        except Exception as exc:  # noqa: BLE001 — genuine parse error
+                            _LOGGER.warning(
+                                "packages: could not parse %s (%s) — its entries are "
+                                "not audited", yaml_file, exc
+                            )
+                            continue
+                        if not isinstance(content, dict):
+                            continue
+                        # Support top-level 'automation:' or nested under 'homeassistant:'
+                        automations_raw = content.get("automation", [])
+                        if not automations_raw:
+                            nested = content.get("homeassistant", {})
+                            automations_raw = (
+                                nested.get("automation", []) if isinstance(nested, dict) else []
+                            )
+                        if isinstance(automations_raw, dict):
+                            automations_raw = [automations_raw]
+                        if automations_raw:
+                            try:
+                                rel = os.path.relpath(yaml_file, str(config_dir))
+                            except ValueError:  # different drive (Windows dev setups)
+                                rel = yaml_file
+                            results.append((rel.replace(os.sep, "/"), automations_raw))
                     return results
 
-                pkg_results = await self.hass.async_add_executor_job(_read_packages, packages_dir)
+                pkg_results = await self.hass.async_add_executor_job(_read_packages, pkg_sources)
                 for source_rel, pkg_automations in pkg_results:
                     for cfg in pkg_automations:
                         if isinstance(cfg, dict):
-                            _register(cfg, f"packages/{source_rel}")
-                _LOGGER.debug("packages/: loaded automations from %d files", len(pkg_results))
+                            _register(cfg, source_rel)
+                _LOGGER.debug("packages: loaded automations from %d files", len(pkg_results))
             except Exception as e:
-                _LOGGER.error("Error loading packages/*.yaml: %s", e, exc_info=True)
+                _LOGGER.error("Error loading packages: %s", e, exc_info=True)
 
         # ── 4. Split folders: automation: !include_dir_* <folder> ─────────
         #       All four directory forms, and every labelled section
