@@ -123,21 +123,62 @@ def resolve_config_source(
 
 
 def walk_yaml_dir(directory: str) -> list[str]:
-    """Every ``*.yaml`` / ``*.yml`` under a folder, the way HA merges them.
+    """Every ``*.yaml`` under a folder, the way HA merges them.
 
-    Recursive and sorted, symlinks not followed, dotfiles and dot-directories
-    skipped (HA's own ``_find_files`` rules), so an editor's ``.swp`` or a
-    symlink loop can neither pollute nor wedge the scan.
+    Recursive and sorted, symlinks not followed, dotfiles, dot-directories and
+    ``__pycache__`` skipped — HA's own ``_find_files`` rules, so an editor's
+    ``.swp`` or a symlink loop can neither pollute nor wedge the scan.
+
+    ``.yml`` is deliberately NOT matched: the four ``!include_dir_*``
+    constructors all glob ``*.yaml``, so a ``.yml`` file sitting in a merged
+    folder is never loaded by Home Assistant. Auditing it produced findings on
+    entries that do not exist — the inverse of the blind spot this module was
+    written to close. :func:`find_unloaded_yaml_files` reports those files as
+    an issue instead of silently scanning them.
     """
     if not os.path.isdir(directory):
         return []
     found: list[str] = []
     for root, dirs, files in os.walk(directory, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        dirs[:] = sorted(
+            d for d in dirs if not d.startswith(".") and d != "__pycache__"
+        )
         for name in sorted(files):
-            if name.startswith(".") or not name.endswith((".yaml", ".yml")):
+            if name.startswith(".") or not name.endswith(".yaml"):
                 continue
             found.append(os.path.join(root, name))
+    return found
+
+
+def find_unloaded_yaml_files(
+    config_dir: str, key: str, default_filename: str
+) -> list[str]:
+    """``.yml`` files sitting in a folder HA merges — dead config, silently.
+
+    Only directory sources are scanned: ``automation: !include foo.yml`` is a
+    single file and loads fine, it is the ``!include_dir_*`` glob that is
+    ``*.yaml``-only. Returns absolute paths, same walk rules as
+    :func:`walk_yaml_dir`.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+
+    for kind, source in resolve_config_sources(config_dir, key, default_filename):
+        if kind != "dir" or not os.path.isdir(source):
+            continue
+        for root, dirs, files in os.walk(source, followlinks=False):
+            dirs[:] = sorted(
+                d for d in dirs if not d.startswith(".") and d != "__pycache__"
+            )
+            for name in sorted(files):
+                if name.startswith(".") or not name.endswith(".yml"):
+                    continue
+                path = os.path.join(root, name)
+                marker = os.path.normcase(os.path.abspath(path))
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                found.append(path)
     return found
 
 
@@ -231,35 +272,84 @@ def parse_yaml_ha(text: str):
     return parse_yaml(text)
 
 
+def _tag_tolerant_loader():
+    """A ``SafeLoader`` that renders every ``!tag`` as an opaque placeholder.
+
+    ``!secret db_password`` comes back as the *string* ``"!secret db_password"``:
+    the tag is preserved for a human reader, the secret itself is never looked
+    up, so the value cannot leak into a report, an LLM prompt or a rewritten
+    file. Same treatment for ``!include``, ``!input``, ``!env_var`` and any
+    custom tag — an unresolved reference instead of a lost file.
+    """
+    import yaml
+
+    class _TagTolerantLoader(yaml.SafeLoader):
+        pass
+
+    def _placeholder(loader, tag_suffix, node):
+        if isinstance(node, yaml.ScalarNode):
+            value = loader.construct_scalar(node)
+        elif isinstance(node, yaml.SequenceNode):
+            value = " ".join(str(v) for v in loader.construct_sequence(node))
+        else:
+            value = ""
+        tag = f"!{tag_suffix}"
+        return f"{tag} {value}".strip()
+
+    _TagTolerantLoader.add_multi_constructor("!", _placeholder)
+    return _TagTolerantLoader
+
+
 def load_yaml_any(path: str):
     """Read a config YAML file for INSPECTION, tolerating HA-specific tags.
 
-    Uses HA's loader so a split file carrying a nested ``!include`` is audited
-    instead of being skipped; falls back to PyYAML when HA's loader is
-    unavailable (unit tests, tooling). Parse errors propagate — the caller
-    decides whether to log and continue.
+    Uses HA's loader first, so a split file carrying a nested ``!include`` is
+    audited with the include expanded. HA's loader refuses ``!secret`` outside
+    a secrets cache, and used to take the whole file down with it: every caller
+    catches the exception and moves on, so a single ``!secret`` line made an
+    entire scripts file invisible to the audit — fifty scripts, zero issues,
+    silently. Such a file is re-read with :func:`_tag_tolerant_loader`, which
+    keeps the entries and turns the tags into placeholder strings.
 
-    Read-only on purpose. ``!secret`` still raises here (HA's loader only
-    resolves secrets when handed a secrets cache), which is the behaviour we
-    want: a resolved secret must never be re-dumped into a config file in
-    clear text. Anything that rewrites a file parses it with plain
-    ``yaml.safe_load`` instead, so a file carrying HA tags is skipped rather
-    than rewritten with its tags expanded.
+    Read-only on purpose, and safe to re-dump *as inspected*: no secret is ever
+    resolved, on either path. Anything that rewrites a config file still parses
+    it with plain ``yaml.safe_load`` (see ``_read_plain_yaml``), so a file
+    carrying HA tags is skipped rather than rewritten with a placeholder in
+    place of its tag. Genuine parse errors still propagate — the caller decides
+    whether to log and continue.
     """
+    import yaml
+
     try:
         return load_yaml_ha(path)
     except ImportError:
-        import yaml
+        original: Exception | None = None  # HA absent (unit tests, tooling)
+    except Exception as exc:
+        original = exc
 
+    try:
         with open(path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh)
+            return yaml.load(fh, Loader=_tag_tolerant_loader())
+    except Exception:
+        if original is not None:
+            raise original from None
+        raise
 
 
 def parse_yaml_any(text: str):
     """:func:`load_yaml_any` for in-memory strings."""
+    import yaml
+
     try:
         return parse_yaml_ha(text)
     except ImportError:
-        import yaml
+        original: Exception | None = None
+    except Exception as exc:
+        original = exc
 
-        return yaml.safe_load(text)
+    try:
+        return yaml.load(text, Loader=_tag_tolerant_loader())
+    except Exception:
+        if original is not None:
+            raise original from None
+        raise

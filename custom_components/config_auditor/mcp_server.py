@@ -1086,7 +1086,10 @@ HA_CONTROL_TOOLS: list[dict[str, Any]] = [
             "Examples: turn on a light, trigger an automation, set a thermostat. "
             "Use ha_get_entities first to find valid entity_ids. "
             "Common services: light.turn_on, switch.toggle, automation.trigger, "
-            "climate.set_temperature, media_player.play_media, script.turn_on."
+            "climate.set_temperature, media_player.play_media, script.turn_on. "
+            "Response-returning services (weather.get_forecasts, calendar.get_events, "
+            "todo.get_items, conversation.process, …) work too: their payload comes "
+            "back in a 'response' field."
         ),
         "inputSchema": {
             "type": "object",
@@ -1321,6 +1324,37 @@ async def _tool_ha_get_entities(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Error listing entities: {exc}"}
 
 
+def _service_wants_response(hass: "HomeAssistant", domain: str, service: str) -> bool:
+    """True when HA requires or allows ``return_response`` for this action.
+
+    Home Assistant tags every action NONE / OPTIONAL / ONLY, and
+    ``ServiceRegistry.async_call`` validates the flag both ways: an ONLY action
+    (``weather.get_forecasts``, ``calendar.get_events``, ``todo.get_items``,
+    ``conversation.process``, …) raises unless ``return_response=True``, and a
+    NONE action raises if it is passed. OPTIONAL runs either way, but the
+    response is dropped when the flag is off — which is what used to happen to
+    every one of them.
+
+    An unregistered action returns False, so the call still goes through and
+    fails in the caller's ``except`` with HA's own "action not found" message,
+    exactly as before. ``async_services_for_domain`` is the cheap single-domain
+    lookup but postdates the 2024.1 floor in ``hacs.json``; the whole-registry
+    copy is the fallback there.
+    """
+    try:
+        from homeassistant.core import SupportsResponse
+
+        for_domain = getattr(hass.services, "async_services_for_domain", None)
+        services = (
+            for_domain(domain) if for_domain is not None
+            else hass.services.async_services().get(domain, {})
+        )
+        svc = services.get(service)
+        return svc is not None and svc.supports_response is not SupportsResponse.NONE
+    except Exception:  # noqa: BLE001 — a probe must never break the call itself
+        return False
+
+
 async def _tool_ha_call_service(hass: HomeAssistant, params: dict) -> dict:
     """Appelle un service HA."""
     domain = params.get("domain", "").strip()
@@ -1330,13 +1364,20 @@ async def _tool_ha_call_service(hass: HomeAssistant, params: dict) -> dict:
     if not domain or not service:
         return {"error": "domain and service are required"}
 
+    wants_response = _service_wants_response(hass, domain, service)
+
     try:
-        await hass.services.async_call(domain, service, data, blocking=True)
-        return {
+        response = await hass.services.async_call(
+            domain, service, data, blocking=True, return_response=wants_response,
+        )
+        result: dict[str, Any] = {
             "success": True,
             "called": f"{domain}.{service}",
             "data": data,
         }
+        if response is not None:
+            result["response"] = response
+        return result
     except Exception as exc:
         return {"error": f"Service call failed: {exc}"}
 
@@ -1463,9 +1504,12 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
         )
         if target_idx < 0:
             files = await _async_domain_files(hass, "automation", "automations.yaml")
+            skipped = await _async_skipped_files(hass, "automation", "automations.yaml")
             return {"error": f"Automation '{entity_id}' not found in any automation YAML file "
                              f"({len(files)} scanned). "
-                             f"Note: only YAML automations can be updated this way."}
+                             f"Note: only YAML automations can be updated this way."
+                             + _skipped_note(skipped),
+                    "skipped_files": skipped}
 
         auto_file = Path(found_path)
         auto = automations[target_idx]
@@ -2296,6 +2340,44 @@ def _read_plain_yaml(path: str):
         return yaml.safe_load(fh)
 
 
+async def _async_skipped_files(
+    hass: "HomeAssistant", key: str, default_filename: str
+) -> list[str]:
+    """Files the read-modify-write path could not parse, and therefore skipped.
+
+    :func:`_read_plain_yaml` is plain PyYAML on purpose, so a file carrying
+    `!secret` or `!include` raises and is passed over — the right call on a
+    write path, since re-dumping it would inline the secret in clear text. But
+    the entry the caller asked for may well be sitting in that file, and a bare
+    "not found" sent them looking for a script that plainly exists and runs.
+    Only ever called on the miss path, so the double parse costs nothing.
+    """
+
+    def _scan() -> list[str]:
+        skipped: list[str] = []
+        for path in iter_domain_files(hass.config.config_dir, key, default_filename):
+            try:
+                _read_plain_yaml(path)
+            except Exception:  # noqa: BLE001 — any parse failure means skipped
+                skipped.append(path)
+        return skipped
+
+    return await hass.async_add_executor_job(_scan)
+
+
+def _skipped_note(skipped: list[str]) -> str:
+    """One sentence naming the files skipped above, or '' when there are none."""
+    if not skipped:
+        return ""
+    names = ", ".join(Path(p).name for p in skipped)
+    return (
+        f" {len(skipped)} file(s) could not be parsed for editing and were not "
+        f"searched: {names}. Usually a Home Assistant tag (!secret, !include) "
+        f"that cannot be safely rewritten, sometimes a syntax error — an entry "
+        f"defined in one of those is edited by hand."
+    )
+
+
 async def _async_scan_list_domain(
     hass: "HomeAssistant", key: str, default_filename: str, match
 ) -> tuple[str | None, list, int]:
@@ -2681,10 +2763,13 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
                     break
 
         if found_idx is None:
+            skipped = await _async_skipped_files(hass, "automation", "automations.yaml")
             return {
                 "error": f"Automation '{identifier}' not found in any automation YAML file "
                          f"({len(loaded)} scanned). "
-                         f"Use ha_get_entities(domain='automation') to list available automations.",
+                         f"Use ha_get_entities(domain='automation') to list available automations."
+                         + _skipped_note(skipped),
+                "skipped_files": skipped,
             }
 
         # Remove it — rewriting only the file that actually holds it
@@ -3702,6 +3787,17 @@ _RELOADABLE_DOMAINS = {
     "timer", "counter", "template", "customize", "core",
 }
 
+# Domains whose reload is not `<domain>.reload`. `core` and `customize` are not
+# integrations at all — they are sections of `configuration.yaml`, and Home
+# Assistant reloads both through the same homeassistant.reload_core_config
+# action. The tool used to call `core.reload_config_entry` (a service that has
+# never existed under that domain, and whose homeassistant.* namesake reloads
+# one config entry by entry_id, not the core config) and `customize.reload`.
+_RELOAD_ACTIONS = {
+    "core": ("homeassistant", "reload_core_config"),
+    "customize": ("homeassistant", "reload_core_config"),
+}
+
 
 async def _tool_ha_reload_core(hass: HomeAssistant, params: dict) -> dict:
     """Reload a HA domain without restarting."""
@@ -3714,12 +3810,24 @@ async def _tool_ha_reload_core(hass: HomeAssistant, params: dict) -> dict:
                      f"Reloadable domains: {sorted(_RELOADABLE_DOMAINS)}",
         }
 
+    svc_domain, svc_name = _RELOAD_ACTIONS.get(domain, (domain, "reload"))
+
+    # `template.reload`, `timer.reload`, … only exist once the integration is
+    # loaded. Without this check an install with no `template:` section got a
+    # raw "Action template.reload not found" back instead of an explanation.
+    if not hass.services.has_service(svc_domain, svc_name):
+        return {
+            "error": f"Domain '{domain}' has no reload action registered "
+                     f"({svc_domain}.{svc_name}) — the integration is most "
+                     f"likely not loaded on this instance.",
+        }
+
     try:
-        service = "reload" if domain != "core" else "reload_config_entry"
-        await hass.services.async_call(domain, service, blocking=True)
+        await hass.services.async_call(svc_domain, svc_name, blocking=True)
         return {
             "success": True,
             "domain": domain,
+            "action": f"{svc_domain}.{svc_name}",
             "message": f"Domain '{domain}' reloaded successfully.",
         }
     except Exception as exc:
@@ -4140,10 +4248,12 @@ async def _tool_ha_get_script(hass: HomeAssistant, params: dict) -> dict:
                 continue
             if isinstance(data, dict):
                 available.extend(data.keys())
+        skipped = await _async_skipped_files(hass, "script", "scripts.yaml")
         return {
             "error": f"Script '{script_ref}' not found in any script YAML file "
-                     f"({len(files)} scanned)",
+                     f"({len(files)} scanned)" + _skipped_note(skipped),
             "files_scanned": files,
+            "skipped_files": skipped,
             "available_slugs": available[:20],
         }
 
@@ -4176,10 +4286,12 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
     )
     if found_key is None:
         files = await _async_domain_files(hass, "script", "scripts.yaml")
+        skipped = await _async_skipped_files(hass, "script", "scripts.yaml")
         return {
             "error": f"Script '{slug}' not found in any script YAML file "
-                     f"({len(files)} scanned)",
+                     f"({len(files)} scanned)" + _skipped_note(skipped),
             "files_scanned": files,
+            "skipped_files": skipped,
         }
 
     current = all_scripts[slug] if isinstance(all_scripts[slug], dict) else {}
@@ -4228,10 +4340,12 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
     )
     if found_key is None:
         files = await _async_domain_files(hass, "script", "scripts.yaml")
+        skipped = await _async_skipped_files(hass, "script", "scripts.yaml")
         return {
             "error": f"Script '{slug}' not found in any script YAML file "
-                     f"({len(files)} scanned)",
+                     f"({len(files)} scanned)" + _skipped_note(skipped),
             "files_scanned": files,
+            "skipped_files": skipped,
         }
 
     removed = all_scripts.pop(slug)
@@ -4297,10 +4411,12 @@ async def _tool_ha_get_scene(hass: HomeAssistant, params: dict) -> dict:
             available.extend(
                 s.get("name") or s.get("id") for s in data if isinstance(s, dict)
             )
+    skipped = await _async_skipped_files(hass, "scene", "scenes.yaml")
     return {
         "error": f"Scene '{scene_ref}' not found in any scene YAML file "
-                 f"({len(files)} scanned)",
+                 f"({len(files)} scanned)" + _skipped_note(skipped),
         "files_scanned": files,
+        "skipped_files": skipped,
         "available": available[:20],
     }
 
@@ -4388,9 +4504,11 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
     )
     if found_idx < 0:
         files = await _async_domain_files(hass, "scene", "scenes.yaml")
+        skipped = await _async_skipped_files(hass, "scene", "scenes.yaml")
         return {"error": f"Scene '{scene_ref}' not found in any scene YAML file "
-                         f"({len(files)} scanned)",
-                "files_scanned": files}
+                         f"({len(files)} scanned)" + _skipped_note(skipped),
+                "files_scanned": files,
+                "skipped_files": skipped}
 
     scene = all_scenes[found_idx]
     for field in ("name", "icon"):
@@ -4439,9 +4557,11 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
     )
     if found_idx < 0:
         files = await _async_domain_files(hass, "scene", "scenes.yaml")
+        skipped = await _async_skipped_files(hass, "scene", "scenes.yaml")
         return {"error": f"Scene '{scene_ref}' not found in any scene YAML file "
-                         f"({len(files)} scanned)",
-                "files_scanned": files}
+                         f"({len(files)} scanned)" + _skipped_note(skipped),
+                "files_scanned": files,
+                "skipped_files": skipped}
 
     removed = all_scenes.pop(found_idx)
     removed_name = removed.get("name") or removed.get("id")
@@ -4654,22 +4774,119 @@ async def _tool_ha_remove_blueprint(hass: HomeAssistant, params: dict) -> dict:
     }
 
 
+# Blueprints live in one subfolder per domain. The value comes out of the
+# downloaded document, so it is attacker-controlled text on its way into a path.
+_BLUEPRINT_DOMAINS = {"automation", "script", "template"}
+
+# A blueprint is a small YAML document; anything past this is not one, and the
+# body is held in memory before being written.
+_BLUEPRINT_MAX_BYTES = 2 * 1024 * 1024
+
+# Hops followed by hand so every one of them is re-checked: a URL on a public
+# host that 302s to 169.254.169.254 would otherwise walk straight through the
+# check below.
+_BLUEPRINT_MAX_REDIRECTS = 3
+
+
+async def _async_check_public_url(hass: "HomeAssistant", url: str) -> dict | None:
+    """Confirm a URL is http(s) on a public host. Returns an error dict or None.
+
+    These tools are driven by an LLM, and the fetch runs from inside the Home
+    Assistant host: an unchecked URL turns the importer into a GET primitive
+    against everything that host can reach — the supervisor API, a router admin
+    page, a cloud metadata endpoint — with the response body written to disk
+    where the caller can read it back.
+
+    Every address the name resolves to must be public: a hostname resolving to
+    both a public and a private address is refused. This is a resolve-then-fetch
+    check, so a name that changes answer between the two (DNS rebinding) is not
+    covered; blocking that needs the connection itself pinned to the checked
+    address, which aiohttp does not expose here.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:  # noqa: BLE001 — malformed input, not a crash
+        return {"error": f"Invalid URL: {exc}"}
+
+    if parsed.scheme not in ("http", "https"):
+        return {"error": "url must be http:// or https:// (raw YAML, "
+                         "e.g. https://raw.githubusercontent.com/...)"}
+    host = parsed.hostname
+    if not host:
+        return {"error": "url has no host"}
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = await hass.async_add_executor_job(
+            socket.getaddrinfo, host, port, 0, socket.SOCK_STREAM
+        )
+    except Exception as exc:  # noqa: BLE001 — DNS failure is a caller error
+        return {"error": f"Cannot resolve '{host}': {exc}"}
+
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return {"error": f"Cannot validate address '{addr}' for '{host}'"}
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return {"error": f"Refusing to fetch from '{host}' ({addr}): "
+                             f"blueprints are imported from public URLs only, "
+                             f"not from addresses inside this network."}
+    return None
+
+
 async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
-    """Import a community blueprint from a URL (raw YAML) into /config/blueprints/automation/imported/."""
+    """Import a community blueprint from a URL (raw YAML) into /config/blueprints/<domain>/imported/."""
     import os
     import aiohttp
     url = params.get("url", "").strip()
     if not url:
         return {"error": "url required (raw YAML URL, e.g. raw.githubusercontent.com/...)"}
 
+    content = None
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    return {"error": f"HTTP {resp.status} fetching blueprint URL"}
-                content = await resp.text()
+            for _hop in range(_BLUEPRINT_MAX_REDIRECTS + 1):
+                err = await _async_check_public_url(hass, url)
+                if err is not None:
+                    return err
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                    allow_redirects=False,
+                ) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location", "")
+                        if not location:
+                            return {"error": f"HTTP {resp.status} with no Location header"}
+                        from urllib.parse import urljoin
+                        url = urljoin(str(resp.url), location)
+                        continue
+                    if resp.status != 200:
+                        return {"error": f"HTTP {resp.status} fetching blueprint URL"}
+                    raw = await resp.content.read(_BLUEPRINT_MAX_BYTES + 1)
+                    if len(raw) > _BLUEPRINT_MAX_BYTES:
+                        return {"error": f"Blueprint exceeds "
+                                         f"{_BLUEPRINT_MAX_BYTES // 1024} KB — not a blueprint."}
+                    try:
+                        encoding = resp.get_encoding() or "utf-8"
+                    except Exception:  # noqa: BLE001 — no charset, assume UTF-8
+                        encoding = "utf-8"
+                    content = raw.decode(encoding, errors="replace")
+                    break
+            else:
+                return {"error": f"More than {_BLUEPRINT_MAX_REDIRECTS} redirects — giving up."}
     except Exception as exc:
         return {"error": f"Failed to fetch URL: {exc}"}
+
+    if content is None:
+        return {"error": "Failed to fetch URL: empty response"}
 
     try:
         # HA's parser: most community blueprints use !input, which safe_load
@@ -4683,19 +4900,41 @@ async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
 
     bp_block = data["blueprint"] if isinstance(data["blueprint"], dict) else {}
 
-    # Build filename from blueprint name
-    bp_name = bp_block.get("name", "imported_blueprint")
+    # Build filename from blueprint name. Everything in bp_block comes from the
+    # downloaded document, so nothing here may assume a type.
+    bp_name = bp_block.get("name") or "imported_blueprint"
+    if not isinstance(bp_name, str):
+        bp_name = str(bp_name)
     slug = _slugify(bp_name, 60)
-    domain = bp_block.get("domain", "automation")
 
-    out_dir = hass.config.path("blueprints", domain, "imported")
-    await hass.async_add_executor_job(os.makedirs, out_dir, 0o755, True)
+    # `domain` is a value read out of the *downloaded* document and it used to
+    # go straight into the output path: `domain: ../../` — or an absolute path,
+    # which os.path.join() lets win outright — wrote the fetched body anywhere
+    # the HA process can write. The other three blueprint tools were hardened
+    # in 1.7.7; this one never went through _resolve_blueprint_path at all.
+    domain = bp_block.get("domain", "automation")
+    if not isinstance(domain, str) or domain not in _BLUEPRINT_DOMAINS:
+        return {"error": f"Blueprint declares an unsupported domain "
+                         f"{domain!r} — expected one of {sorted(_BLUEPRINT_DOMAINS)}."}
+    if not slug:
+        return {"error": f"Blueprint name {bp_name!r} yields an empty filename."}
+
+    bp_inputs = bp_block.get("input", {})
+
+    bp_base = hass.config.path("blueprints")
+    out_dir = os.path.join(bp_base, domain, "imported")
     out_path = os.path.join(out_dir, f"{slug}.yaml")
+    if not is_within(out_path, bp_base):
+        return {"error": "Refusing to write outside /config/blueprints/"}
+    await hass.async_add_executor_job(os.makedirs, out_dir, 0o755, True)
 
     try:
         # Written verbatim: re-dumping would drop every !input tag. Provenance
         # goes in a header comment instead of a source_url mutation.
-        _import_content = f"# Imported by HACA from: {url}\n\n{content}"
+        # One line, whatever the caller passed: a newline in the URL would
+        # otherwise inject YAML of its own choosing above the document.
+        safe_url = " ".join(url.split())
+        _import_content = f"# Imported by HACA from: {safe_url}\n\n{content}"
         await _async_write_file(hass, out_path, _import_content)
     except Exception as exc:
         return {"error": f"Failed to write blueprint: {exc}"}
@@ -4710,7 +4949,7 @@ async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
         "path": out_path,
         "name": bp_name,
         "domain": domain,
-        "inputs": list(bp_block.get("input", {}).keys()),
+        "inputs": list(bp_inputs.keys()) if isinstance(bp_inputs, dict) else [],
         "message": (
             f"Blueprint '{bp_name}' imported to {out_path}. "
             "Visible in Settings → Blueprints."

@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entitet utan område",
         "compliance_helper_no_icon": "Hjälpare utan ikon",
         "compliance_helper_no_area": "Hjälpare utan område",
+        "compliance_yaml_file_not_loaded": "YAML-fil laddas aldrig",
         "compliance_entity_no_area_bulk": "Enheter utan område (flera)",
         "god_automation": "Gud-automation (mycket komplex)",
         "complex_automation": "Komplex automation",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Entiteter utan område (samlat)",
         "other": "Övrigt",
         "compliance_helper_no_icon": "Hjälpare utan ikon",
-        "compliance_helper_no_area": "Hjälpare utan område"
+        "compliance_helper_no_area": "Hjälpare utan område",
+        "compliance_yaml_file_not_loaded": "YAML-fil laddas aldrig"
       },
       "info": "Fliken Efterlevnad kontrollerar HA:s bästa praxis: namngivning av hjälpare, områdesikoner, automationsbeskrivningar, unique_id, etiketter och mer.",
       "sort_label": "Sortera:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "Automatiseringen '{alias}' har inget 'id:' fält. Utan unikt id kan den inte redigeras i HA-gränssnittet.",
       "script_no_description": "Skriptet '{alias}' har ingen beskrivning. Lägg till ett 'description:' fält för att dokumentera vad det gör.",
       "entity_no_area": "Enheten '{name}' ({entity_id}) har inget område tilldelat. Tilldela det via Inställningar → Enheter.",
-      "entities_no_area_bulk": "{count} fysiska enheter har inget område tilldelat. Tilldela områden via Inställningar → Enheter & Tjänster → Enheter."
+      "entities_no_area_bulk": "{count} fysiska enheter har inget område tilldelat. Tilldela områden via Inställningar → Enheter & Tjänster → Enheter.",
+      "yaml_file_not_loaded": "'{file}' ligger i en mapp som slås samman av '{key}:', men Home Assistant slår bara samman '*.yaml'-filer där — den här filen laddas aldrig och det den definierar finns inte. Byt namn på den med ändelsen '.yaml'."
     },
     "tab_tooltips": {
       "issues": "Granskningsproblem — automatiseringar, enheter, skript, scener, ritningar, säkerhet",

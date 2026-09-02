@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entidade sem área",
         "compliance_helper_no_icon": "Helper sem ícone",
         "compliance_helper_no_area": "Helper sem área",
+        "compliance_yaml_file_not_loaded": "Arquivo YAML nunca carregado",
         "compliance_entity_no_area_bulk": "Entidades sem área (várias)",
         "god_automation": "Automação gigante (muito complexa)",
         "complex_automation": "Automação complexa",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Entidades sem área (agrupadas)",
         "other": "Outro",
         "compliance_helper_no_icon": "Helper sem ícone",
-        "compliance_helper_no_area": "Helper sem área"
+        "compliance_helper_no_area": "Helper sem área",
+        "compliance_yaml_file_not_loaded": "Arquivo YAML nunca carregado"
       },
       "info": "O separador Conformidade verifica as melhores práticas do HA: nomes de helpers, ícones de áreas, descrições de automações, unique_id, etiquetas e mais.",
       "sort_label": "Ordenar:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "A automação '{alias}' não tem campo 'id:'. Sem id único, não pode ser editada na interface do HA.",
       "script_no_description": "O script '{alias}' não tem descrição. Adicione um campo 'description:' para documentar o que faz.",
       "entity_no_area": "A entidade '{name}' ({entity_id}) não tem área atribuída. Atribua via Configurações → Dispositivos.",
-      "entities_no_area_bulk": "{count} entidades físicas não têm área atribuída. Atribua áreas em Configurações → Dispositivos e Serviços → Dispositivos."
+      "entities_no_area_bulk": "{count} entidades físicas não têm área atribuída. Atribua áreas em Configurações → Dispositivos e Serviços → Dispositivos.",
+      "yaml_file_not_loaded": "'{file}' está numa pasta combinada por '{key}:', mas o Home Assistant só combina arquivos '*.yaml' ali: este arquivo nunca é carregado e o que ele define não existe. Renomeie-o com a extensão '.yaml'."
     },
     "tab_tooltips": {
       "issues": "Problemas de auditoria — automações, entidades, scripts, cenas, blueprints, segurança",

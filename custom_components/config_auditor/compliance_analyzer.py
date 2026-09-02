@@ -11,12 +11,14 @@ Checks implémentés :
   e5) Automations YAML sans unique_id (requis pour édition UI)
   e6) Scripts sans alias ou description
   e7) Entités sans area assignée (pour les appareils physiques)
+  e8) Fichiers .yml posés dans un dossier que HA fusionne en *.yaml uniquement
 
 NOTE: Les messages sont en anglais (le frontend JS gère la traduction via type).
 """
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -26,7 +28,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
-from .yaml_sources import iter_domain_files, load_yaml_any
+from .yaml_sources import find_unloaded_yaml_files, iter_domain_files, load_yaml_any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +95,7 @@ class ComplianceAnalyzer:
         await self._check_scripts_metadata()
         await self._check_entities_without_area()
         await self._check_helpers_metadata()
+        await self._check_unloaded_yaml_files()
 
         _LOGGER.debug(
             "[HACA Compliance] Analysis done — %d issues found", len(self._issues)
@@ -304,6 +307,60 @@ class ComplianceAnalyzer:
                     )
         except Exception as exc:
             _LOGGER.debug("[HACA Compliance] Label check error: %s", exc)
+
+    # ── Check e8 : fichiers .yml jamais chargés par HA ────────────────────
+
+    async def _check_unloaded_yaml_files(self) -> None:
+        """Détecte les .yml posés dans un dossier fusionné par !include_dir_*.
+
+        Les quatre constructeurs `!include_dir_*` de HA globbent `*.yaml` : un
+        `.yml` déposé dans le dossier n'est jamais chargé. Rien ne le signale —
+        ni HA (le fichier est simplement ignoré), ni l'audit (qui ne le lit plus
+        depuis 1.7.7). L'utilisateur voit une automation écrite, sauvegardée,
+        et absente de son instance.
+        """
+        try:
+            cfg_dir = str(self._hass.config.config_dir)
+            domain_keys = (
+                ("automation", "automations.yaml"),
+                ("script", "scripts.yaml"),
+                ("scene", "scenes.yaml"),
+            )
+
+            def _scan() -> list[tuple[str, str]]:
+                out: list[tuple[str, str]] = []
+                for key, default_filename in domain_keys:
+                    for path in find_unloaded_yaml_files(cfg_dir, key, default_filename):
+                        out.append((key, path))
+                return out
+
+            seen: set[str] = set()
+            for key, path in await self._hass.async_add_executor_job(_scan):
+                try:
+                    rel = os.path.relpath(path, cfg_dir)
+                except ValueError:  # different drive (Windows dev setups)
+                    rel = path
+                rel = rel.replace(os.sep, "/")
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                self._add_issue(
+                    issue_id=f"compliance_yaml_not_loaded_{rel}",
+                    issue_type="compliance_yaml_file_not_loaded",
+                    severity="medium",
+                    entity_id=f"file.{rel}",
+                    alias=os.path.basename(rel),
+                    message=(
+                        f"'{rel}' sits in a folder merged by '{key}:', but Home "
+                        f"Assistant only merges '*.yaml' files there — this file is "
+                        f"never loaded and whatever it defines does not exist. "
+                        f"Rename it with a '.yaml' extension."
+                    ),
+                    message_key="yaml_file_not_loaded",
+                    message_params={"file": rel, "key": key},
+                )
+        except Exception as exc:
+            _LOGGER.debug("[HACA Compliance] Unloaded YAML check error: %s", exc)
 
     # ── Lecture YAML (toutes les sources, pas seulement les fichiers plats) ──
 

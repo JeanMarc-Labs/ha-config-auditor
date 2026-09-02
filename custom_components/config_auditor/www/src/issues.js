@@ -145,6 +145,7 @@
       const DOMAINS_NO_MORE_INFO = new Set([
         'automation', 'script', 'scene',   // ont leur propre bouton "Éditer"
         'persistent_notification',          // pas une entité interactive
+        'file',                             // 'file.<chemin>' — un fichier de config, pas une entité
       ]);
       const entityDomain = i.entity_id ? i.entity_id.split('.')[0] : '';
       // Une entité HA valide a forcément un domaine (contient un point)

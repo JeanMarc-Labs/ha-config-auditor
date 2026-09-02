@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "实体无区域",
         "compliance_helper_no_icon": "辅助实体无图标",
         "compliance_helper_no_area": "辅助实体无区域",
+        "compliance_yaml_file_not_loaded": "从未加载的 YAML 文件",
         "compliance_entity_no_area_bulk": "多个实体没有区域",
         "god_automation": "庞大自动化（非常复杂）",
         "complex_automation": "复杂自动化",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "无区域的实体（汇总）",
         "other": "其他",
         "compliance_helper_no_icon": "辅助实体无图标",
-        "compliance_helper_no_area": "辅助实体无区域"
+        "compliance_helper_no_area": "辅助实体无区域",
+        "compliance_yaml_file_not_loaded": "从未加载的 YAML 文件"
       },
       "info": "合规标签会检查 HA 最佳实践：辅助实体命名、区域图标、自动化描述、unique_id、标签等。",
       "sort_label": "排序：",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "自动化 '{alias}' 没有 'id:' 字段。没有唯一 id，无法在 HA 界面中编辑。",
       "script_no_description": "脚本 '{alias}' 没有描述。请添加 'description:' 字段来记录其功能。",
       "entity_no_area": "实体 '{name}' ({entity_id}) 没有分配区域。请通过设置 → 设备进行分配。",
-      "entities_no_area_bulk": "{count} 个物理实体没有分配区域。请通过设置 → 设备与服务 → 设备分配区域。"
+      "entities_no_area_bulk": "{count} 个物理实体没有分配区域。请通过设置 → 设备与服务 → 设备分配区域。",
+      "yaml_file_not_loaded": "'{file}' 位于 '{key}:' 合并的文件夹中，但 Home Assistant 在该处只合并 '*.yaml' 文件——此文件从未被加载，其中定义的内容并不存在。请将其扩展名改为 '.yaml'。"
     },
     "tab_tooltips": {
       "issues": "审计问题 — 自动化、实体、脚本、场景、蓝图、安全",

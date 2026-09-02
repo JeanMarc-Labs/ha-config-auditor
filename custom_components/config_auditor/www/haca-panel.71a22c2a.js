@@ -1,4 +1,4 @@
-// HACA-BUILD: 923ba9c9  2026-08-29T13:48:18Z
+// HACA-BUILD: 71a22c2a  2026-09-02T08:33:58Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -155,6 +155,7 @@ var ISSUE_TYPES_BY_CATEGORY = [
       { id: 'compliance_entity_no_area', fixable: false },
       { id: 'compliance_helper_no_icon', fixable: false },
       { id: 'compliance_helper_no_area', fixable: false },
+      { id: 'compliance_yaml_file_not_loaded', fixable: false },
     ]
   },
 ];
@@ -8745,6 +8746,7 @@ function _updateTypeCounts(el) {
       const DOMAINS_NO_MORE_INFO = new Set([
         'automation', 'script', 'scene',   // ont leur propre bouton "Éditer"
         'persistent_notification',          // pas une entité interactive
+        'file',                             // 'file.<chemin>' — un fichier de config, pas une entité
       ]);
       const entityDomain = i.entity_id ? i.entity_id.split('.')[0] : '';
       // Une entité HA valide a forcément un domaine (contient un point)
@@ -10662,6 +10664,7 @@ var COMPLIANCE_TYPE_COLORS = {
   compliance_entity_no_area_bulk:       'rgba(0,150,136,0.18)',
   compliance_helper_no_icon:            'rgba(121,85,72,0.13)',
   compliance_helper_no_area:            'rgba(0,188,212,0.10)',
+  compliance_yaml_file_not_loaded:      'rgba(255,193,7,0.18)',
 };
 var COMPLIANCE_TYPE_TEXT_COLORS = {
   compliance_no_friendly_name:          '#1565c0',
@@ -10675,10 +10678,13 @@ var COMPLIANCE_TYPE_TEXT_COLORS = {
   compliance_entity_no_area_bulk:       '#00695c',
   compliance_helper_no_icon:            '#4e342e',
   compliance_helper_no_area:            '#00838f',
+  compliance_yaml_file_not_loaded:      '#8d6e00',
 };
 
 function _complianceOpenUrl(issue) {
   var type = (issue.type || '');
+  // A file on disk has no HA page to open — the row links nowhere.
+  if (type === 'compliance_yaml_file_not_loaded') return null;
   if (type.indexOf('automation') !== -1) return '/config/automation';
   if (type.indexOf('script') !== -1)     return '/config/script';
   if (type === 'compliance_area_no_icon') return '/config/areas';
@@ -10783,8 +10789,9 @@ function renderComplianceTab(items, t, sortBy, filterBy, pagHtml, counts, scanni
     var issueData = esc(JSON.stringify(issue));
 
     // Can we fire more-info for this entity? (real entity, not entity.*)
+    // 'file.<path>' is a config file, not an entity: no more-info dialog for it.
     var canMoreInfo = eid && eid.indexOf('.') !== -1 && eid !== 'entity.*' &&
-      ['automation','script','scene'].indexOf(eid.split('.')[0]) === -1;
+      ['automation','script','scene','file'].indexOf(eid.split('.')[0]) === -1;
 
     return '<tr style="border-bottom:1px solid var(--divider-color);">' +
       '<td style="width:28px;padding:10px 4px 10px 12px;vertical-align:top;">' +
@@ -10816,12 +10823,14 @@ function renderComplianceTab(items, t, sortBy, filterBy, pagHtml, counts, scanni
               _i('information-outline', 12) + t('compliance.btn_moreinfo') +
             '</button>'
           : '') +
-          '<a href="' + openUrl + '" target="_top" ' +
-             'style="padding:4px 9px;border-radius:7px;font-size:11px;font-weight:600;' +
-               'background:var(--secondary-background-color);color:var(--primary-text-color);' +
-               'border:1px solid var(--divider-color);text-decoration:none;display:inline-flex;align-items:center;gap:3px;">' +
-            _i('open-in-new', 12) + t('compliance.btn_open') +
-          '</a>' +
+          (openUrl ?
+            '<a href="' + openUrl + '" target="_top" ' +
+               'style="padding:4px 9px;border-radius:7px;font-size:11px;font-weight:600;' +
+                 'background:var(--secondary-background-color);color:var(--primary-text-color);' +
+                 'border:1px solid var(--divider-color);text-decoration:none;display:inline-flex;align-items:center;gap:3px;">' +
+              _i('open-in-new', 12) + t('compliance.btn_open') +
+            '</a>'
+          : '') +
         '</div>' +
       '</td>' +
     '</tr>';

@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entity without area",
         "compliance_helper_no_icon": "Helper without icon",
         "compliance_helper_no_area": "Helper without area",
+        "compliance_yaml_file_not_loaded": "YAML file never loaded",
         "compliance_entity_no_area_bulk": "Entities without area (bulk)",
         "god_automation": "God automation (very complex)",
         "complex_automation": "Complex automation",
@@ -992,7 +993,8 @@
         "compliance_entity_no_area_bulk": "Entities without area (bulk)",
         "other": "Other",
         "compliance_helper_no_icon": "Helper without icon",
-        "compliance_helper_no_area": "Helper without area"
+        "compliance_helper_no_area": "Helper without area",
+        "compliance_yaml_file_not_loaded": "YAML file never loaded"
       },
       "info": "The Compliance tab checks HA best practices: helper naming, area icons, automation/script descriptions, entities without area. These are different from classic HACA audit issues.",
       "sort_label": "Sort:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "Automation '{alias}' has no 'id:' field. Without a unique id, this automation cannot be edited in the HA UI.",
       "script_no_description": "Script '{alias}' has no description. Add a 'description:' field to document what it does.",
       "entity_no_area": "Entity '{name}' ({entity_id}) has no area assigned. Assign it via Settings → Devices.",
-      "entities_no_area_bulk": "{count} physical entities have no area assigned. Assign areas via Settings → Devices & Services → Devices."
+      "entities_no_area_bulk": "{count} physical entities have no area assigned. Assign areas via Settings → Devices & Services → Devices.",
+      "yaml_file_not_loaded": "'{file}' sits in a folder merged by '{key}:', but Home Assistant only merges '*.yaml' files there — this file is never loaded and whatever it defines does not exist. Rename it with a '.yaml' extension."
     },
     "tab_tooltips": {
       "issues": "Audit issues — automations, entities, scripts, scenes, blueprints, security",
