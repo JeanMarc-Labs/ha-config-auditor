@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entitet uden område",
         "compliance_helper_no_icon": "Hjælper uden ikon",
         "compliance_helper_no_area": "Hjælper uden område",
+        "compliance_yaml_file_not_loaded": "YAML-fil indlæses aldrig",
         "compliance_entity_no_area_bulk": "Enheder uden område (mange)",
         "god_automation": "Gud-automatisering (meget kompleks)",
         "complex_automation": "Kompleks automatisering",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Entiteter uden område (samlet)",
         "other": "Andet",
         "compliance_helper_no_icon": "Hjælper uden ikon",
-        "compliance_helper_no_area": "Hjælper uden område"
+        "compliance_helper_no_area": "Hjælper uden område",
+        "compliance_yaml_file_not_loaded": "YAML-fil indlæses aldrig"
       },
       "info": "Compliance-fanen tjekker HA's best practices: hjælper-navngivning, områdeikoner, automatiseringsbeskrivelser, unique_id, etiketter og mere.",
       "sort_label": "Sortér:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "Automatiseringen '{alias}' har intet 'id:' felt. Uden et unikt id kan den ikke redigeres i HA-brugerfladen.",
       "script_no_description": "Scriptet '{alias}' har ingen beskrivelse. Tilføj et 'description:' felt for at dokumentere, hvad det gør.",
       "entity_no_area": "Enheden '{name}' ({entity_id}) har intet område tildelt. Tildel det via Indstillinger → Enheder.",
-      "entities_no_area_bulk": "{count} fysiske enheder har intet område tildelt. Tildel områder via Indstillinger → Enheder & Tjenester → Enheder."
+      "entities_no_area_bulk": "{count} fysiske enheder har intet område tildelt. Tildel områder via Indstillinger → Enheder & Tjenester → Enheder.",
+      "yaml_file_not_loaded": "'{file}' ligger i en mappe, der flettes af '{key}:', men Home Assistant fletter kun '*.yaml'-filer der — denne fil indlæses aldrig, og det, den definerer, findes ikke. Omdøb den med endelsen '.yaml'."
     },
     "tab_tooltips": {
       "issues": "Revisionsproblemer — automatiseringer, enheder, scripts, scener, blueprints, sikkerhed",

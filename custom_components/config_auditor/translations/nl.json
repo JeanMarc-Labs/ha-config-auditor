@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entiteit zonder gebied",
         "compliance_helper_no_icon": "Helper zonder pictogram",
         "compliance_helper_no_area": "Helper zonder gebied",
+        "compliance_yaml_file_not_loaded": "YAML-bestand wordt nooit geladen",
         "compliance_entity_no_area_bulk": "Entiteiten zonder zone (meerdere)",
         "god_automation": "God-automatisering (zeer complex)",
         "complex_automation": "Complexe automatisering",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Entiteiten zonder gebied (gegroepeerd)",
         "other": "Overig",
         "compliance_helper_no_icon": "Helper zonder pictogram",
-        "compliance_helper_no_area": "Helper zonder gebied"
+        "compliance_helper_no_area": "Helper zonder gebied",
+        "compliance_yaml_file_not_loaded": "YAML-bestand wordt nooit geladen"
       },
       "info": "Het Compliance-tabblad controleert HA-best-practices: helpernaamgeving, gebiedspictogrammen, automatiseringsbeschrijvingen, unique_id, labels en meer.",
       "sort_label": "Sorteren:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "Automatisering '{alias}' heeft geen 'id:' veld. Zonder uniek id kan het niet worden bewerkt in de HA-interface.",
       "script_no_description": "Script '{alias}' heeft geen beschrijving. Voeg een 'description:' veld toe om te documenteren wat het doet.",
       "entity_no_area": "Entiteit '{name}' ({entity_id}) heeft geen zone toegewezen. Wijs deze toe via Instellingen → Apparaten.",
-      "entities_no_area_bulk": "{count} fysieke entiteiten hebben geen zone toegewezen. Wijs zones toe via Instellingen → Apparaten & Diensten → Apparaten."
+      "entities_no_area_bulk": "{count} fysieke entiteiten hebben geen zone toegewezen. Wijs zones toe via Instellingen → Apparaten & Diensten → Apparaten.",
+      "yaml_file_not_loaded": "'{file}' staat in een map die door '{key}:' wordt samengevoegd, maar Home Assistant voegt daar alleen '*.yaml'-bestanden samen — dit bestand wordt nooit geladen en wat het definieert bestaat niet. Hernoem het met de extensie '.yaml'."
     },
     "tab_tooltips": {
       "issues": "Auditproblemen — automaties, entiteiten, scripts, scènes, blauwdrukken, beveiliging",

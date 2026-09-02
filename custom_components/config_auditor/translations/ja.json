@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "エリアのないエンティティ",
         "compliance_helper_no_icon": "アイコンのないヘルパー",
         "compliance_helper_no_area": "エリアのないヘルパー",
+        "compliance_yaml_file_not_loaded": "読み込まれない YAML ファイル",
         "compliance_entity_no_area_bulk": "エリアなしのエンティティ（複数）",
         "god_automation": "巨大なオートメーション（非常に複雑）",
         "complex_automation": "複雑なオートメーション",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "エリアのないエンティティ（一括）",
         "other": "その他",
         "compliance_helper_no_icon": "アイコンのないヘルパー",
-        "compliance_helper_no_area": "エリアのないヘルパー"
+        "compliance_helper_no_area": "エリアのないヘルパー",
+        "compliance_yaml_file_not_loaded": "読み込まれない YAML ファイル"
       },
       "info": "コンプライアンスタブは HA のベストプラクティスを確認します: ヘルパーの命名、エリアのアイコン、オートメーションの説明、unique_id、ラベルなど。",
       "sort_label": "並べ替え:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "オートメーション '{alias}' に 'id:' フィールドがありません。一意のIDがなければ、HA UIで編集できません。",
       "script_no_description": "スクリプト '{alias}' に説明がありません。動作を文書化するために 'description:' フィールドを追加してください。",
       "entity_no_area": "エンティティ '{name}' ({entity_id}) にエリアが割り当てられていません。設定 → デバイスで割り当ててください。",
-      "entities_no_area_bulk": "{count} 個の物理エンティティにエリアが割り当てられていません。設定 → デバイスとサービス → デバイスでエリアを割り当ててください。"
+      "entities_no_area_bulk": "{count} 個の物理エンティティにエリアが割り当てられていません。設定 → デバイスとサービス → デバイスでエリアを割り当ててください。",
+      "yaml_file_not_loaded": "'{file}' は '{key}:' がマージするフォルダーにありますが、Home Assistant がそこでマージするのは '*.yaml' ファイルのみです。このファイルは読み込まれず、そこで定義した内容も存在しません。拡張子を '.yaml' に変更してください。"
     },
     "tab_tooltips": {
       "issues": "監査問題 — 自動化、エンティティ、スクリプト、シーン、ブループリント、セキュリティ",

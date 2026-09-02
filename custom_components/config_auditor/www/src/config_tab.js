@@ -153,6 +153,7 @@ var ISSUE_TYPES_BY_CATEGORY = [
       { id: 'compliance_entity_no_area', fixable: false },
       { id: 'compliance_helper_no_icon', fixable: false },
       { id: 'compliance_helper_no_area', fixable: false },
+      { id: 'compliance_yaml_file_not_loaded', fixable: false },
     ]
   },
 ];

@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Encja bez obszaru",
         "compliance_helper_no_icon": "Pomocnik bez ikony",
         "compliance_helper_no_area": "Pomocnik bez obszaru",
+        "compliance_yaml_file_not_loaded": "Plik YAML nigdy nie wczytywany",
         "compliance_entity_no_area_bulk": "Encje bez obszaru (wiele)",
         "god_automation": "Bóg-automatyzacja (bardzo złożona)",
         "complex_automation": "Złożona automatyzacja",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Encje bez obszaru (zbiorczo)",
         "other": "Inne",
         "compliance_helper_no_icon": "Pomocnik bez ikony",
-        "compliance_helper_no_area": "Pomocnik bez obszaru"
+        "compliance_helper_no_area": "Pomocnik bez obszaru",
+        "compliance_yaml_file_not_loaded": "Plik YAML nigdy nie wczytywany"
       },
       "info": "Karta Zgodność sprawdza najlepsze praktyki HA: nazwy pomocników, ikony obszarów, opisy automatyzacji, unique_id, etykiety i więcej.",
       "sort_label": "Sortuj:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "Automatyzacja '{alias}' nie ma pola 'id:'. Bez unikalnego id nie można jej edytować w interfejsie HA.",
       "script_no_description": "Skrypt '{alias}' nie ma opisu. Dodaj pole 'description:', aby udokumentować co robi.",
       "entity_no_area": "Encja '{name}' ({entity_id}) nie ma przypisanego obszaru. Przypisz go przez Ustawienia → Urządzenia.",
-      "entities_no_area_bulk": "{count} encji fizycznych nie ma przypisanego obszaru. Przypisz obszary przez Ustawienia → Urządzenia i Usługi → Urządzenia."
+      "entities_no_area_bulk": "{count} encji fizycznych nie ma przypisanego obszaru. Przypisz obszary przez Ustawienia → Urządzenia i Usługi → Urządzenia.",
+      "yaml_file_not_loaded": "Plik '{file}' znajduje się w folderze scalanym przez '{key}:', ale Home Assistant scala tam wyłącznie pliki '*.yaml' — ten plik nigdy nie jest wczytywany, a to, co definiuje, nie istnieje. Zmień jego rozszerzenie na '.yaml'."
     },
     "tab_tooltips": {
       "issues": "Problemy audytu — automatyzacje, encje, skrypty, sceny, schematy, bezpieczeństwo",

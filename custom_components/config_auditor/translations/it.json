@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entità senza area",
         "compliance_helper_no_icon": "Helper senza icona",
         "compliance_helper_no_area": "Helper senza area",
+        "compliance_yaml_file_not_loaded": "File YAML mai caricato",
         "compliance_entity_no_area_bulk": "Entità senza area (molte)",
         "god_automation": "Automazione gigante (molto complessa)",
         "complex_automation": "Automazione complessa",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Entità senza area (raggruppate)",
         "other": "Altro",
         "compliance_helper_no_icon": "Helper senza icona",
-        "compliance_helper_no_area": "Helper senza area"
+        "compliance_helper_no_area": "Helper senza area",
+        "compliance_yaml_file_not_loaded": "File YAML mai caricato"
       },
       "info": "La scheda Conformità controlla le best practice di HA: nomi degli helper, icone delle aree, descrizioni delle automazioni, unique_id, etichette e altro.",
       "sort_label": "Ordina:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "L'automazione '{alias}' non ha il campo 'id:'. Senza id univoco, non può essere modificata nell'interfaccia HA.",
       "script_no_description": "Lo script '{alias}' non ha descrizione. Aggiungi un campo 'description:' per documentare cosa fa.",
       "entity_no_area": "L'entità '{name}' ({entity_id}) non ha area assegnata. Assegnala tramite Impostazioni → Dispositivi.",
-      "entities_no_area_bulk": "{count} entità fisiche non hanno area assegnata. Assegna le aree tramite Impostazioni → Dispositivi e Servizi → Dispositivi."
+      "entities_no_area_bulk": "{count} entità fisiche non hanno area assegnata. Assegna le aree tramite Impostazioni → Dispositivi e Servizi → Dispositivi.",
+      "yaml_file_not_loaded": "'{file}' si trova in una cartella unita da '{key}:', ma Home Assistant vi unisce solo i file '*.yaml': questo file non viene mai caricato e ciò che definisce non esiste. Rinominalo con l'estensione '.yaml'."
     },
     "tab_tooltips": {
       "issues": "Problemi di audit — automazioni, entità, script, scene, blueprint, sicurezza",

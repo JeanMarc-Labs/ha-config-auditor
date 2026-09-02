@@ -172,6 +172,7 @@ ISSUE_COMPLIANCE_AUTO_NO_UNIQUE_ID      = "compliance_automation_no_unique_id"
 ISSUE_COMPLIANCE_SCRIPT_NO_DESCRIPTION  = "compliance_script_no_description"
 ISSUE_COMPLIANCE_ENTITY_NO_AREA         = "compliance_entity_no_area"
 ISSUE_COMPLIANCE_ENTITY_NO_AREA_BULK    = "compliance_entity_no_area_bulk"
+ISSUE_COMPLIANCE_YAML_NOT_LOADED        = "compliance_yaml_file_not_loaded"
 
 # AI cache key (in hass.data[DOMAIN][entry_id])
 AI_CACHE_KEY = "ai_explanation_cache"

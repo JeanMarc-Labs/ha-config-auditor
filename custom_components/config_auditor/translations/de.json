@@ -898,6 +898,7 @@
         "compliance_entity_no_area": "Entität ohne Bereich",
         "compliance_helper_no_icon": "Helfer ohne Symbol",
         "compliance_helper_no_area": "Helfer ohne Bereich",
+        "compliance_yaml_file_not_loaded": "YAML-Datei wird nie geladen",
         "compliance_entity_no_area_bulk": "Entitäten ohne Bereich (mehrere)",
         "god_automation": "Übermäßig komplexe Automatisierung",
         "complex_automation": "Komplexe Automatisierung",
@@ -987,7 +988,8 @@
         "compliance_entity_no_area_bulk": "Entitäten ohne Bereich (Sammelbericht)",
         "other": "Sonstige",
         "compliance_helper_no_icon": "Helfer ohne Symbol",
-        "compliance_helper_no_area": "Helfer ohne Bereich"
+        "compliance_helper_no_area": "Helfer ohne Bereich",
+        "compliance_yaml_file_not_loaded": "YAML-Datei wird nie geladen"
       },
       "info": "Die Compliance-Registerkarte überprüft HA-Best-Practices: Helfer-Benennung, Bereichssymbole, Automatisierungs-Beschreibungen, unique_id, Etiketten und mehr.",
       "sort_label": "Sortieren:",
@@ -1101,7 +1103,8 @@
       "automation_no_unique_id": "Automatisierung '{alias}' hat kein 'id:' Feld. Ohne eindeutige ID kann sie nicht in der HA-Oberfläche bearbeitet werden.",
       "script_no_description": "Skript '{alias}' hat keine Beschreibung. Fügen Sie ein 'description:' Feld hinzu, um zu dokumentieren, was es tut.",
       "entity_no_area": "Entität '{name}' ({entity_id}) hat keinen Bereich zugewiesen. Weisen Sie ihn über Einstellungen → Geräte zu.",
-      "entities_no_area_bulk": "{count} physische Entitäten haben keinen Bereich zugewiesen. Weisen Sie Bereiche über Einstellungen → Geräte & Dienste → Geräte zu."
+      "entities_no_area_bulk": "{count} physische Entitäten haben keinen Bereich zugewiesen. Weisen Sie Bereiche über Einstellungen → Geräte & Dienste → Geräte zu.",
+      "yaml_file_not_loaded": "'{file}' liegt in einem Ordner, den '{key}:' zusammenführt, aber Home Assistant führt dort nur '*.yaml'-Dateien zusammen — diese Datei wird nie geladen, und was sie definiert, existiert nicht. Benennen Sie sie mit der Endung '.yaml' um."
     },
     "tab_tooltips": {
       "issues": "Audit-Probleme — Automationen, Entitäten, Skripte, Szenen, Blueprints, Sicherheit",
