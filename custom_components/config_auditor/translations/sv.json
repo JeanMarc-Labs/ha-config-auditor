@@ -1104,7 +1104,7 @@
       "script_no_description": "Skriptet '{alias}' har ingen beskrivning. Lägg till ett 'description:' fält för att dokumentera vad det gör.",
       "entity_no_area": "Enheten '{name}' ({entity_id}) har inget område tilldelat. Tilldela det via Inställningar → Enheter.",
       "entities_no_area_bulk": "{count} fysiska enheter har inget område tilldelat. Tilldela områden via Inställningar → Enheter & Tjänster → Enheter.",
-      "yaml_file_not_loaded": "'{file}' ligger i en mapp som slås samman av '{key}:', men Home Assistant slår bara samman '*.yaml'-filer där — den här filen laddas aldrig och det den definierar finns inte. Byt namn på den med ändelsen '.yaml'."
+      "yaml_file_not_loaded": "'{file}' ligger i en mapp som slås samman av '{key}:', men Home Assistant slår bara samman '*.yaml'-filer där — och ingen fil i mappen hämtar in den, så den laddas aldrig och det den definierar finns inte. Byt namn på den till '.yaml' om den ska laddas, eller ta bort den om den är en rest. Om en fil utanför mappen hämtar in den med '!include', ignorera detta — namnbytet skulle bryta den inkluderingen."
     },
     "tab_tooltips": {
       "issues": "Granskningsproblem — automatiseringar, enheter, skript, scener, ritningar, säkerhet",

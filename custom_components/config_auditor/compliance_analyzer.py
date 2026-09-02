@@ -28,7 +28,13 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
-from .yaml_sources import find_unloaded_yaml_files, iter_domain_files, load_yaml_any
+from .yaml_sources import (
+    find_unloaded_in_sources,
+    find_unloaded_yaml_files,
+    iter_domain_files,
+    load_yaml_any,
+    resolve_packages_sources,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -318,6 +324,12 @@ class ComplianceAnalyzer:
         ni HA (le fichier est simplement ignoré), ni l'audit (qui ne le lit plus
         depuis 1.7.7). L'utilisateur voit une automation écrite, sauvegardée,
         et absente de son instance.
+
+        Un `.yml` désigné par un `!include` explicite depuis un fichier voisin
+        est bien chargé : `find_unloaded_in_sources` l'écarte. Le message ne dit
+        donc plus « renommez-le », ce qui cassait la config quand le fichier
+        était inclus depuis l'extérieur du dossier — il décrit le constat et
+        laisse les deux issues possibles.
         """
         try:
             cfg_dir = str(self._hass.config.config_dir)
@@ -332,6 +344,10 @@ class ComplianceAnalyzer:
                 for key, default_filename in domain_keys:
                     for path in find_unloaded_yaml_files(cfg_dir, key, default_filename):
                         out.append((key, path))
+                # `packages:` vit sous `homeassistant:` et n'a aucun défaut :
+                # un dossier non déclaré n'est pas chargé, donc pas audité.
+                for path in find_unloaded_in_sources(resolve_packages_sources(cfg_dir)):
+                    out.append(("homeassistant: packages", path))
                 return out
 
             seen: set[str] = set()
@@ -352,9 +368,12 @@ class ComplianceAnalyzer:
                     alias=os.path.basename(rel),
                     message=(
                         f"'{rel}' sits in a folder merged by '{key}:', but Home "
-                        f"Assistant only merges '*.yaml' files there — this file is "
-                        f"never loaded and whatever it defines does not exist. "
-                        f"Rename it with a '.yaml' extension."
+                        f"Assistant only merges '*.yaml' files there — nothing in "
+                        f"that folder pulls it in either, so it is never loaded and "
+                        f"whatever it defines does not exist. Rename it to '.yaml' "
+                        f"if it should be loaded; delete it if it is a leftover. "
+                        f"If another file outside that folder '!include's it, ignore "
+                        f"this — renaming would break that include."
                     ),
                     message_key="yaml_file_not_loaded",
                     message_params={"file": rel, "key": key},

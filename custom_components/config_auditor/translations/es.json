@@ -1104,7 +1104,7 @@
       "script_no_description": "El script '{alias}' no tiene descripción. Añade un campo 'description:' para documentar lo que hace.",
       "entity_no_area": "La entidad '{name}' ({entity_id}) no tiene área asignada. Asígnala en Configuración → Dispositivos.",
       "entities_no_area_bulk": "{count} entidades físicas no tienen área asignada. Asigna áreas en Configuración → Dispositivos y Servicios → Dispositivos.",
-      "yaml_file_not_loaded": "'{file}' está en una carpeta combinada por '{key}:', pero Home Assistant solo combina archivos '*.yaml' ahí: este archivo nunca se carga y lo que define no existe. Renómbralo con la extensión '.yaml'."
+      "yaml_file_not_loaded": "'{file}' está en una carpeta combinada por '{key}:', pero Home Assistant solo combina archivos '*.yaml' ahí, y ningún archivo de esa carpeta lo incluye: nunca se carga y lo que define no existe. Renómbralo a '.yaml' si debe cargarse, o elimínalo si es un residuo. Si un archivo fuera de esa carpeta lo llama con '!include', ignora este aviso: renombrarlo rompería ese include."
     },
     "tab_tooltips": {
       "issues": "Problemas de auditoría — automatizaciones, entidades, scripts, escenas, blueprints, seguridad",

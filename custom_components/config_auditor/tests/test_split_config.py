@@ -59,7 +59,7 @@ class TestSplitAutomations:
         _write(tmp_path, {
             "configuration.yaml": f"automation: {tag} automations/\n",
             "automations/clima.yaml": "- id: a1\n  alias: Clima\n  trigger: []\n  action: []\n",
-            "automations/sub/deep.yml": "- id: a2\n  alias: Deep\n  trigger: []\n  action: []\n",
+            "automations/sub/deep.yaml": "- id: a2\n  alias: Deep\n  trigger: []\n  action: []\n",
         })
         hass = MockHass(config_dir=str(tmp_path))
         aa = _make_analyzer(hass)

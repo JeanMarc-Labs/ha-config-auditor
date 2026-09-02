@@ -1104,7 +1104,7 @@
       "script_no_description": "Le script '{alias}' n'a pas de description. Ajoutez un champ 'description:' pour documenter ce qu'il fait.",
       "entity_no_area": "L'entité '{name}' ({entity_id}) n'a pas d'area assignée. Assignez-la via Paramètres → Appareils.",
       "entities_no_area_bulk": "{count} entités physiques n'ont pas d'area assignée. Assignez des zones via Paramètres → Appareils & Services → Appareils.",
-      "yaml_file_not_loaded": "'{file}' se trouve dans un dossier fusionné par '{key}:', mais Home Assistant n'y fusionne que les fichiers '*.yaml' : ce fichier n'est jamais chargé et ce qu'il définit n'existe pas. Renommez-le avec l'extension '.yaml'."
+      "yaml_file_not_loaded": "'{file}' se trouve dans un dossier fusionné par '{key}:', mais Home Assistant n'y fusionne que les fichiers '*.yaml' — et aucun fichier de ce dossier ne l'inclut, donc il n'est jamais chargé et ce qu'il définit n'existe pas. Renommez-le en '.yaml' s'il doit être chargé, ou supprimez-le s'il s'agit d'un reliquat. Si un fichier extérieur à ce dossier l'appelle par '!include', ignorez cet avertissement — le renommage casserait cet include."
     },
     "tab_tooltips": {
       "issues": "Issues d'audit — automations, entités, scripts, scènes, blueprints, sécurité",
