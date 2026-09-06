@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.7.7] — 2026-09-02 — Configurations YAML éclatées auditées et éditées correctement, rechargement et appels d'actions MCP réparés, outils blueprint réparés et import durci, traversée de chemin fermée, panneau lisible en thème sombre
+## [1.7.7] — 2026-09-06 — Configurations YAML éclatées auditées et éditées correctement, rechargement et appels d'actions MCP réparés, outils blueprint réparés et import durci, traversée de chemin fermée, panneau lisible en thème sombre
 
 ### Corrigé
 

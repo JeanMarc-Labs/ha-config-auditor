@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.7.7] — 2026-09-02 — Split YAML configs audited and edited correctly, MCP reload and action calls fixed, blueprint tools fixed and import hardened, path traversal closed, dark-mode panel readable again
+## [1.7.7] — 2026-09-06 — Split YAML configs audited and edited correctly, MCP reload and action calls fixed, blueprint tools fixed and import hardened, path traversal closed, dark-mode panel readable again
 
 ### Fixed
 
