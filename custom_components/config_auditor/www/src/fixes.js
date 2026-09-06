@@ -41,13 +41,13 @@
                 ${_icon("alert-circle", 48)}
                 <div>
                     <h2 style="margin: 0;">${this.t('modals.broken_device_ref')}</h2>
-                    <div style="font-size: 14px; opacity: 0.7;">${issue.entity_id}</div>
+                    <div style="font-size: 14px; opacity: 0.7;">${this.escapeHtml(issue.entity_id)}</div>
                 </div>
             </div>
             
             <div style="background: rgba(239, 83, 80, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid var(--error-color); margin-bottom: 20px;">
                 <div style="font-weight: 600; margin-bottom: 8px; color: var(--error-color);">⚠️ ${this.t('modals.cannot_auto_fix')}</div>
-                <div style="line-height: 1.6;">${issue.message}</div>
+                <div style="line-height: 1.6;">${this.escapeHtml(issue.message)}</div>
             </div>
             
             <div style="background: var(--secondary-background-color); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
@@ -57,7 +57,7 @@
                 </div>
                 <ol style="margin: 0; padding-left: 20px; line-height: 1.8;">
                     <li>${this.t('instructions.open_yaml_editor')}</li>
-                    <li>${this.t('instructions.find_device_ref')}: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">${issue.device_id || this.t('modals.unknown_device_id')}</code></li>
+                    <li>${this.t('instructions.find_device_ref')}: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">${this.escapeHtml(issue.device_id) || this.t('modals.unknown_device_id')}</code></li>
                     <li>${this.t('instructions.replace_entity')}</li>
                     <li>${this.t('instructions.save_reload')}</li>
                 </ol>
@@ -65,7 +65,7 @@
             
             <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
                 <button class="close-btn" style="background: var(--secondary-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);">${this.t('actions.close')}</button>
-                ${editUrl ? `<a href="${editUrl}" target="_blank" style="text-decoration: none;"><button class="edit-btn" style="background: var(--primary-color); color: white;">${_icon("pencil")} ${this.t('modals.open_editor')}</button></a>` : ''}
+                ${editUrl ? `<a href="${this.escapeHtml(editUrl)}" target="_blank" style="text-decoration: none;"><button class="edit-btn" style="background: var(--primary-color); color: white;">${_icon("pencil")} ${this.t('modals.open_editor')}</button></a>` : ''}
             </div>
         </div>
       `);
@@ -152,7 +152,7 @@
                 ${_icon("alert-circle-outline", 36)}
                 <div>
                   <h2 style="margin:0;">${this.t('modals.cannot_auto_fix')}</h2>
-                  <div style="font-size:13px;opacity:0.7;">${issue.entity_id}</div>
+                  <div style="font-size:13px;opacity:0.7;">${this.escapeHtml(issue.entity_id)}</div>
                 </div>
               </div>
               <div style="background:rgba(255,167,38,0.1);padding:16px;border-radius:10px;border-left:4px solid var(--warning-color,#ffa726);margin-bottom:20px;font-size:14px;line-height:1.6;">
@@ -161,7 +161,7 @@
               <div style="display:flex;justify-content:flex-end;gap:12px;">
                 <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 18px;cursor:pointer;"
                   onclick="this.closest('.haca-modal').remove()">${this.t('actions.close')}</button>
-                ${this.getHAEditUrl(issue.entity_id) ? `<a href="${this.getHAEditUrl(issue.entity_id)}" target="_blank" style="text-decoration:none;">
+                ${this.getHAEditUrl(issue.entity_id) ? `<a href="${this.escapeHtml(this.getHAEditUrl(issue.entity_id))}" target="_blank" style="text-decoration:none;">
                   <button style="background:var(--primary-color);color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;">
                     ${_icon('pencil')} ${this.t('modals.open_editor')}
                   </button></a>` : ''}
@@ -171,11 +171,11 @@
           this.renderDiffModal(modal, response, issue, service, serviceData);
         }
       } else {
-        modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${response.error || this.t('fix.error_unknown')}</div>`);
+        modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${this.escapeHtml(response.error) || this.t('fix.error_unknown')}</div>`);
         setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
       }
     } catch (e) {
-      modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${e.message}</div>`);
+      modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${this.escapeHtml(e.message)}</div>`);
       setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
     }
   }
@@ -212,11 +212,11 @@
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             ${suggestions.map(s => `
-              <button class="suggestion-btn" data-value="${s}"
+              <button class="suggestion-btn" data-value="${this.escapeHtml(s)}"
                 style="background:var(--secondary-background-color);color:var(--primary-text-color);
                        border:1px solid var(--primary-color);border-radius:8px;padding:6px 14px;
                        font-size:13px;cursor:pointer;">
-                ${_icon("swap-horizontal", 14)} ${s}
+                ${_icon("swap-horizontal", 14)} ${this.escapeHtml(s)}
               </button>`).join('')}
           </div>
         </div>`
@@ -228,7 +228,7 @@
       ? automationIds.map(aid => {
           const state = this.hass.states[aid];
           const label = state?.attributes?.friendly_name || aid;
-          return `<li style="padding:4px 0;"><code style="font-size:12px;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${label}</code></li>`;
+          return `<li style="padding:4px 0;"><code style="font-size:12px;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${this.escapeHtml(label)}</code></li>`;
         }).join('')
       : `<li>${this.t('zombie.unknown_automation')}</li>`;
 
@@ -238,12 +238,12 @@
           ${_icon("ghost-outline", 42)}
           <div>
             <h2 style="margin:0;">${this.t('zombie.entity_not_found')}</h2>
-            <div style="font-size:13px;opacity:0.7;">${zombieId}</div>
+            <div style="font-size:13px;opacity:0.7;">${this.escapeHtml(zombieId)}</div>
           </div>
         </div>
 
         <div style="background:rgba(239,83,80,0.08);padding:14px 18px;border-radius:10px;border-left:4px solid var(--error-color);margin-bottom:20px;font-size:14px;">
-          ${issue.message}<br>
+          ${this.escapeHtml(issue.message)}<br>
           <div style="margin-top:6px;opacity:0.8;font-size:13px;">${this.t('zombie.referenced_in', {count: automationIds.length})}</div>
           <ul style="margin:6px 0 0 0;padding-left:20px;">${automationsHtml}</ul>
         </div>
@@ -301,7 +301,7 @@
       const editorUrl = this.getHAEditUrl(firstAutomationId);
       if (editorUrl) {
         zombieEditorContainer.innerHTML = `
-          <a href="${editorUrl}" target="_blank" style="text-decoration:none;">
+          <a href="${this.escapeHtml(editorUrl)}" target="_blank" style="text-decoration:none;">
             <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
               ${_icon("pencil")} ${this.t('zombie.edit_manual')}
             </button>
@@ -380,12 +380,12 @@
                     ${_icon("robot-confused-outline", 40)}
                     <div>
                         <h2 style="margin: 0;">${this.t('modals.suggest_description')}</h2>
-                        <div style="font-size: 14px; opacity: 0.7;">${issue.alias || issue.entity_id}</div>
+                        <div style="font-size: 14px; opacity: 0.7;">${this.escapeHtml(issue.alias || issue.entity_id)}</div>
                     </div>
                 </div>
 
                 <div style="color: var(--primary-text-color); margin-bottom: 12px; font-weight: 500;">${this.t('modals.ai_proposition')}</div>
-                <textarea id="desc-input" style="width: 100%; height: 100px; padding: 12px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font-family: inherit; font-size: 14px; box-sizing: border-box; resize: none; margin-bottom: 4px;">${response.suggestion}</textarea>
+                <textarea id="desc-input" style="width: 100%; height: 100px; padding: 12px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font-family: inherit; font-size: 14px; box-sizing: border-box; resize: none; margin-bottom: 4px;">${this.escapeHtml(response.suggestion)}</textarea>
                 <div style="font-size: 12px; color: var(--secondary-text-color); margin-bottom: 20px;">${this.t('modals.edit_text')}</div>
                 
                 <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
@@ -434,7 +434,7 @@
       card._updateContent(`
             <div style="padding: 24px;">
                 <h2 style="color: var(--error-color);">❌ ${this.t('notifications.error')}</h2>
-                <p>${e.message}</p>
+                <p>${this.escapeHtml(e.message)}</p>
                 <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
                     <button class="close-btn" style="background: var(--primary-color);">${this.t('actions.close')}</button>
                 </div>
@@ -455,11 +455,11 @@
             <div style="margin-bottom: 24px; background: rgba(var(--rgb-primary-color), 0.05); padding: 16px; border-radius: 12px; border-left: 4px solid var(--primary-color);">
                 <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
                     ${_icon("robot", 18)}
-                    <strong>${this.t('modals.automation')}:</strong> <span style="font-weight: 500;">${result.alias}</span> (${result.automation_id})
+                    <strong>${this.t('modals.automation')}:</strong> <span style="font-weight: 500;">${this.escapeHtml(result.alias)}</span> (${this.escapeHtml(result.automation_id)})
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     ${_icon("alert-circle-outline", 18)}
-                    <strong>${this.t('modals.problem')}:</strong> ${issue.message}
+                    <strong>${this.t('modals.problem')}:</strong> ${this.escapeHtml(issue.message)}
                 </div>
             </div>
             
@@ -484,7 +484,7 @@
                     ${this.t('modals.changes_identified')} (${result.changes_count}):
                 </div>
                 <ul style="margin: 0; padding-left: 24px; line-height: 1.6; color: var(--primary-text-color);">
-                    ${result.changes.map(c => `<li style="margin-bottom: 4px;">${c.description}</li>`).join('')}
+                    ${result.changes.map(c => `<li style="margin-bottom: 4px;">${this.escapeHtml(c.description)}</li>`).join('')}
                 </ul>
             </div>
         </div>
@@ -504,7 +504,7 @@
     const editContainer = card.querySelector('#edit-btn-container');
     if (editUrl && editContainer) {
       editContainer.innerHTML = `
-        <a href="${editUrl}" target="_blank" style="text-decoration:none;">
+        <a href="${this.escapeHtml(editUrl)}" target="_blank" style="text-decoration:none;">
           <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
             ${_icon("pencil")} ${this.t('zombie.edit_manual')}
           </button>
@@ -544,11 +544,11 @@
                 <div style="padding: 48px 32px; text-align: center; animation: fadeIn 0.4s ease-out;">
                     <div style="font-size: 64px; margin-bottom: 24px; filter: drop-shadow(0 4px 12px rgba(76, 175, 80, 0.4));">✅</div>
                     <h2 style="font-size: 24px; font-weight: 700; margin-bottom: 12px; color: var(--primary-text-color);">${this.t('fix.success')}</h2>
-                    <p style="color: var(--secondary-text-color); margin-bottom: 24px; line-height: 1.6;">${response.message}</p>
+                    <p style="color: var(--secondary-text-color); margin-bottom: 24px; line-height: 1.6;">${this.escapeHtml(response.message)}</p>
                     ${response.backup_path ? `
                         <div style="background: var(--secondary-background-color); padding: 12px; border-radius: 12px; margin-bottom: 32px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--divider-color);">
                             ${_icon("zip-box-outline")}
-                            <span style="font-family: monospace; font-size: 12px;">${this.t('backup.backup_created')}: ${response.backup_path.split(/[\\/]/).pop()}</span>
+                            <span style="font-family: monospace; font-size: 12px;">${this.t('backup.backup_created')}: ${this.escapeHtml(response.backup_path.split(/[\\/]/).pop())}</span>
                         </div>
                     ` : ''}
                     <div>

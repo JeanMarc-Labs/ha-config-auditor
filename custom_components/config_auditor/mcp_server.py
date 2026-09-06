@@ -8,7 +8,7 @@ Authentification : Bearer token = Long-Lived Access Token HA.
 Routes enregistrées :
   POST /api/haca_mcp          — endpoint principal JSON-RPC 2.0
   GET  /api/haca_mcp          — SSE endpoint (keepalive + server events)
-  GET  /api/haca_mcp/info     — endpoint informatif (non authentifié)
+  GET  /api/haca_mcp/info     — endpoint informatif (admin requis)
 
 Outils MCP exposés :
   haca_get_issues(severity?, type?)   → liste d'issues filtrée
@@ -24,6 +24,7 @@ MCP spec : https://modelcontextprotocol.io/specification (2024-11-05)
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 from datetime import date, datetime, time, timedelta
@@ -33,8 +34,15 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.components.http import HomeAssistantView
+
+try:
+    # HA turned this into an AppKey at some point; importing it keeps the
+    # lookup working either way (a bare "hass_user" string would miss).
+    from homeassistant.components.http.const import KEY_HASS_USER
+except ImportError:      # pragma: no cover — older layouts
+    KEY_HASS_USER = "hass_user"
 
 from .const import DOMAIN
 from .yaml_sources import (
@@ -57,6 +65,20 @@ _LOGGER = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
 MCP_SERVER_NAME = "haca-mcp"
 MCP_SERVER_VERSION = "1.6.1"
+
+# Identité de l'appelant MCP, portée jusqu'aux handlers d'outils.
+# Les 71 handlers reçoivent (hass, params) : plutôt que de changer 71 signatures,
+# _handle_jsonrpc dépose l'ID utilisateur ici et _caller_context() le relit, ce qui
+# permet d'attribuer chaque appel de service à la bonne personne dans le journal HA.
+_MCP_CALLER_USER_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "haca_mcp_caller_user_id", default=None
+)
+
+
+def _caller_context() -> Context | None:
+    """Contexte HA portant l'ID de l'appelant MCP, ou None hors requête HTTP."""
+    user_id = _MCP_CALLER_USER_ID.get()
+    return Context(user_id=user_id) if user_id else None
 
 
 def _json_default(obj: Any) -> Any:
@@ -724,7 +746,8 @@ async def _tool_apply_fix(hass: HomeAssistant, params: dict) -> dict:
             return {"error": f"No fix service for issue type '{fix_type}'"}
 
         await hass.services.async_call(
-            DOMAIN, service, {"entity_id": entity_id}, blocking=True
+            DOMAIN, service, {"entity_id": entity_id}, blocking=True,
+            context=_caller_context(),
         )
         return {
             "dry_run": False,
@@ -974,6 +997,7 @@ async def _tool_fix_batch(hass: HomeAssistant, params: dict) -> dict:
         try:
             await hass.services.async_call(
                 DOMAIN, service, {"entity_id": entity_id}, blocking=True,
+                context=_caller_context(),
             )
             applied.append({
                 "id": _issue_stable_id(issue, cat_code),
@@ -1376,6 +1400,7 @@ async def _tool_ha_call_service(hass: HomeAssistant, params: dict) -> dict:
     try:
         response = await hass.services.async_call(
             domain, service, data, blocking=True, return_response=wants_response,
+            context=_caller_context(),
         )
         result: dict[str, Any] = {
             "success": True,
@@ -1466,7 +1491,7 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
         )
 
         # Recharger les automations
-        await hass.services.async_call("automation", "reload", blocking=True)
+        await hass.services.async_call("automation", "reload", blocking=True, context=_caller_context())
 
         return {
             "success": True,
@@ -1856,8 +1881,16 @@ TOOL_HANDLERS = {
 
 # ─── JSON-RPC handler ─────────────────────────────────────────────────────
 
-async def _handle_jsonrpc(hass: HomeAssistant, body: dict) -> dict:
-    """Traite un message JSON-RPC 2.0 MCP et retourne la réponse."""
+async def _handle_jsonrpc(
+    hass: HomeAssistant, body: dict, user_id: str | None = None
+) -> dict:
+    """Traite un message JSON-RPC 2.0 MCP et retourne la réponse.
+
+    `user_id` est l'ID de l'utilisateur HA authentifié à l'origine de la requête.
+    Il est publié dans `_MCP_CALLER_USER_ID` pour que tout appel de service émis
+    par un outil soit attribué à cette personne dans le journal Home Assistant.
+    """
+    _MCP_CALLER_USER_ID.set(user_id)
     req_id = body.get("id")
     method = body.get("method", "")
     params = body.get("params", {})
@@ -1939,7 +1972,15 @@ async def _handle_jsonrpc(hass: HomeAssistant, body: dict) -> dict:
             return {}
 
         elif method == "tools/list":
-            return _ok({"tools": MCP_TOOLS})
+            # "access" is HACA's internal read/write classification (see
+            # MCP_WRITE_TOOLS); it is not part of the MCP tool schema, so it
+            # stays out of the wire format.
+            return _ok({
+                "tools": [
+                    {k: v for k, v in tool.items() if k != "access"}
+                    for tool in MCP_TOOLS
+                ]
+            })
 
         elif method == "tools/call":
             tool_name = params.get("name", "")
@@ -1983,11 +2024,31 @@ async def _handle_jsonrpc(hass: HomeAssistant, body: dict) -> dict:
 
 # ─── aiohttp Views ────────────────────────────────────────────────────────
 
+def _require_admin(request: web.Request) -> str:
+    """Retourne l'ID de l'utilisateur admin appelant, ou lève HTTPForbidden.
+
+    `requires_auth = True` ne garantit qu'une session ouverte. Les outils MCP
+    écrivent des fichiers de configuration et appellent n'importe quel service
+    (`lock.unlock`, `alarm_control_panel.disarm`…) : Home Assistant réserve ces
+    opérations aux administrateurs, HACA doit faire de même.
+    """
+    user = request.get(KEY_HASS_USER)
+    if user is None or not user.is_admin:
+        _LOGGER.warning(
+            "[HACA MCP] Accès refusé — IP=%s user=%s (admin requis)",
+            request.remote, getattr(user, "id", None) or "anonyme",
+        )
+        raise web.HTTPForbidden(reason="HACA MCP requires an administrator account")
+    return user.id
+
+
 class HacaMcpView(HomeAssistantView):
     """Vue HTTP principale MCP — POST (JSON-RPC) + GET (SSE keepalive).
-    
+
     Uses requires_auth=True so HA handles Bearer token validation natively.
     This supports Long-Lived Access Tokens, OAuth tokens, and trusted networks.
+    Admin status is checked separately — HA's requires_auth only proves the
+    caller is logged in, not that they may reconfigure the instance.
     """
 
     url = "/api/haca_mcp"
@@ -2001,11 +2062,8 @@ class HacaMcpView(HomeAssistantView):
 
     async def post(self, request: web.Request) -> web.Response:
         """Reçoit et traite les messages JSON-RPC 2.0."""
-        user = request.get("hass_user")
-        _LOGGER.debug(
-            "[HACA MCP] POST — IP=%s user=%s",
-            request.remote, user.id if user else "?",
-        )
+        user_id = _require_admin(request)
+        _LOGGER.debug("[HACA MCP] POST — IP=%s user=%s", request.remote, user_id)
 
         try:
             body = await request.json()
@@ -2025,7 +2083,7 @@ class HacaMcpView(HomeAssistantView):
             _LOGGER.debug("[HACA MCP] Batch request — %d messages", len(body))
             responses = []
             for msg in body:
-                resp = await _handle_jsonrpc(self._hass, msg)
+                resp = await _handle_jsonrpc(self._hass, msg, user_id)
                 if resp:
                     responses.append(resp)
             return web.Response(
@@ -2035,8 +2093,8 @@ class HacaMcpView(HomeAssistantView):
 
         # Single request
         method = body.get("method", "?")
-        _LOGGER.debug("[HACA MCP] method=%s user=%s", method, user.id if user else "?")
-        result = await _handle_jsonrpc(self._hass, body)
+        _LOGGER.debug("[HACA MCP] method=%s user=%s", method, user_id)
+        result = await _handle_jsonrpc(self._hass, body, user_id)
         if not result:
             return web.Response(status=204)
 
@@ -2047,6 +2105,7 @@ class HacaMcpView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         """SSE endpoint — keepalive pour clients MCP compatibles SSE."""
+        _require_admin(request)
         response = web.StreamResponse(
             headers={
                 "Content-Type": "text/event-stream",
@@ -2077,17 +2136,24 @@ class HacaMcpView(HomeAssistantView):
 
 
 class HacaMcpInfoView(HomeAssistantView):
-    """Vue d'information publique — pas d'auth requise."""
+    """Vue d'information — réservée aux administrateurs.
+
+    Cet endpoint annonce le score de santé, le nombre d'issues et la liste
+    nominative des 71 outils. Publié sans authentification, il confirmait à
+    n'importe qui que HACA tourne sur l'instance et fuitait l'état de l'audit.
+    Le serveur MCP lui-même étant admin-only, sa fiche de découverte l'est aussi.
+    """
 
     url = "/api/haca_mcp/info"
     name = "api:haca_mcp_info"
-    requires_auth = False
+    requires_auth = True
     cors_allowed = True
 
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
 
     async def get(self, request: web.Request) -> web.Response:
+        _require_admin(request)
         cdata = _get_coordinator_data(self._hass)
         info = {
             "name": MCP_SERVER_NAME,
@@ -2316,13 +2382,13 @@ async def _safe_write_and_reload(
     )
     await hass.async_add_executor_job(_atomic_write, path, new_yaml)
     try:
-        await hass.services.async_call(reload_domain, "reload", blocking=True)
+        await hass.services.async_call(reload_domain, "reload", blocking=True, context=_caller_context())
     except Exception as reload_exc:
         # Rollback
         if original_content:
             await hass.async_add_executor_job(_atomic_write, path, original_content)
             try:
-                await hass.services.async_call(reload_domain, "reload", blocking=True)
+                await hass.services.async_call(reload_domain, "reload", blocking=True, context=_caller_context())
             except Exception:
                 pass  # Best-effort rollback reload
         raise RuntimeError(
@@ -2525,7 +2591,7 @@ async def _tool_ha_backup_create(hass: HomeAssistant, params: dict) -> dict:
     # ── Strategy 2: backup.create service (HA pre-2025.1, Core/Container) ──
     if hass.services.has_service("backup", "create"):
         try:
-            await hass.services.async_call("backup", "create", blocking=False)
+            await hass.services.async_call("backup", "create", blocking=False, context=_caller_context())
             return {
                 "started": True,
                 "completed": False,
@@ -3439,6 +3505,7 @@ async def _tool_ha_config_set_helper(hass: HomeAssistant, params: dict) -> dict:
                 "create",
                 service_data,
                 blocking=True,
+                context=_caller_context(),
             )
 
         return {
@@ -3492,6 +3559,7 @@ async def _tool_ha_config_remove_helper(hass: HomeAssistant, params: dict) -> di
                 "remove",
                 {"entity_id": entity_id},
                 blocking=True,
+                context=_caller_context(),
             )
             return {
                 "success": True,
@@ -3757,7 +3825,7 @@ async def _tool_ha_reload_core(hass: HomeAssistant, params: dict) -> dict:
         }
 
     try:
-        await hass.services.async_call(svc_domain, svc_name, blocking=True)
+        await hass.services.async_call(svc_domain, svc_name, blocking=True, context=_caller_context())
         return {
             "success": True,
             "domain": domain,
@@ -4113,7 +4181,7 @@ async def _tool_ha_create_blueprint(hass: HomeAssistant, params: dict) -> dict:
 
     # ── Step 5: reload blueprints ─────────────────────────────────────────────
     try:
-        await hass.services.async_call("blueprint", "reload", blocking=True)
+        await hass.services.async_call("blueprint", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass  # non-fatal — blueprints reload on next HA restart anyway
 
@@ -4246,7 +4314,7 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write {scripts_path}: {exc}"}
 
     try:
-        await hass.services.async_call("script", "reload", blocking=True)
+        await hass.services.async_call("script", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4289,7 +4357,7 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write {scripts_path}: {exc}"}
 
     try:
-        await hass.services.async_call("script", "reload", blocking=True)
+        await hass.services.async_call("script", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4404,7 +4472,7 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
     try:
-        await hass.services.async_call("scene", "reload", blocking=True)
+        await hass.services.async_call("scene", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4457,7 +4525,7 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
     try:
-        await hass.services.async_call("scene", "reload", blocking=True)
+        await hass.services.async_call("scene", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4504,7 +4572,7 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
     try:
-        await hass.services.async_call("scene", "reload", blocking=True)
+        await hass.services.async_call("scene", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4656,7 +4724,7 @@ async def _tool_ha_update_blueprint(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write blueprint: {exc}"}
 
     try:
-        await hass.services.async_call("blueprint", "reload", blocking=True)
+        await hass.services.async_call("blueprint", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4694,7 +4762,7 @@ async def _tool_ha_remove_blueprint(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to delete blueprint: {exc}"}
 
     try:
-        await hass.services.async_call("blueprint", "reload", blocking=True)
+        await hass.services.async_call("blueprint", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -4871,7 +4939,7 @@ async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Failed to write blueprint: {exc}"}
 
     try:
-        await hass.services.async_call("blueprint", "reload", blocking=True)
+        await hass.services.async_call("blueprint", "reload", blocking=True, context=_caller_context())
     except Exception:
         pass
 
@@ -5240,7 +5308,7 @@ async def _tool_ha_update_helper(hass: HomeAssistant, params: dict) -> dict:
     if svc_data:
         svc_data["entity_id"] = entity_id
         try:
-            await hass.services.async_call(domain, "reload", blocking=True)
+            await hass.services.async_call(domain, "reload", blocking=True, context=_caller_context())
             updated_fields.extend(list(svc_data.keys()) - {"entity_id"})
         except Exception:
             pass
@@ -5811,3 +5879,46 @@ TOOL_HANDLERS.update({
     "ha_list_issue_catalog": _tool_list_issue_catalog,
     "ha_fix_batch":       _tool_fix_batch,
 })
+
+
+# ─── Read / write classification ──────────────────────────────────────────
+# Every tool is either read-only or able to change the instance (files,
+# registries, service calls). The LLM API (llm_api.py) uses this to hand a
+# conversation agent — a voice satellite, an Assist pipeline, an Alexa or
+# Google integration — a read-only tool set unless the owner explicitly
+# opted in AND the person speaking is an administrator.
+#
+# The names live here rather than in each of the 60 tool literals so the
+# classification can be read, reviewed and tested in one place; the `access`
+# field is then stamped onto every entry below.
+
+MCP_WRITE_TOOLS: frozenset[str] = frozenset({
+    # HACA fixes — rewrite automation YAML
+    "haca_apply_fix", "haca_fix_batch", "ha_apply_fix", "ha_fix_batch",
+    # Arbitrary service calls (lock.unlock, alarm_control_panel.disarm…)
+    "ha_call_service",
+    # Automations / scripts / scenes / blueprints
+    "ha_create_automation", "ha_update_automation", "ha_remove_automation",
+    "ha_create_script", "ha_update_script", "ha_remove_script",
+    "ha_create_scene", "ha_update_scene", "ha_remove_scene",
+    "ha_create_blueprint", "ha_update_blueprint", "ha_remove_blueprint",
+    "ha_import_blueprint",
+    # Dashboards
+    "ha_add_lovelace_card", "ha_update_lovelace_card", "ha_remove_lovelace_card",
+    # Registries and helpers
+    "ha_rename_entity", "ha_remove_entity", "ha_enable_entity",
+    "ha_config_set_helper", "ha_config_remove_helper", "ha_update_helper",
+    "ha_config_set_area", "ha_manage_entity_labels", "ha_create_label",
+    # Raw configuration files, reloads and backups
+    "ha_update_config_file", "ha_reload_core", "ha_backup_create",
+})
+
+
+def tool_access(name: str) -> str:
+    """Return "write" if the named tool can change the instance, else "read"."""
+    return "write" if name in MCP_WRITE_TOOLS else "read"
+
+
+for _tool_def in MCP_TOOLS:
+    _tool_def["access"] = tool_access(_tool_def["name"])
+del _tool_def

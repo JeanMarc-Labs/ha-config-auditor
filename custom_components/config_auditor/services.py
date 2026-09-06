@@ -12,6 +12,7 @@ from __future__ import annotations
 from .translation_utils import TranslationHelper
 
 import asyncio
+import functools
 import logging
 from typing import Any
 
@@ -121,8 +122,48 @@ def _ts(hass, section: str, key: str, **kwargs) -> str:
         return val
 
 
+def _admin_only(hass: HomeAssistant, handler):
+    """Wrap a service handler so only administrators can invoke it.
+
+    ``hass.services.async_register`` accepts any logged-in user, which left the
+    26 HACA services — including the ones that rewrite configuration files —
+    callable by every household account. Home Assistant reserves that kind of
+    operation for admins.
+
+    HA ships ``async_register_admin_service`` for this, but it takes no
+    ``supports_response`` argument and discards the handler's return value;
+    most HACA services answer the panel with a dict, so the check is done here
+    instead, with the same semantics as HA's own admin handler.
+
+    Calls carrying no ``user_id`` — automations, scripts, HACA's internal
+    calls — pass through: an automation already belongs to the admin who wrote
+    it, and that is the behaviour HA itself applies.
+    """
+
+    @functools.wraps(handler)
+    async def _guarded(call: ServiceCall):
+        user_id = call.context.user_id
+        if user_id is not None:
+            user = await hass.auth.async_get_user(user_id)
+            if user is None or not user.is_admin:
+                _LOGGER.warning(
+                    "Refus de %s.%s — utilisateur %s n'est pas administrateur",
+                    call.domain, call.service, user_id,
+                )
+                raise Unauthorized(context=call.context)
+        return await handler(call)
+
+    return _guarded
+
+
 async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Setup all services."""
+
+    def _register_admin(service: str, handler, **kwargs) -> None:
+        """Register one admin-only HACA service (see :func:`_admin_only`)."""
+        hass.services.async_register(
+            DOMAIN, service, _admin_only(hass, handler), **kwargs
+        )
     
     _scan_lock = asyncio.Lock()
 
@@ -328,16 +369,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         async def handle_get_report_content(call: ServiceCall) -> dict:
             """Handle get_report_content service."""
-            # Reports mirror the panel, which is admin-only. Plain
-            # async_register leaves a service callable by any logged-in user,
-            # so the check lives here (user_id is None for automations and
-            # for calls the system makes on its own behalf).
-            user_id = call.context.user_id
-            if user_id is not None:
-                user = await hass.auth.async_get_user(user_id)
-                if user is None or not user.is_admin:
-                    raise Unauthorized(context=call.context)
-
+            # The admin check that used to live here is now applied to every
+            # HACA service by _admin_only() at registration time.
             filename = call.data.get("filename")
             data = hass.data[DOMAIN][entry.entry_id]
             report_gen = data["report_generator"]
@@ -350,13 +383,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         
         async def handle_delete_report(call: ServiceCall) -> dict:
             """Handle delete_report service."""
-            # Admin-only, same reasoning as handle_get_report_content.
-            user_id = call.context.user_id
-            if user_id is not None:
-                user = await hass.auth.async_get_user(user_id)
-                if user is None or not user.is_admin:
-                    raise Unauthorized(context=call.context)
-
+            # Admin-only via _admin_only(), like every other HACA service.
             session_id = call.data.get("session_id")
             data = hass.data[DOMAIN][entry.entry_id]
             report_gen = data["report_generator"]
@@ -603,39 +630,39 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
 
     # Register services
-    hass.services.async_register(DOMAIN, SERVICE_SCAN_ALL, handle_scan_all, schema=vol.Schema({}))
-    hass.services.async_register(DOMAIN, SERVICE_SCAN_AUTOMATIONS, handle_scan_automations, schema=vol.Schema({}))
-    hass.services.async_register(DOMAIN, SERVICE_SCAN_ENTITIES, handle_scan_entities, schema=vol.Schema({}))
+    _register_admin(SERVICE_SCAN_ALL, handle_scan_all, schema=vol.Schema({}))
+    _register_admin(SERVICE_SCAN_AUTOMATIONS, handle_scan_automations, schema=vol.Schema({}))
+    _register_admin(SERVICE_SCAN_ENTITIES, handle_scan_entities, schema=vol.Schema({}))
     
     if MODULE_4_COMPLIANCE_REPORT:
-        hass.services.async_register(DOMAIN, SERVICE_GENERATE_REPORT, handle_generate_report, schema=vol.Schema({}))
-        hass.services.async_register(
-            DOMAIN, SERVICE_LIST_REPORTS, handle_list_reports,
+        _register_admin(SERVICE_GENERATE_REPORT, handle_generate_report, schema=vol.Schema({}))
+        _register_admin(
+            SERVICE_LIST_REPORTS, handle_list_reports,
             schema=vol.Schema({}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_GET_REPORT_CONTENT, handle_get_report_content,
+        _register_admin(
+            SERVICE_GET_REPORT_CONTENT, handle_get_report_content,
             schema=vol.Schema({vol.Required("filename"): cv.string}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, "delete_report", handle_delete_report,
+        _register_admin(
+            "delete_report", handle_delete_report,
             schema=vol.Schema({vol.Required("session_id"): cv.string}),
             supports_response=SupportsResponse.ONLY
         )
     
     if MODULE_5_REFACTORING_ASSISTANT:
-        hass.services.async_register(
-            DOMAIN, SERVICE_PREVIEW_DEVICE_ID, handle_preview_device_id,
+        _register_admin(
+            SERVICE_PREVIEW_DEVICE_ID, handle_preview_device_id,
             schema=vol.Schema({
                 vol.Required("automation_id"): cv.string,
                 vol.Optional("location"): vol.Any(cv.string, None),
             }),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_FIX_DEVICE_ID, handle_fix_device_id,
+        _register_admin(
+            SERVICE_FIX_DEVICE_ID, handle_fix_device_id,
             schema=vol.Schema({
                 vol.Required("automation_id"): cv.string,
                 vol.Optional("location"): vol.Any(cv.string, None),
@@ -643,16 +670,16 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             }),
             supports_response=SupportsResponse.OPTIONAL
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_PREVIEW_MODE, handle_preview_mode,
+        _register_admin(
+            SERVICE_PREVIEW_MODE, handle_preview_mode,
             schema=vol.Schema({
                 vol.Required("automation_id"): cv.string,
                 vol.Required("mode"): vol.In(["single", "restart", "queued", "parallel"])
             }),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_FIX_MODE, handle_fix_mode,
+        _register_admin(
+            SERVICE_FIX_MODE, handle_fix_mode,
             schema=vol.Schema({
                 vol.Required("automation_id"): cv.string,
                 vol.Required("mode"): vol.In(["single", "restart", "queued", "parallel"]),
@@ -660,64 +687,64 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             }),
             supports_response=SupportsResponse.OPTIONAL
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_PREVIEW_TEMPLATE, handle_preview_template,
+        _register_admin(
+            SERVICE_PREVIEW_TEMPLATE, handle_preview_template,
             schema=vol.Schema({vol.Required("automation_id"): cv.string}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, "suggest_description_ai", handle_suggest_description_ai,
+        _register_admin(
+            "suggest_description_ai", handle_suggest_description_ai,
             schema=vol.Schema({vol.Required("entity_id"): cv.string}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, "fix_description", handle_fix_description,
+        _register_admin(
+            "fix_description", handle_fix_description,
             schema=vol.Schema({
                 vol.Required("entity_id"): cv.string,
                 vol.Required("description"): cv.string
             }),
             supports_response=SupportsResponse.OPTIONAL
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_FIX_TEMPLATE, handle_fix_template,
+        _register_admin(
+            SERVICE_FIX_TEMPLATE, handle_fix_template,
             schema=vol.Schema({
                 vol.Required("automation_id"): cv.string,
                 vol.Optional("dry_run", default=False): cv.boolean
             }),
             supports_response=SupportsResponse.OPTIONAL
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_LIST_BACKUPS, handle_list_backups,
+        _register_admin(
+            SERVICE_LIST_BACKUPS, handle_list_backups,
             schema=vol.Schema({}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, "create_backup", handle_create_backup,
+        _register_admin(
+            "create_backup", handle_create_backup,
             schema=vol.Schema({}),
             supports_response=SupportsResponse.OPTIONAL
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_RESTORE_BACKUP, handle_restore_backup,
+        _register_admin(
+            SERVICE_RESTORE_BACKUP, handle_restore_backup,
             schema=vol.Schema({vol.Required("backup_path"): cv.string}),
             supports_response=SupportsResponse.OPTIONAL
         )
-        hass.services.async_register(
-            DOMAIN, "delete_backup", handle_delete_backup,
+        _register_admin(
+            "delete_backup", handle_delete_backup,
             schema=vol.Schema({vol.Required("backup_path"): cv.string}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_PURGE_GHOSTS, handle_purge_ghosts,
+        _register_admin(
+            SERVICE_PURGE_GHOSTS, handle_purge_ghosts,
             schema=vol.Schema({vol.Optional("dry_run", default=True): cv.boolean}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, SERVICE_FUZZY_SUGGESTIONS, handle_fuzzy_suggestions,
+        _register_admin(
+            SERVICE_FUZZY_SUGGESTIONS, handle_fuzzy_suggestions,
             schema=vol.Schema({vol.Required("entity_id"): cv.string}),
             supports_response=SupportsResponse.ONLY
         )
-        hass.services.async_register(
-            DOMAIN, "apply_zombie_fix", handle_apply_zombie_fix,
+        _register_admin(
+            "apply_zombie_fix", handle_apply_zombie_fix,
             schema=vol.Schema({
                 vol.Required("automation_id"): cv.string,
                 vol.Required("old_entity_id"): cv.string,
@@ -732,8 +759,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         explanation = await explain_issue_ai(hass, issue_data)
         return {"explanation": explanation}
 
-    hass.services.async_register(
-        DOMAIN, "explain_issue_ai", handle_explain_issue,
+    _register_admin(
+        "explain_issue_ai", handle_explain_issue,
         schema=vol.Schema({vol.Required("issue"): dict}),
         supports_response=SupportsResponse.ONLY
     )
@@ -744,8 +771,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         result = await analyze_complexity_ai(hass, row)
         return result
 
-    hass.services.async_register(
-        DOMAIN, "analyze_complexity_ai", handle_analyze_complexity,
+    _register_admin(
+        "analyze_complexity_ai", handle_analyze_complexity,
         schema=vol.Schema({vol.Required("row"): dict}),
         supports_response=SupportsResponse.ONLY
     )
@@ -759,8 +786,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         result = await optimizer.optimize(entity_id, issues, complexity_scores)
         return result
 
-    hass.services.async_register(
-        DOMAIN, "optimize_automation", handle_optimize_automation,
+    _register_admin(
+        "optimize_automation", handle_optimize_automation,
         schema=vol.Schema({
             vol.Required("entity_id"):          cv.string,
             vol.Optional("issues",             default=[]): list,
@@ -777,8 +804,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         result    = await optimizer.apply(entity_id, new_yaml)
         return result
 
-    hass.services.async_register(
-        DOMAIN, "apply_optimization", handle_apply_optimization,
+    _register_admin(
+        "apply_optimization", handle_apply_optimization,
         schema=vol.Schema({
             vol.Required("entity_id"): cv.string,
             vol.Required("new_yaml"):  cv.string,

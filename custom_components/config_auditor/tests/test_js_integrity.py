@@ -212,3 +212,73 @@ class TestBuildActionPromptCoverage:
         ai_explain = (SRC / "ai_explain.js").read_text()
         assert "return null;" in ai_explain, \
             "_buildActionPrompt must return null for informational issues (fallback to explainWithAI)"
+
+
+# ── HTML escaping in the panel ───────────────────────────────────────────────
+
+class TestHtmlEscaping:
+    """Audit data must never reach the panel's HTML unescaped.
+
+    The panel runs in the HA frontend origin, where the auth token lives. Issue
+    fields are not all authored by the admin: an automation alias, a
+    friendly_name or a device name can come from MQTT/Bluetooth/mDNS discovery,
+    so a malicious device name would otherwise execute in that origin.
+
+    This test flags any `${...}` interpolation that (a) sits on a line building
+    HTML and (b) reads one of the fields below without an escaping wrapper.
+    """
+
+    FIELDS = ("entity_id", "message", "alias", "path", "name", "location", "device_id")
+
+    # Wrappers that make an interpolation safe.
+    SAFE_WRAPPERS = (
+        "escapeHtml(", "esc(", "escM(", "encodeURIComponent(", "JSON.stringify(",
+    )
+
+    # Reviewed exceptions: the expression reads a field but its *value* is a
+    # fixed literal, so nothing user-controlled reaches the HTML.
+    ALLOWED = {
+        # Renders ' checked' or '' — the entity_id only feeds a Set lookup.
+        "this._orphanSel.has(o.entity_id) ? ' checked' : ''",
+    }
+
+    INTERP = re.compile(r"\$\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}")
+    STRING_LITERAL = re.compile(r"'[^']*'|\"[^\"]*\"")
+    # A line is "HTML" if it opens/closes a tag or assigns to an HTML sink.
+    HTML_LINE = re.compile(r"<\s*/?[a-zA-Z]|innerHTML|_updateContent|createModal")
+
+    def _offenders(self, path: Path) -> list[str]:
+        field_re = re.compile(r"\b(" + "|".join(self.FIELDS) + r")\b")
+        found = []
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            if not self.HTML_LINE.search(line):
+                continue
+            for match in self.INTERP.finditer(line):
+                expr = match.group(1).strip()
+                if expr in self.ALLOWED:
+                    continue
+                # String literals ('name', 'tables.path'…) are not data.
+                if not field_re.search(self.STRING_LITERAL.sub("", expr)):
+                    continue
+                if any(w in expr for w in self.SAFE_WRAPPERS):
+                    continue
+                found.append(f"{path.name}:{lineno}: ${{{expr}}}")
+        return found
+
+    def test_no_unescaped_field_in_html(self):
+        offenders = []
+        for f in sorted(SRC.glob("*.js")):
+            offenders += self._offenders(f)
+        assert not offenders, (
+            f"{len(offenders)} unescaped interpolation(s) of audit data into HTML — "
+            "wrap them in this.escapeHtml(...):\n" + "\n".join(offenders)
+        )
+
+    def test_escapehtml_handles_non_strings(self):
+        """escapeHtml must not blow up on numbers/null — it used to call
+        .replace() on whatever it was given."""
+        utils = (SRC / "utils.js").read_text(encoding="utf-8")
+        assert "String(text)" in utils, (
+            "escapeHtml no longer coerces its argument; a numeric issue field "
+            "would throw and blank the modal it was rendering."
+        )

@@ -73,7 +73,7 @@
           <span style="background:${levelBg};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;">${levelText}</span>
         </td>
         <td style="padding:6px 8px;text-align:center;">
-          <button class="cplx-ai-btn" data-entity="${row.entity_id}"
+          <button class="cplx-ai-btn" data-entity="${this.escapeHtml(row.entity_id)}"
             style="background:var(--accent-color,#03a9f4);color:white;padding:4px 10px;font-size:11px;border-radius:8px;border:none;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;">
             ${_icon("robot", 13)} ${this.t('misc.ia_btn')}
           </button>
@@ -189,7 +189,7 @@
           <span style="background:${levelBg};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;">${levelText}</span>
         </td>
         <td style="padding:6px 8px;text-align:center;">
-          <button class="cplx-ai-btn" data-entity="${row.entity_id}"
+          <button class="cplx-ai-btn" data-entity="${this.escapeHtml(row.entity_id)}"
             style="background:var(--accent-color,#03a9f4);color:white;padding:4px 10px;font-size:11px;border-radius:8px;border:none;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;">
             ${_icon("robot", 13)} ${this.t('misc.ia_btn')}
           </button>

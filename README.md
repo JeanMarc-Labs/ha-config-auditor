@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.7.7-orange)
+![Version](https://img.shields.io/badge/version-1.8.0-orange)
 ![HA](https://img.shields.io/badge/Home%20Assistant-2024.1+-blue)
 ![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -116,7 +116,14 @@ HACA registers itself as a **native LLM API** in Home Assistant. Configure it on
 
 > Settings → Voice Assistants → [your agent] → LLM API → **HACA**
 
-After that, Mistral, Gemini, Llama or any HA conversation agent can use all 65 HACA tools natively. If the preferred agent fails (quota, timeout), the next available agent is tried automatically.
+After that, Mistral, Gemini, Llama or any HA conversation agent can use the HACA tools natively. If the preferred agent fails (quota, timeout), the next available agent is tried automatically.
+
+**Read-only by default.** Attaching the HACA API to an agent gives it to everything that talks to that agent — an Assist satellite, a smart speaker, an Alexa or Google integration. So the agent only gets the read tools (diagnose, explain, suggest). The tools that write — configuration files, service calls such as `lock.unlock` — are added only when **both** of these hold:
+
+- **Configuration → AI agents → Allow write tools** is enabled (off by default), and
+- the person the conversation belongs to is a Home Assistant administrator.
+
+A voice satellite with no authenticated user is never an administrator. When write tools are withheld, the agent simply does not have them and says so, rather than failing mid-operation.
 
 ### AI Chat
 
@@ -150,6 +157,8 @@ Authorization: Bearer <your-haca-token>
 ```
 
 **Tool categories:** Audit HACA · Discovery · Control · Automations & Scripts · Blueprints · Scenes · Dashboards · Monitoring · Helpers & Areas · Config files · Security & Validation
+
+**The MCP endpoint requires an administrator token.** The tools write configuration files and can call any service, which Home Assistant reserves for admins; a long-lived token issued by a non-admin account gets `403`. Every service call made through MCP is attributed to the token's owner in the Home Assistant logbook. `/api/haca_mcp/info` is admin-only too.
 
 Supported agents: Claude Code · Claude Desktop · Cursor · VS Code/Copilot · Windsurf · Cline · Antigravity · Continue.dev · Open WebUI · n8n · HTTP/REST · Gemini CLI
 

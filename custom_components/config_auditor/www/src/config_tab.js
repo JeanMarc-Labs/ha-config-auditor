@@ -302,6 +302,19 @@ function renderConfigTab(options, lang, t) {
     '</div>' +
     '</div>' +
 
+    // ── Section Agents IA ──
+    '<div class="cfg-section" style="margin-top:4px;">' +
+    '<div class="cfg-section-title">' + _icon("robot", 18) + t('config.llm_section_title') + '</div>' +
+    '<div class="cfg-row-hint" style="margin-bottom:8px;">' + t('config.llm_section_hint') + '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.llm_write_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.llm_write_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-llm-write"' + (options.llm_write_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '</div>' +
+
     // ── Section Diagnostics & Logs ──
     '<div class="cfg-section" style="margin-top:4px;">' +
     '<div class="cfg-section-title">' + _icon("bug", 18) + t('config.diagnostics_logs') + '</div>' +
@@ -456,6 +469,7 @@ var DEFAULT_OPTIONS = {
   notify_medium_severity: false,
   notify_low_severity: false,
   noisy_scan_exclude_patterns: [],
+  llm_write_enabled: false,
 };
 
 // ─── Collecte des valeurs ─────────────────────────────────────────────────
@@ -490,6 +504,7 @@ function collectFormOptions(root) {
     notify_medium_severity: bool('#cfg-notify-medium', false),
     notify_low_severity: bool('#cfg-notify-low', false),
     debug_mode: bool('#cfg-debug-toggle', false),
+    llm_write_enabled: bool('#cfg-llm-write', false),
     noisy_scan_exclude_patterns: (function () {
       var el = q('#cfg-noisy-exclude-patterns');
       if (!el) return [];

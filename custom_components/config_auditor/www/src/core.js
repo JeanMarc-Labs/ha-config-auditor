@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   if (customElements.get('haca-panel')) return; // already loaded, skip entirely
-  const HACA_VERSION = '1.7.7'; // build marker
+  const HACA_VERSION = '1.8.0'; // build marker
 
   // Dans l'iframe (embed_iframe:true), ha-icon n'est pas enregistré.
   // On copie la définition depuis le document parent où HA l'a déjà défini.
@@ -2774,7 +2774,7 @@
         this.renderBackups(backups);
 
       } catch (error) {
-        container.innerHTML = `<div class="empty-state">❌ ${this.t('notifications.error')}: ${error.message}</div>`;
+        container.innerHTML = `<div class="empty-state">❌ ${this.t('notifications.error')}: ${this.escapeHtml(error.message)}</div>`;
       }
     }
 
@@ -2816,10 +2816,10 @@
                 <td><span style="background:var(--secondary-background-color);padding:4px 8px;border-radius:6px;font-size:12px;white-space:nowrap;">${Math.round(b.size / 1024)} KB</span></td>
                 <td>
                   <div style="display:flex;gap:8px;">
-                    <button class="restore-btn" data-path="${b.path}" style="background:var(--warning-color,#ff9800);color:black;">
+                    <button class="restore-btn" data-path="${this.escapeHtml(b.path)}" style="background:var(--warning-color,#ff9800);color:black;">
                       ${_icon("backup-restore")} ${this.t('actions.restore')}
                     </button>
-                    <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" style="background:var(--error-color,#ef5350);color:white;">
+                    <button class="delete-backup-btn" data-path="${this.escapeHtml(b.path)}" data-name="${this.escapeHtml(b.name)}" style="background:var(--error-color,#ef5350);color:white;">
                       ${_icon("delete-outline")}
                     </button>
                   </div>
@@ -2838,10 +2838,10 @@
             </div>
             <div class="m-card-meta">📅 ${new Date(b.created).toLocaleString()} · ${Math.round(b.size / 1024)} KB</div>
             <div class="m-card-btns">
-              <button class="restore-btn" data-path="${b.path}" style="background:var(--warning-color,#ff9800);color:black;">
+              <button class="restore-btn" data-path="${this.escapeHtml(b.path)}" style="background:var(--warning-color,#ff9800);color:black;">
                 ${_icon("backup-restore")} ${this.t('actions.restore')}
               </button>
-              <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" style="background:var(--error-color,#ef5350);color:white;">
+              <button class="delete-backup-btn" data-path="${this.escapeHtml(b.path)}" data-name="${this.escapeHtml(b.name)}" style="background:var(--error-color,#ef5350);color:white;">
                 ${_icon("delete-outline")} ${this.t('actions.delete')}
               </button>
             </div>
@@ -3194,12 +3194,12 @@
               window._hacaAgentSwitchContainer = tabsContainer;
             }
           } catch (mcpErr) {
-            mcpContainer.innerHTML = `<div style="padding:12px;color:var(--secondary-text-color);font-size:13px;">MCP/Agent: ${mcpErr.message}</div>`;
+            mcpContainer.innerHTML = `<div style="padding:12px;color:var(--secondary-text-color);font-size:13px;">MCP/Agent: ${this.escapeHtml(mcpErr.message)}</div>`;
           }
         }
       } catch (err) {
         el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--error-color);">
-        ❌ Erreur de chargement : ${err.message}
+        ❌ Erreur de chargement : ${this.escapeHtml(err.message)}
       </div>`;
       }
     }
@@ -3226,7 +3226,7 @@
         }
         this._renderCompliancePage(el, PAG_ID);
       } catch (err) {
-        el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--error-color);">❌ ${err.message}</div>`;
+        el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--error-color);">❌ ${this.escapeHtml(err.message)}</div>`;
       }
     }
 

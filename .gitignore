@@ -7,3 +7,4 @@ __pycache__/
 
 # Working notes, not shipped to users
 SESSION_HANDOFF.md
+AUDIT_PLAN.md
