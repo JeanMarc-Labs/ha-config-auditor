@@ -19,7 +19,7 @@
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;">
         <div class="loader"></div>
         <div style="margin-top:20px;font-size:17px;font-weight:500;">🤖 ${this.t('ai.analyzing')}</div>
-        <div style="margin-top:8px;font-size:13px;color:var(--secondary-text-color);">${alias}</div>
+        <div style="margin-top:8px;font-size:13px;color:var(--secondary-text-color);">${this.escapeHtml(alias)}</div>
       </div>
     `);
 
@@ -43,7 +43,7 @@
             <div style="display:flex;align-items:center;gap:12px;">
               ${_icon("robot", 32)}
               <div>
-                <div style="font-size:16px;font-weight:700;">${alias}</div>
+                <div style="font-size:16px;font-weight:700;">${this.escapeHtml(alias)}</div>
                 <div style="font-size:12px;color:var(--secondary-text-color);">${fieldLabel} — ${this.t('misc.ai_suggestion')}</div>
               </div>
             </div>
@@ -158,7 +158,7 @@
         </div>
       `);
     } catch (error) {
-      card._updateContent(`<div style="padding: 24px; color: var(--error-color);">❌ ${error.message}</div>`);
+      card._updateContent(`<div style="padding: 24px; color: var(--error-color);">❌ ${this.escapeHtml(error.message)}</div>`);
       setTimeout(() => card.closest('.haca-modal')?.remove(), 4000);
     }
   }
@@ -266,7 +266,7 @@
           <!-- Footer -->
           <div style="padding:16px 24px;border-top:1px solid var(--divider-color);display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:10px;background:var(--secondary-background-color);flex-shrink:0;">
             ${this.getHAEditUrl(row.entity_id) ? `
-              <a href="${this.getHAEditUrl(row.entity_id)}" target="_blank" style="text-decoration:none;">
+              <a href="${this.escapeHtml(this.getHAEditUrl(row.entity_id))}" target="_blank" style="text-decoration:none;">
                 <button style="background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);padding:10px 22px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;display:flex;align-items:center;gap:8px;">
                   ${_icon("pencil")} ${this.t('zombie.edit_manual')}
                 </button>

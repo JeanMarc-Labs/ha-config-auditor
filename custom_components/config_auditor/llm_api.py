@@ -1,4 +1,4 @@
-"""HACA LLM API — expose les 67 outils HACA à n'importe quel agent HA (Mistral, OpenAI…).
+"""HACA LLM API — expose les outils HACA à n'importe quel agent HA (Mistral, OpenAI…).
 
 Configuration utilisateur (une seule fois) :
   HA Settings → Voice Assistants → [votre agent] → LLM API → HACA
@@ -6,10 +6,20 @@ Configuration utilisateur (une seule fois) :
 Ensuite, chaque appel à async_converse sur cet agent injecte automatiquement
 les outils HACA. L'agent fait ses tool_calls nativement, HA route vers
 HacaTool.async_call → TOOL_HANDLERS → exécution réelle.
+
+Lecture seule par défaut
+------------------------
+Attacher l'API HACA à un agent, c'est la donner à tout ce qui parle à cet
+agent : un satellite Assist, un haut-parleur, une intégration Alexa ou Google.
+Les outils qui écrivent (fichiers de configuration, appels de service) ne sont
+donc exposés que si l'option ``llm_write_enabled`` est activée **et** que la
+personne à l'origine de la conversation est administratrice. Les outils de
+lecture — diagnostiquer, expliquer, suggérer — restent toujours disponibles.
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -25,6 +35,66 @@ _LOGGER = logging.getLogger(__name__)
 
 HACA_LLM_API_ID   = "haca"
 HACA_LLM_API_NAME = "HACA"
+
+# Option d'entrée qui débloque les outils d'écriture pour les agents LLM.
+CONF_LLM_WRITE_ENABLED = "llm_write_enabled"
+DEFAULT_LLM_WRITE_ENABLED = False
+
+# Délimiteurs du bloc de données dans le prompt système (voir _sanitize_for_prompt).
+_DATA_BLOCK_OPEN  = "<<<HACA_DATA"
+_DATA_BLOCK_CLOSE = "HACA_DATA>>>"
+
+# Tout ce qui n'est pas imprimable sur une ligne : sauts de ligne, tabulations,
+# caractères de contrôle. Un alias d'automation peut en contenir.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_for_prompt(value: Any, limit: int = 80) -> str:
+    """Aplatit une valeur pour l'insérer dans un bloc de données du prompt.
+
+    Un alias d'automation ou un ``friendly_name`` n'est pas forcément écrit par
+    l'administrateur : MQTT discovery, Bluetooth et mDNS créent des entités dont
+    le nom vient de l'appareil. Ce texte partait tel quel dans le prompt système
+    d'un agent capable d'appeler des services — soit une injection de prompt
+    indirecte aux conséquences physiques.
+
+    On retire donc les caractères de contrôle (qui permettent de simuler une
+    nouvelle section du prompt), on neutralise les délimiteurs du bloc, et on
+    tronque court.
+    """
+    text = _CONTROL_CHARS.sub(" ", str(value or ""))
+    text = text.replace(_DATA_BLOCK_OPEN, "").replace(_DATA_BLOCK_CLOSE, "")
+    text = " ".join(text.split())
+    return text[:limit]
+
+
+async def _llm_write_allowed(
+    hass: HomeAssistant, llm_context: llm.LLMContext
+) -> bool:
+    """Les outils d'écriture sont-ils autorisés pour cette conversation ?
+
+    Deux conditions cumulatives :
+      1. l'option ``llm_write_enabled`` est activée sur l'entrée HACA ;
+      2. la conversation est rattachée à un utilisateur administrateur.
+
+    Une conversation sans ``user_id`` — satellite vocal, appel système, la
+    plupart des passerelles Alexa/Google — n'est jamais administrateur.
+    """
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        return False
+    if not entries[0].options.get(CONF_LLM_WRITE_ENABLED, DEFAULT_LLM_WRITE_ENABLED):
+        return False
+
+    context = getattr(llm_context, "context", None)
+    user_id = getattr(context, "user_id", None)
+    if not user_id:
+        return False
+    try:
+        user = await hass.auth.async_get_user(user_id)
+    except Exception:       # pragma: no cover — auth store unavailable
+        return False
+    return bool(user and user.is_admin)
 
 
 # ─── JSON Schema → voluptuous ──────────────────────────────────────────────────
@@ -81,6 +151,10 @@ class HacaTool(llm.Tool):
         self.name        = tool_def["name"]
         self.description = tool_def.get("description", "")
         self.parameters  = _input_schema_to_vol(tool_def.get("inputSchema", {}))
+        # MCP_TOOLS entries carry "access"; fall back to the shared
+        # classification so a hand-built tool_def is judged the same way.
+        from .mcp_server import tool_access      # noqa: PLC0415
+        self.access      = tool_def.get("access") or tool_access(self.name)
 
     async def async_call(
         self,
@@ -90,6 +164,24 @@ class HacaTool(llm.Tool):
     ) -> JsonObjectType:
         """Exécute l'outil HACA via TOOL_HANDLERS."""
         from .mcp_server import TOOL_HANDLERS, json_safe
+
+        # Deuxième barrière : async_get_api_instance ne publie déjà pas les
+        # outils d'écriture dans ce cas, mais un agent peut rejouer un nom
+        # d'outil mémorisé d'un tour précédent, ou d'une autre conversation.
+        if self.access == "write" and not await _llm_write_allowed(hass, llm_context):
+            _LOGGER.warning(
+                "[HACA LLM] Refus de l'outil d'écriture %s — "
+                "llm_write_enabled désactivé ou appelant non administrateur",
+                self.name,
+            )
+            return {
+                "error": (
+                    f"Tool '{self.name}' writes to this Home Assistant instance and is "
+                    "not available: HACA exposes write tools only when the "
+                    "'llm_write_enabled' option is on and the person speaking is an "
+                    "administrator. Read-only tools remain available."
+                )
+            }
 
         handler = TOOL_HANDLERS.get(self.name)
         if not handler:
@@ -118,13 +210,25 @@ class HacaLLMAPI(llm.API):
     async def async_get_api_instance(
         self, llm_context: llm.LLMContext
     ) -> llm.APIInstance:
-        """Construit l'instance avec le contexte HA courant et les 67 outils."""
+        """Construit l'instance avec le contexte HA courant et les outils permis.
+
+        Les outils d'écriture ne sont pas seulement refusés à l'appel : ils ne
+        sont pas publiés du tout, pour que l'agent réponde « je n'ai pas cet
+        outil » plutôt que d'échouer au milieu d'une opération.
+        """
         from .mcp_server import MCP_TOOLS
 
         api_prompt = await self._build_api_prompt()
-        tools      = [HacaTool(t) for t in MCP_TOOLS]
+        allow_write = await _llm_write_allowed(self.hass, llm_context)
+        tools = [
+            HacaTool(t) for t in MCP_TOOLS
+            if allow_write or t.get("access") == "read"
+        ]
 
-        _LOGGER.debug("[HACA LLM] API instance: %d tools", len(tools))
+        _LOGGER.debug(
+            "[HACA LLM] API instance: %d tools (write %s)",
+            len(tools), "autorisée" if allow_write else "refusée",
+        )
         return llm.APIInstance(
             api=self,
             api_prompt=api_prompt,
@@ -165,9 +269,9 @@ class HacaLLMAPI(llm.API):
                 key=lambda i: sev_order.get(i.get("severity", "low"), 2)
             )[:5]
             top5_txt = "\n".join(
-                f"  - [{i.get('severity','?').upper()}] "
-                f"{i.get('alias') or i.get('entity_id','?')}: "
-                f"{(i.get('message') or '')[:120]}"
+                f"  - [{_sanitize_for_prompt(i.get('severity', '?'), 10).upper()}] "
+                f"{_sanitize_for_prompt(i.get('alias') or i.get('entity_id') or '?')}: "
+                f"{_sanitize_for_prompt(i.get('message'))}"
                 for i in top5
             ) or f"  {p('no_issues')}"
         except Exception:
@@ -182,7 +286,9 @@ class HacaLLMAPI(llm.API):
             f"{p('system_role')}\n"
             f"{p('health_score', score=score)}\n"
             f"{p('issues_detected', total=total_issues, auto=auto_count, scripts=script_count)}\n"
-            f"{p('top_issues')}\n{top5_txt}\n\n"
+            f"{p('top_issues')}\n"
+            f"{_DATA_BLOCK_OPEN}\n{top5_txt}\n{_DATA_BLOCK_CLOSE}\n"
+            f"{p('data_block_notice')}\n\n"
             f"{p('rules_title')}\n"
             f"- {p('rule_backup')}\n"
             f"- {p('rule_explain')}\n"

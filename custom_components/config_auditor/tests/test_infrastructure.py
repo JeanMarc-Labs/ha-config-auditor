@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import re
 import pytest
 import sys
 from pathlib import Path
@@ -22,18 +23,56 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestVersion:
-    def test_version_is_1_5_2(self):
-        from custom_components.config_auditor.const import VERSION
-        assert VERSION == "1.7.0", (
-            f"Expected VERSION='1.4.3', got '{VERSION}'. "
-            "Update tests when version changes."
-        )
+    """The version string lives in six places and they must not drift.
+
+    A bump touches manifest.json, const.py, core.js's HACA_VERSION and
+    panel.version in the 13 translation files. Missing one is silent: the
+    panel then reports a version that is not the one running. These checks
+    read the files directly so they hold without a Home Assistant install,
+    and they assert consistency rather than a literal, so they never need
+    updating on a bump.
+    """
+
+    BASE = Path(__file__).parent.parent
+
+    def _const_version(self) -> str:
+        src = (self.BASE / "const.py").read_text(encoding="utf-8")
+        match = re.search(r'^VERSION\s*=\s*"([^"]+)"', src, re.MULTILINE)
+        assert match, "const.py no longer defines VERSION"
+        return match.group(1)
 
     def test_version_string_format(self):
-        from custom_components.config_auditor.const import VERSION
-        parts = VERSION.split(".")
-        assert len(parts) == 3, f"VERSION must be semantic (X.Y.Z), got '{VERSION}'"
+        version = self._const_version()
+        parts = version.split(".")
+        assert len(parts) == 3, f"VERSION must be semantic (X.Y.Z), got {version!r}"
         assert all(p.isdigit() for p in parts)
+
+    def test_manifest_matches_const(self):
+        import json
+        manifest = json.loads((self.BASE / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["version"] == self._const_version(), (
+            f"manifest.json {manifest['version']!r} != const.py "
+            f"{self._const_version()!r}"
+        )
+
+    def test_panel_build_marker_matches_const(self):
+        src = (self.BASE / "www" / "src" / "core.js").read_text(encoding="utf-8")
+        match = re.search(r"HACA_VERSION\s*=\s*'([^']+)'", src)
+        assert match, "core.js no longer defines HACA_VERSION"
+        assert match.group(1) == self._const_version(), (
+            f"core.js HACA_VERSION {match.group(1)!r} != const.py "
+            f"{self._const_version()!r} — rebuild after fixing (www/build.sh)"
+        )
+
+    def test_translations_report_the_running_version(self):
+        import json
+        expected = "v" + self._const_version()
+        wrong = {
+            f.stem: json.loads(f.read_text(encoding="utf-8"))["panel"]["version"]
+            for f in sorted((self.BASE / "translations").glob("*.json"))
+            if json.loads(f.read_text(encoding="utf-8"))["panel"]["version"] != expected
+        }
+        assert not wrong, f"panel.version should be {expected!r}, got: {wrong}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -194,3 +233,56 @@ class TestManifestConsistency:
     def test_manifest_domain_is_config_auditor(self):
         manifest = self._load_manifest()
         assert manifest["domain"] == "config_auditor"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Service registration is admin-only
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestServicesAreAdminOnly:
+    """Plain hass.services.async_register accepts any logged-in user.
+
+    HACA's services rewrite configuration files (restore_backup, fix_device_id,
+    purge_ghosts…), which Home Assistant reserves for admins. Every one of them
+    must go through _register_admin(), which wraps the handler in _admin_only().
+    """
+
+    @staticmethod
+    def _source() -> str:
+        return (Path(__file__).parent.parent / "services.py").read_text(encoding="utf-8")
+
+    def test_admin_wrapper_exists(self):
+        src = self._source()
+        assert "def _admin_only(" in src, "services.py must define _admin_only()"
+        assert "raise Unauthorized(context=call.context)" in src, \
+            "_admin_only must refuse non-admins with Unauthorized"
+        assert "if user_id is not None:" in src, (
+            "calls with no user_id (automations, HACA's own internal calls) "
+            "must keep working — that is what HA's own admin handler does"
+        )
+
+    def test_no_service_registered_without_the_guard(self):
+        src = self._source()
+        raw = [
+            line.strip()
+            for line in src.split("\n")
+            if "hass.services.async_register(" in line
+        ]
+        # The only surviving call is the one inside _register_admin itself.
+        assert len(raw) == 1, (
+            "service(s) registered outside _register_admin(), so callable by any "
+            "logged-in user:\n" + "\n".join(raw)
+        )
+        helper = src[src.index("def _register_admin("):]
+        helper = helper[:helper.index("\n\n")]
+        assert "_admin_only(hass, handler)" in helper, \
+            "_register_admin no longer wraps the handler"
+
+    def test_every_service_goes_through_register_admin(self):
+        src = self._source()
+        registrations = src.count("_register_admin(")
+        # 1 definition + 1 call inside it + one per registered service.
+        assert registrations >= 20, (
+            f"only {registrations} _register_admin references — services were "
+            "probably registered some other way"
+        )

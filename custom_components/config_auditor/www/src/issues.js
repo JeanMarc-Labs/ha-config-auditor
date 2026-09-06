@@ -21,20 +21,24 @@
     const state = this.hass?.states?.[entityId];
     const itemId = state?.attributes?.id;
 
-    // Map entity types to their edit URLs
+    // Map entity types to their edit URLs. The id comes from a state
+    // attribute, so it is encoded here rather than at each of the ten call
+    // sites that drop the result straight into an href="" attribute.
+    const seg = encodeURIComponent(itemId ?? '');
+    const fallbackSeg = encodeURIComponent(entityIdParts[1] ?? '');
     if (entityType === 'automation' && itemId) {
-      return `/config/automation/edit/${itemId}`;
+      return `/config/automation/edit/${seg}`;
     } else if (entityType === 'script' && itemId) {
-      return `/config/script/edit/${itemId}`;
+      return `/config/script/edit/${seg}`;
     } else if (entityType === 'scene' && itemId) {
-      return `/config/scene/edit/${itemId}`;
+      return `/config/scene/edit/${seg}`;
     } else if (entityType === 'automation') {
       // Fallback: try to use entity_id without the prefix
-      return `/config/automation/edit/${entityIdParts[1]}`;
+      return `/config/automation/edit/${fallbackSeg}`;
     } else if (entityType === 'script') {
-      return `/config/script/edit/${entityIdParts[1]}`;
+      return `/config/script/edit/${fallbackSeg}`;
     } else if (entityType === 'scene') {
-      return `/config/scene/edit/${entityIdParts[1]}`;
+      return `/config/scene/edit/${fallbackSeg}`;
     }
 
     return null;

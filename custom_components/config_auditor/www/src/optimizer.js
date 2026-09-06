@@ -272,7 +272,7 @@
                      filter:drop-shadow(0 4px 12px rgba(123,104,238,0.5));">✅</div>
                 <h2 style="margin-bottom:12px;">${this.t('optimizer.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.7;margin-bottom:8px;">
-                  ${r.message || this.t('optimizer.automations_written').replace('{count}', r.count)}
+                  ${this.escapeHtml(r.message) || this.t('optimizer.automations_written').replace('{count}', r.count)}
                 </p>
                 ${r.backup_path ? `
                 <div style="background:var(--secondary-background-color);padding:10px;border-radius:10px;

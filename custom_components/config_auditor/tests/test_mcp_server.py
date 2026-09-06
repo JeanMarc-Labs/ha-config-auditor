@@ -283,3 +283,110 @@ class TestJsonSerialization:
         assert "default=_json_default" in block, (
             "tools/call serializes raw tool results — it must tolerate datetime & co."
         )
+
+
+# ── Admin-only surface ────────────────────────────────────────────────────────
+
+class TestAdminOnlySurface:
+    """The MCP endpoint must require an administrator, not just a session.
+
+    `requires_auth = True` only proves the caller is logged in. The tools call
+    any service (`lock.unlock`, `alarm_control_panel.disarm`) and rewrite YAML,
+    which Home Assistant reserves for admins.
+    """
+
+    def test_require_admin_helper_exists(self):
+        assert "def _require_admin(" in CONTENT, \
+            "mcp_server.py must define the _require_admin() guard"
+        guard = CONTENT[CONTENT.index("def _require_admin("):]
+        guard = guard[:guard.index("\n\n\n")]
+        assert "is_admin" in guard, "_require_admin must check user.is_admin"
+        assert "HTTPForbidden" in guard, "_require_admin must refuse with 403"
+        assert "KEY_HASS_USER" in guard, (
+            "look the user up with KEY_HASS_USER — HA turned 'hass_user' into "
+            "an AppKey, and a bare string lookup would 403 every caller"
+        )
+
+    def test_post_and_get_are_guarded(self):
+        view = CONTENT[CONTENT.index("class HacaMcpView("):CONTENT.index("class HacaMcpInfoView(")]
+        for method in ("async def post(", "async def get("):
+            body = view[view.index(method):]
+            body = body[:400]
+            assert "_require_admin(request)" in body, \
+                f"HacaMcpView.{method.strip()} does not call _require_admin()"
+
+    def test_info_view_requires_auth(self):
+        info = CONTENT[CONTENT.index("class HacaMcpInfoView("):]
+        info = info[:info.index("\n\n\n")]
+        assert "requires_auth = True" in info, (
+            "/api/haca_mcp/info was public: it leaks health_score, issue counts "
+            "and the full tool list to anyone who can reach the HA URL"
+        )
+        assert "_require_admin(request)" in info, \
+            "the info endpoint must be admin-only, like the server it describes"
+
+    def test_caller_identity_reaches_service_calls(self):
+        assert "_MCP_CALLER_USER_ID" in CONTENT, \
+            "the calling user must be propagated so HA can attribute actions"
+        assert "def _caller_context(" in CONTENT
+        calls = re.findall(r"hass\.services\.async_call\((?:[^()]|\([^()]*\))*\)", CONTENT)
+        assert calls, "no service calls found — the detector is wrong, not the code"
+        anonymous = [c for c in calls if "_caller_context()" not in c]
+        assert not anonymous, (
+            f"{len(anonymous)} MCP service call(s) with no caller context — they "
+            "would show up in the logbook with no author:\n"
+            + "\n".join(" ".join(c.split())[:100] for c in anonymous)
+        )
+
+
+# ── Read / write classification ───────────────────────────────────────────────
+
+class TestToolAccessClassification:
+    """Every tool must be classified so the LLM API can withhold the writers."""
+
+    def test_write_set_and_helper_exist(self):
+        assert "MCP_WRITE_TOOLS" in CONTENT
+        assert "def tool_access(" in CONTENT
+
+    def test_every_tool_carries_access(self):
+        assert '_tool_def["access"] = tool_access(_tool_def["name"])' in CONTENT, \
+            "MCP_TOOLS entries are not stamped with their access level"
+
+    def test_write_names_are_real_tools(self, declared_tool_names, registered_tool_names):
+        block = CONTENT[CONTENT.index("MCP_WRITE_TOOLS: frozenset[str] = frozenset({"):]
+        block = block[:block.index("})")]
+        declared = set(re.findall(r'"([a-z0-9_]+)"', block))
+        handlers = set(re.findall(r'"([a-z0-9_]+)"\s*:\s*_tool_\w+', CONTENT))
+        unknown = declared - declared_tool_names - registered_tool_names - handlers
+        assert not unknown, f"MCP_WRITE_TOOLS names no such tool: {sorted(unknown)}"
+
+    # Names that trip the verb heuristic below but only read.
+    READ_DESPITE_VERB = {
+        "haca_fix_suggestion",   # proposes a correction, never applies one
+    }
+
+    def test_mutating_tools_are_classified_write(self):
+        """Any tool whose name says it changes something must be a writer."""
+        block = CONTENT[CONTENT.index("MCP_WRITE_TOOLS: frozenset[str] = frozenset({"):]
+        block = block[:block.index("})")]
+        declared = set(re.findall(r'"([a-z0-9_]+)"', block))
+        verbs = ("create", "update", "remove", "set", "import", "rename",
+                 "apply", "enable", "reload", "call_service", "fix")
+        readers = ("ha_get_", "ha_list_", "haca_get_", "haca_list_")
+        mutating = {
+            name for name in re.findall(r'"name":\s*"([a-z0-9_]+)"', CONTENT)
+            if any(v in name for v in verbs)
+            and not name.startswith(readers)
+            and name not in self.READ_DESPITE_VERB
+        }
+        missing = mutating - declared
+        assert not missing, (
+            "these tools change the instance but are exposed as read-only:\n"
+            + "\n".join(sorted(missing))
+        )
+
+    def test_access_is_not_sent_on_the_wire(self):
+        assert 'if k != "access"' in CONTENT, (
+            "the internal access field must be stripped from tools/list — it is "
+            "not part of the MCP tool schema"
+        )

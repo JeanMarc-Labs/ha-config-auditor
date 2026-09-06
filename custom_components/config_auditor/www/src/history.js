@@ -79,7 +79,7 @@
       this._renderHistoryTable(history);
     } catch (e) {
       const tbody = this.shadowRoot.querySelector('#history-tbody');
-      if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error-color);">${this.t('history.error')}${e.message}</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error-color);">${this.t('history.error')}${this.escapeHtml(e.message)}</td></tr>`;
     }
   }
 
@@ -406,7 +406,7 @@
       this._renderHistoryDiff(result);
     } catch (e) {
       const body = modal.querySelector('#diff-modal-body');
-      if (body) body.innerHTML = `<div style="color:var(--error-color);padding:16px;">${this.t('history.diff_error')}: ${e.message}</div>`;
+      if (body) body.innerHTML = `<div style="color:var(--error-color);padding:16px;">${this.t('history.diff_error')}: ${this.escapeHtml(e.message)}</div>`;
     }
   }
 

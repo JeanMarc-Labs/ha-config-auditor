@@ -170,8 +170,8 @@
           ${_icon(icon.replace("mdi:", ""), 24)}
         </div>
         <div style="flex: 1;">
-          <div style="font-weight: 700; font-size: 16px;">${title}</div>
-          <div style="font-size: 12px; opacity: 0.7;">${message}</div>
+          <div style="font-weight: 700; font-size: 16px;">${this.escapeHtml(title)}</div>
+          <div style="font-size: 12px; opacity: 0.7;">${this.escapeHtml(message)}</div>
         </div>
         <button class="close-toast" style="background: rgba(255,255,255,0.1); border: none; color: white; padding: 6px; border-radius: 8px; cursor: pointer;">
           ${_icon("close", 18)}
@@ -213,8 +213,10 @@
   }
 
   escapeHtml(text) {
-    if (!text) return '';
-    return text
+    if (text === null || text === undefined || text === '') return '';
+    // String(): issue fields are not always strings (counts, depths, nulls),
+    // and .replace() on a number used to throw and blank the whole modal.
+    return String(text)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")

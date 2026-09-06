@@ -51,7 +51,13 @@ class TestWebsocketHandlers:
 # ── Security: admin protection ────────────────────────────────────────────────
 
 class TestAdminProtection:
-    """Destructive handlers must require admin."""
+    """Every websocket command must require admin.
+
+    `haca/get_data` returns the whole audit, security category included;
+    `haca/explain_issue` spends an LLM call; `haca/mcp_status` hands out the
+    MCP endpoint's configuration. The panel itself is admin-only, so there is
+    no read-only tier to preserve — an unguarded command is simply a hole.
+    """
 
     DESTRUCTIVE = [
         "handle_apply_fix",
@@ -74,19 +80,70 @@ class TestAdminProtection:
                 missing.append(handler)
         assert not missing, f"Missing @require_admin on: {missing}"
 
-    def test_read_only_handlers_no_require_admin(self):
-        """Read-only handlers must NOT require admin."""
-        READ_ONLY = [
-            "handle_get_data",
-            "handle_get_translations",
-            "handle_list_backups",
-            "handle_get_options",
+    @staticmethod
+    def _commands():
+        """Yield (command, handler, decorator_block) for every ws command."""
+        lines = CONTENT.split("\n")
+        for idx, line in enumerate(lines):
+            if not line.startswith("async def handle_"):
+                continue
+            back = idx - 1
+            block = []
+            while back >= 0 and lines[back].strip():
+                block.insert(0, lines[back])
+                back -= 1
+            decorators = "\n".join(block)
+            if "@websocket_api.websocket_command" not in decorators:
+                continue
+            match = re.search(r'"type"\)?:\s*"([^"]+)"', decorators)
+            yield (
+                match.group(1) if match else "?",
+                line[len("async def "):].split("(")[0],
+                decorators,
+            )
+
+    def test_every_command_requires_admin(self):
+        """No websocket command may ship without @require_admin."""
+        commands = list(self._commands())
+        assert len(commands) >= 30, (
+            f"Only {len(commands)} websocket commands parsed — the detector is "
+            "out of step with websocket.py, not the other way round"
+        )
+        unguarded = [
+            f"{cmd} ({handler})"
+            for cmd, handler, decorators in commands
+            if "@websocket_api.require_admin" not in decorators
         ]
-        for handler in READ_ONLY:
-            # Ensure require_admin does NOT appear just before these handlers
-            pattern = rf"@websocket_api\.require_admin\s+@websocket_api\.async_response\s+async def {handler}\("
-            assert not re.search(pattern, CONTENT, re.MULTILINE), \
-                f"{handler} should NOT have @require_admin (it is read-only)"
+        assert not unguarded, (
+            f"{len(unguarded)} websocket command(s) callable by any logged-in user:\n"
+            + "\n".join(unguarded)
+        )
+
+
+# ── Language allow-list (path traversal) ─────────────────────────────────────
+
+class TestLanguageAllowList:
+    """`language` comes from the browser and reaches a file path."""
+
+    def test_get_translations_uses_allow_list(self):
+        assert "def _safe_language(" in CONTENT, \
+            "websocket.py must define the _safe_language() allow-list helper"
+        assert 'language = _safe_language(msg.get("language")' in CONTENT, \
+            "handle_get_translations must resolve `language` through _safe_language()"
+
+    def test_no_raw_language_from_client(self):
+        assert 'msg.get("language") or hass.config.language' not in CONTENT, (
+            "the old unvalidated fallback chain is back: a language of "
+            "'../../secrets' would escape the translations/ folder"
+        )
+
+    def test_allow_list_falls_back_to_english(self):
+        helper = CONTENT[CONTENT.index("def _safe_language("):]
+        helper = helper[:helper.index("\n\n\n")]
+        assert 'return "en"' in helper, \
+            "_safe_language must fall back to English for anything unknown"
+        assert "_TS_CACHE" in helper, \
+            "_safe_language should derive its allow-list from the shipped files"
 
 
 # ── Chat: async_converse fallback chain ───────────────────────────────────────

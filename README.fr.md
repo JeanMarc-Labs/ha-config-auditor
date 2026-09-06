@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.7.7-orange)
+![Version](https://img.shields.io/badge/version-1.8.0-orange)
 ![HA](https://img.shields.io/badge/Home%20Assistant-2024.1+-blue)
 ![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -116,7 +116,14 @@ HACA s'enregistre comme **LLM API natif** dans Home Assistant. Configurez-le une
 
 > Paramètres → Assistants vocaux → [votre agent] → LLM API → **HACA**
 
-Ensuite, Mistral, Gemini, Llama ou tout agent conversation HA peut utiliser les 65 outils HACA nativement. Si l'agent préféré échoue (quota, timeout), l'agent suivant est essayé automatiquement.
+Ensuite, Mistral, Gemini, Llama ou tout agent conversation HA peut utiliser les outils HACA nativement. Si l'agent préféré échoue (quota, timeout), l'agent suivant est essayé automatiquement.
+
+**Lecture seule par défaut.** Rattacher l'API HACA à un agent, c'est la donner à tout ce qui parle à cet agent : un satellite Assist, une enceinte, une intégration Alexa ou Google. L'agent ne reçoit donc que les outils de lecture (diagnostiquer, expliquer, suggérer). Les outils qui écrivent — fichiers de configuration, appels de service comme `lock.unlock` — ne sont ajoutés que si **les deux** conditions sont réunies :
+
+- **Configuration → Agents IA → Autoriser les outils d'écriture** est activé (désactivé par défaut), et
+- la personne à qui appartient la conversation est administratrice de Home Assistant.
+
+Un satellite vocal sans utilisateur authentifié n'est jamais administrateur. Quand les outils d'écriture sont retenus, l'agent ne les a tout simplement pas et le dit, au lieu d'échouer au milieu d'une opération.
 
 ### Chat IA
 
@@ -150,6 +157,8 @@ Authorization: Bearer <votre-token-haca>
 ```
 
 **Catégories d'outils :** Audit HACA · Recherche & Découverte · Contrôle · Automations & Scripts · Blueprints · Scènes · Tableaux de bord · Monitoring · Helpers & Zones · Fichiers de configuration · Sécurité & Validation
+
+**L'endpoint MCP exige un jeton d'administrateur.** Les outils écrivent des fichiers de configuration et peuvent appeler n'importe quel service, ce que Home Assistant réserve aux admins ; un jeton longue durée émis par un compte non-admin reçoit un `403`. Chaque appel de service passé par MCP est attribué au propriétaire du jeton dans le journal Home Assistant. `/api/haca_mcp/info` est également réservé aux admins.
 
 Agents supportés : Claude Code · Claude Desktop · Cursor · VS Code/Copilot · Windsurf · Cline · Antigravity · Continue.dev · Open WebUI · n8n · HTTP/REST · Gemini CLI
 

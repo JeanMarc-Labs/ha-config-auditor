@@ -32,6 +32,34 @@ def _ts(hass, section: str, key: str, **kwargs) -> str:
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _safe_language(requested: str | None, fallback: str | None) -> str:
+    """Return a language code that is safe to interpolate into a file path.
+
+    ``language`` arrives straight from the browser and used to be pasted into
+    ``translations/<language>.json`` without a check, so a value such as
+    ``../../../../secrets`` walked out of the folder — and the ``exists()``
+    probe alone was already a file-presence oracle.
+
+    Only codes HACA actually ships are accepted. The allow-list is the set of
+    translation files loaded into ``_TS_CACHE`` at setup, so adding a language
+    needs no change here; anything else falls back to English.
+    """
+    try:
+        from . import _TS_CACHE  # noqa: PLC0415
+        known = set(_TS_CACHE)
+    except Exception:
+        known = set()
+    known = known or {"en"}
+
+    for candidate in (requested, fallback):
+        if candidate and candidate in known:
+            return candidate
+    if requested:
+        _LOGGER.debug("HACA: unsupported language %r — falling back to English", requested)
+    return "en"
+
+
 # ── Simple per-command rate limiter for write-sensitive handlers ────────────
 # Prevents spam on save_options and apply_field_fix (YAML writes).
 # Dict of { "command_key" : last_call_monotonic_time }
@@ -100,6 +128,7 @@ def async_register_websocket_handlers(hass: HomeAssistant) -> None:
         ]),
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_get_data(
     hass: HomeAssistant,
@@ -380,6 +409,7 @@ async def handle_apply_fix(
         vol.Required("type"): "haca/list_backups",
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_list_backups(
     hass: HomeAssistant,
@@ -862,6 +892,7 @@ async def handle_purge_recorder_orphans(
         vol.Optional("limit", default=90): int,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_get_history(
     hass: HomeAssistant,
@@ -927,6 +958,7 @@ async def handle_delete_history(
         vol.Optional("language"): str,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_get_translations(
     hass: HomeAssistant,
@@ -935,8 +967,10 @@ async def handle_get_translations(
 ) -> None:
     """Handle get translations request for the panel."""
     try:
-        # Language comes from the frontend (= user profile language, not system language)
-        language = msg.get("language") or hass.config.language or "en"
+        # Language comes from the frontend (= user profile language, not system
+        # language). It ends up in a file path, so it goes through the
+        # allow-list first — see _safe_language().
+        language = _safe_language(msg.get("language"), hass.config.language)
         # Store so panel-targeted WebSocket responses can stay in this user's
         # language for the duration of the connection.
         hass.data.setdefault(DOMAIN, {})["user_language"] = language
@@ -1009,6 +1043,7 @@ async def handle_get_translations(
         vol.Required("issue"): dict,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_explain_issue(
     hass: HomeAssistant,
@@ -1364,6 +1399,7 @@ async def handle_chat(
         vol.Required("type"): "haca/get_options",
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_get_options(
     hass: HomeAssistant,
@@ -1423,6 +1459,7 @@ async def handle_save_options(
         "notify_low_severity",     # false (default) — persistent notification for LOW issues
         "battery_last_replaced",   # dict {entity_id: ISO datetime} — battery replacement tracking
         "noisy_scan_exclude_patterns",  # list[str] — glob patterns to skip in noisy entity scan
+        "llm_write_enabled",   # false (default) — let conversation agents use HACA write tools
     }
     for key, value in incoming.items():
         if key in ALLOWED_KEYS and value is not None:  # ignorer les None (token non modifié)
@@ -1623,6 +1660,7 @@ async def handle_set_log_level(
 # ─── v1.4.0 WebSocket Handlers ────────────────────────────────────────────
 
 @websocket_api.websocket_command({"type": "haca/mcp_status"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_mcp_status(
     hass: HomeAssistant,
@@ -1665,6 +1703,7 @@ async def handle_mcp_status(
 
 
 @websocket_api.websocket_command({"type": "haca/agent_status"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_agent_status(
     hass: HomeAssistant,
@@ -1902,6 +1941,7 @@ async def handle_get_report_url(
 # ── Area complexity ────────────────────────────────────────────────────────────
 
 @websocket_api.websocket_command({vol.Required("type"): "haca/get_area_complexity"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def handle_get_area_complexity(
     hass: HomeAssistant,

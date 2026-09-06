@@ -1,4 +1,4 @@
-// HACA-BUILD: c25468a8  2026-09-02T15:28:45Z
+// HACA-BUILD: f0310219  2026-09-06T16:27:28Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -304,6 +304,19 @@ function renderConfigTab(options, lang, t) {
     '</div>' +
     '</div>' +
 
+    // ── Section Agents IA ──
+    '<div class="cfg-section" style="margin-top:4px;">' +
+    '<div class="cfg-section-title">' + _icon("robot", 18) + t('config.llm_section_title') + '</div>' +
+    '<div class="cfg-row-hint" style="margin-bottom:8px;">' + t('config.llm_section_hint') + '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.llm_write_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.llm_write_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-llm-write"' + (options.llm_write_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '</div>' +
+
     // ── Section Diagnostics & Logs ──
     '<div class="cfg-section" style="margin-top:4px;">' +
     '<div class="cfg-section-title">' + _icon("bug", 18) + t('config.diagnostics_logs') + '</div>' +
@@ -458,6 +471,7 @@ var DEFAULT_OPTIONS = {
   notify_medium_severity: false,
   notify_low_severity: false,
   noisy_scan_exclude_patterns: [],
+  llm_write_enabled: false,
 };
 
 // ─── Collecte des valeurs ─────────────────────────────────────────────────
@@ -492,6 +506,7 @@ function collectFormOptions(root) {
     notify_medium_severity: bool('#cfg-notify-medium', false),
     notify_low_severity: bool('#cfg-notify-low', false),
     debug_mode: bool('#cfg-debug-toggle', false),
+    llm_write_enabled: bool('#cfg-llm-write', false),
     noisy_scan_exclude_patterns: (function () {
       var el = q('#cfg-noisy-exclude-patterns');
       if (!el) return [];
@@ -518,7 +533,7 @@ function _updateTypeCounts(el) {
 (function () {
   'use strict';
   if (customElements.get('haca-panel')) return; // already loaded, skip entirely
-  const HACA_VERSION = '1.7.7'; // build marker
+  const HACA_VERSION = '1.8.0'; // build marker
 
   // Dans l'iframe (embed_iframe:true), ha-icon n'est pas enregistré.
   // On copie la définition depuis le document parent où HA l'a déjà défini.
@@ -3291,7 +3306,7 @@ function _updateTypeCounts(el) {
         this.renderBackups(backups);
 
       } catch (error) {
-        container.innerHTML = `<div class="empty-state">❌ ${this.t('notifications.error')}: ${error.message}</div>`;
+        container.innerHTML = `<div class="empty-state">❌ ${this.t('notifications.error')}: ${this.escapeHtml(error.message)}</div>`;
       }
     }
 
@@ -3333,10 +3348,10 @@ function _updateTypeCounts(el) {
                 <td><span style="background:var(--secondary-background-color);padding:4px 8px;border-radius:6px;font-size:12px;white-space:nowrap;">${Math.round(b.size / 1024)} KB</span></td>
                 <td>
                   <div style="display:flex;gap:8px;">
-                    <button class="restore-btn" data-path="${b.path}" style="background:var(--warning-color,#ff9800);color:black;">
+                    <button class="restore-btn" data-path="${this.escapeHtml(b.path)}" style="background:var(--warning-color,#ff9800);color:black;">
                       ${_icon("backup-restore")} ${this.t('actions.restore')}
                     </button>
-                    <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" style="background:var(--error-color,#ef5350);color:white;">
+                    <button class="delete-backup-btn" data-path="${this.escapeHtml(b.path)}" data-name="${this.escapeHtml(b.name)}" style="background:var(--error-color,#ef5350);color:white;">
                       ${_icon("delete-outline")}
                     </button>
                   </div>
@@ -3355,10 +3370,10 @@ function _updateTypeCounts(el) {
             </div>
             <div class="m-card-meta">📅 ${new Date(b.created).toLocaleString()} · ${Math.round(b.size / 1024)} KB</div>
             <div class="m-card-btns">
-              <button class="restore-btn" data-path="${b.path}" style="background:var(--warning-color,#ff9800);color:black;">
+              <button class="restore-btn" data-path="${this.escapeHtml(b.path)}" style="background:var(--warning-color,#ff9800);color:black;">
                 ${_icon("backup-restore")} ${this.t('actions.restore')}
               </button>
-              <button class="delete-backup-btn" data-path="${b.path}" data-name="${b.name}" style="background:var(--error-color,#ef5350);color:white;">
+              <button class="delete-backup-btn" data-path="${this.escapeHtml(b.path)}" data-name="${this.escapeHtml(b.name)}" style="background:var(--error-color,#ef5350);color:white;">
                 ${_icon("delete-outline")} ${this.t('actions.delete')}
               </button>
             </div>
@@ -3711,12 +3726,12 @@ function _updateTypeCounts(el) {
               window._hacaAgentSwitchContainer = tabsContainer;
             }
           } catch (mcpErr) {
-            mcpContainer.innerHTML = `<div style="padding:12px;color:var(--secondary-text-color);font-size:13px;">MCP/Agent: ${mcpErr.message}</div>`;
+            mcpContainer.innerHTML = `<div style="padding:12px;color:var(--secondary-text-color);font-size:13px;">MCP/Agent: ${this.escapeHtml(mcpErr.message)}</div>`;
           }
         }
       } catch (err) {
         el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--error-color);">
-        ❌ Erreur de chargement : ${err.message}
+        ❌ Erreur de chargement : ${this.escapeHtml(err.message)}
       </div>`;
       }
     }
@@ -3743,7 +3758,7 @@ function _updateTypeCounts(el) {
         }
         this._renderCompliancePage(el, PAG_ID);
       } catch (err) {
-        el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--error-color);">❌ ${err.message}</div>`;
+        el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--error-color);">❌ ${this.escapeHtml(err.message)}</div>`;
       }
     }
 
@@ -5025,7 +5040,7 @@ function _updateTypeCounts(el) {
       this._renderHistoryTable(history);
     } catch (e) {
       const tbody = this.shadowRoot.querySelector('#history-tbody');
-      if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error-color);">${this.t('history.error')}${e.message}</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error-color);">${this.t('history.error')}${this.escapeHtml(e.message)}</td></tr>`;
     }
   }
 
@@ -5352,7 +5367,7 @@ function _updateTypeCounts(el) {
       this._renderHistoryDiff(result);
     } catch (e) {
       const body = modal.querySelector('#diff-modal-body');
-      if (body) body.innerHTML = `<div style="color:var(--error-color);padding:16px;">${this.t('history.diff_error')}: ${e.message}</div>`;
+      if (body) body.innerHTML = `<div style="color:var(--error-color);padding:16px;">${this.t('history.diff_error')}: ${this.escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -5563,7 +5578,7 @@ function _updateTypeCounts(el) {
           <span style="background:${levelBg};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;">${levelText}</span>
         </td>
         <td style="padding:6px 8px;text-align:center;">
-          <button class="cplx-ai-btn" data-entity="${row.entity_id}"
+          <button class="cplx-ai-btn" data-entity="${this.escapeHtml(row.entity_id)}"
             style="background:var(--accent-color,#03a9f4);color:white;padding:4px 10px;font-size:11px;border-radius:8px;border:none;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;">
             ${_icon("robot", 13)} ${this.t('misc.ia_btn')}
           </button>
@@ -5679,7 +5694,7 @@ function _updateTypeCounts(el) {
           <span style="background:${levelBg};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;">${levelText}</span>
         </td>
         <td style="padding:6px 8px;text-align:center;">
-          <button class="cplx-ai-btn" data-entity="${row.entity_id}"
+          <button class="cplx-ai-btn" data-entity="${this.escapeHtml(row.entity_id)}"
             style="background:var(--accent-color,#03a9f4);color:white;padding:4px 10px;font-size:11px;border-radius:8px;border:none;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;">
             ${_icon("robot", 13)} ${this.t('misc.ia_btn')}
           </button>
@@ -6045,7 +6060,7 @@ function _updateTypeCounts(el) {
                      filter:drop-shadow(0 4px 12px rgba(123,104,238,0.5));">✅</div>
                 <h2 style="margin-bottom:12px;">${this.t('optimizer.applied_title')}</h2>
                 <p style="color:var(--secondary-text-color);line-height:1.7;margin-bottom:8px;">
-                  ${r.message || this.t('optimizer.automations_written').replace('{count}', r.count)}
+                  ${this.escapeHtml(r.message) || this.t('optimizer.automations_written').replace('{count}', r.count)}
                 </p>
                 ${r.backup_path ? `
                 <div style="background:var(--secondary-background-color);padding:10px;border-radius:10px;
@@ -6099,7 +6114,7 @@ function _updateTypeCounts(el) {
       <div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;">
         <div class="loader"></div>
         <div style="margin-top:20px;font-size:17px;font-weight:500;">🤖 ${this.t('ai.analyzing')}</div>
-        <div style="margin-top:8px;font-size:13px;color:var(--secondary-text-color);">${alias}</div>
+        <div style="margin-top:8px;font-size:13px;color:var(--secondary-text-color);">${this.escapeHtml(alias)}</div>
       </div>
     `);
 
@@ -6123,7 +6138,7 @@ function _updateTypeCounts(el) {
             <div style="display:flex;align-items:center;gap:12px;">
               ${_icon("robot", 32)}
               <div>
-                <div style="font-size:16px;font-weight:700;">${alias}</div>
+                <div style="font-size:16px;font-weight:700;">${this.escapeHtml(alias)}</div>
                 <div style="font-size:12px;color:var(--secondary-text-color);">${fieldLabel} — ${this.t('misc.ai_suggestion')}</div>
               </div>
             </div>
@@ -6238,7 +6253,7 @@ function _updateTypeCounts(el) {
         </div>
       `);
     } catch (error) {
-      card._updateContent(`<div style="padding: 24px; color: var(--error-color);">❌ ${error.message}</div>`);
+      card._updateContent(`<div style="padding: 24px; color: var(--error-color);">❌ ${this.escapeHtml(error.message)}</div>`);
       setTimeout(() => card.closest('.haca-modal')?.remove(), 4000);
     }
   }
@@ -6346,7 +6361,7 @@ function _updateTypeCounts(el) {
           <!-- Footer -->
           <div style="padding:16px 24px;border-top:1px solid var(--divider-color);display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:10px;background:var(--secondary-background-color);flex-shrink:0;">
             ${this.getHAEditUrl(row.entity_id) ? `
-              <a href="${this.getHAEditUrl(row.entity_id)}" target="_blank" style="text-decoration:none;">
+              <a href="${this.escapeHtml(this.getHAEditUrl(row.entity_id))}" target="_blank" style="text-decoration:none;">
                 <button style="background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);padding:10px 22px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;display:flex;align-items:center;gap:8px;">
                   ${_icon("pencil")} ${this.t('zombie.edit_manual')}
                 </button>
@@ -7504,8 +7519,8 @@ function _updateTypeCounts(el) {
           ${_icon(icon.replace("mdi:", ""), 24)}
         </div>
         <div style="flex: 1;">
-          <div style="font-weight: 700; font-size: 16px;">${title}</div>
-          <div style="font-size: 12px; opacity: 0.7;">${message}</div>
+          <div style="font-weight: 700; font-size: 16px;">${this.escapeHtml(title)}</div>
+          <div style="font-size: 12px; opacity: 0.7;">${this.escapeHtml(message)}</div>
         </div>
         <button class="close-toast" style="background: rgba(255,255,255,0.1); border: none; color: white; padding: 6px; border-radius: 8px; cursor: pointer;">
           ${_icon("close", 18)}
@@ -7547,8 +7562,10 @@ function _updateTypeCounts(el) {
   }
 
   escapeHtml(text) {
-    if (!text) return '';
-    return text
+    if (text === null || text === undefined || text === '') return '';
+    // String(): issue fields are not always strings (counts, depths, nulls),
+    // and .replace() on a number used to throw and blank the whole modal.
+    return String(text)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
@@ -7731,13 +7748,13 @@ function _updateTypeCounts(el) {
                 ${_icon("alert-circle", 48)}
                 <div>
                     <h2 style="margin: 0;">${this.t('modals.broken_device_ref')}</h2>
-                    <div style="font-size: 14px; opacity: 0.7;">${issue.entity_id}</div>
+                    <div style="font-size: 14px; opacity: 0.7;">${this.escapeHtml(issue.entity_id)}</div>
                 </div>
             </div>
             
             <div style="background: rgba(239, 83, 80, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid var(--error-color); margin-bottom: 20px;">
                 <div style="font-weight: 600; margin-bottom: 8px; color: var(--error-color);">⚠️ ${this.t('modals.cannot_auto_fix')}</div>
-                <div style="line-height: 1.6;">${issue.message}</div>
+                <div style="line-height: 1.6;">${this.escapeHtml(issue.message)}</div>
             </div>
             
             <div style="background: var(--secondary-background-color); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
@@ -7747,7 +7764,7 @@ function _updateTypeCounts(el) {
                 </div>
                 <ol style="margin: 0; padding-left: 20px; line-height: 1.8;">
                     <li>${this.t('instructions.open_yaml_editor')}</li>
-                    <li>${this.t('instructions.find_device_ref')}: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">${issue.device_id || this.t('modals.unknown_device_id')}</code></li>
+                    <li>${this.t('instructions.find_device_ref')}: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">${this.escapeHtml(issue.device_id) || this.t('modals.unknown_device_id')}</code></li>
                     <li>${this.t('instructions.replace_entity')}</li>
                     <li>${this.t('instructions.save_reload')}</li>
                 </ol>
@@ -7755,7 +7772,7 @@ function _updateTypeCounts(el) {
             
             <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
                 <button class="close-btn" style="background: var(--secondary-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);">${this.t('actions.close')}</button>
-                ${editUrl ? `<a href="${editUrl}" target="_blank" style="text-decoration: none;"><button class="edit-btn" style="background: var(--primary-color); color: white;">${_icon("pencil")} ${this.t('modals.open_editor')}</button></a>` : ''}
+                ${editUrl ? `<a href="${this.escapeHtml(editUrl)}" target="_blank" style="text-decoration: none;"><button class="edit-btn" style="background: var(--primary-color); color: white;">${_icon("pencil")} ${this.t('modals.open_editor')}</button></a>` : ''}
             </div>
         </div>
       `);
@@ -7842,7 +7859,7 @@ function _updateTypeCounts(el) {
                 ${_icon("alert-circle-outline", 36)}
                 <div>
                   <h2 style="margin:0;">${this.t('modals.cannot_auto_fix')}</h2>
-                  <div style="font-size:13px;opacity:0.7;">${issue.entity_id}</div>
+                  <div style="font-size:13px;opacity:0.7;">${this.escapeHtml(issue.entity_id)}</div>
                 </div>
               </div>
               <div style="background:rgba(255,167,38,0.1);padding:16px;border-radius:10px;border-left:4px solid var(--warning-color,#ffa726);margin-bottom:20px;font-size:14px;line-height:1.6;">
@@ -7851,7 +7868,7 @@ function _updateTypeCounts(el) {
               <div style="display:flex;justify-content:flex-end;gap:12px;">
                 <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 18px;cursor:pointer;"
                   onclick="this.closest('.haca-modal').remove()">${this.t('actions.close')}</button>
-                ${this.getHAEditUrl(issue.entity_id) ? `<a href="${this.getHAEditUrl(issue.entity_id)}" target="_blank" style="text-decoration:none;">
+                ${this.getHAEditUrl(issue.entity_id) ? `<a href="${this.escapeHtml(this.getHAEditUrl(issue.entity_id))}" target="_blank" style="text-decoration:none;">
                   <button style="background:var(--primary-color);color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;">
                     ${_icon('pencil')} ${this.t('modals.open_editor')}
                   </button></a>` : ''}
@@ -7861,11 +7878,11 @@ function _updateTypeCounts(el) {
           this.renderDiffModal(modal, response, issue, service, serviceData);
         }
       } else {
-        modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${response.error || this.t('fix.error_unknown')}</div>`);
+        modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${this.escapeHtml(response.error) || this.t('fix.error_unknown')}</div>`);
         setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
       }
     } catch (e) {
-      modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${e.message}</div>`);
+      modal._updateContent(`<div style="padding:20px;color:red">${this.t('notifications.error')}: ${this.escapeHtml(e.message)}</div>`);
       setTimeout(() => modal._closeModal && modal._closeModal(), 3000);
     }
   }
@@ -7902,11 +7919,11 @@ function _updateTypeCounts(el) {
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             ${suggestions.map(s => `
-              <button class="suggestion-btn" data-value="${s}"
+              <button class="suggestion-btn" data-value="${this.escapeHtml(s)}"
                 style="background:var(--secondary-background-color);color:var(--primary-text-color);
                        border:1px solid var(--primary-color);border-radius:8px;padding:6px 14px;
                        font-size:13px;cursor:pointer;">
-                ${_icon("swap-horizontal", 14)} ${s}
+                ${_icon("swap-horizontal", 14)} ${this.escapeHtml(s)}
               </button>`).join('')}
           </div>
         </div>`
@@ -7918,7 +7935,7 @@ function _updateTypeCounts(el) {
       ? automationIds.map(aid => {
           const state = this.hass.states[aid];
           const label = state?.attributes?.friendly_name || aid;
-          return `<li style="padding:4px 0;"><code style="font-size:12px;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${label}</code></li>`;
+          return `<li style="padding:4px 0;"><code style="font-size:12px;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${this.escapeHtml(label)}</code></li>`;
         }).join('')
       : `<li>${this.t('zombie.unknown_automation')}</li>`;
 
@@ -7928,12 +7945,12 @@ function _updateTypeCounts(el) {
           ${_icon("ghost-outline", 42)}
           <div>
             <h2 style="margin:0;">${this.t('zombie.entity_not_found')}</h2>
-            <div style="font-size:13px;opacity:0.7;">${zombieId}</div>
+            <div style="font-size:13px;opacity:0.7;">${this.escapeHtml(zombieId)}</div>
           </div>
         </div>
 
         <div style="background:rgba(239,83,80,0.08);padding:14px 18px;border-radius:10px;border-left:4px solid var(--error-color);margin-bottom:20px;font-size:14px;">
-          ${issue.message}<br>
+          ${this.escapeHtml(issue.message)}<br>
           <div style="margin-top:6px;opacity:0.8;font-size:13px;">${this.t('zombie.referenced_in', {count: automationIds.length})}</div>
           <ul style="margin:6px 0 0 0;padding-left:20px;">${automationsHtml}</ul>
         </div>
@@ -7991,7 +8008,7 @@ function _updateTypeCounts(el) {
       const editorUrl = this.getHAEditUrl(firstAutomationId);
       if (editorUrl) {
         zombieEditorContainer.innerHTML = `
-          <a href="${editorUrl}" target="_blank" style="text-decoration:none;">
+          <a href="${this.escapeHtml(editorUrl)}" target="_blank" style="text-decoration:none;">
             <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
               ${_icon("pencil")} ${this.t('zombie.edit_manual')}
             </button>
@@ -8070,12 +8087,12 @@ function _updateTypeCounts(el) {
                     ${_icon("robot-confused-outline", 40)}
                     <div>
                         <h2 style="margin: 0;">${this.t('modals.suggest_description')}</h2>
-                        <div style="font-size: 14px; opacity: 0.7;">${issue.alias || issue.entity_id}</div>
+                        <div style="font-size: 14px; opacity: 0.7;">${this.escapeHtml(issue.alias || issue.entity_id)}</div>
                     </div>
                 </div>
 
                 <div style="color: var(--primary-text-color); margin-bottom: 12px; font-weight: 500;">${this.t('modals.ai_proposition')}</div>
-                <textarea id="desc-input" style="width: 100%; height: 100px; padding: 12px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font-family: inherit; font-size: 14px; box-sizing: border-box; resize: none; margin-bottom: 4px;">${response.suggestion}</textarea>
+                <textarea id="desc-input" style="width: 100%; height: 100px; padding: 12px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font-family: inherit; font-size: 14px; box-sizing: border-box; resize: none; margin-bottom: 4px;">${this.escapeHtml(response.suggestion)}</textarea>
                 <div style="font-size: 12px; color: var(--secondary-text-color); margin-bottom: 20px;">${this.t('modals.edit_text')}</div>
                 
                 <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
@@ -8124,7 +8141,7 @@ function _updateTypeCounts(el) {
       card._updateContent(`
             <div style="padding: 24px;">
                 <h2 style="color: var(--error-color);">❌ ${this.t('notifications.error')}</h2>
-                <p>${e.message}</p>
+                <p>${this.escapeHtml(e.message)}</p>
                 <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
                     <button class="close-btn" style="background: var(--primary-color);">${this.t('actions.close')}</button>
                 </div>
@@ -8145,11 +8162,11 @@ function _updateTypeCounts(el) {
             <div style="margin-bottom: 24px; background: rgba(var(--rgb-primary-color), 0.05); padding: 16px; border-radius: 12px; border-left: 4px solid var(--primary-color);">
                 <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
                     ${_icon("robot", 18)}
-                    <strong>${this.t('modals.automation')}:</strong> <span style="font-weight: 500;">${result.alias}</span> (${result.automation_id})
+                    <strong>${this.t('modals.automation')}:</strong> <span style="font-weight: 500;">${this.escapeHtml(result.alias)}</span> (${this.escapeHtml(result.automation_id)})
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     ${_icon("alert-circle-outline", 18)}
-                    <strong>${this.t('modals.problem')}:</strong> ${issue.message}
+                    <strong>${this.t('modals.problem')}:</strong> ${this.escapeHtml(issue.message)}
                 </div>
             </div>
             
@@ -8174,7 +8191,7 @@ function _updateTypeCounts(el) {
                     ${this.t('modals.changes_identified')} (${result.changes_count}):
                 </div>
                 <ul style="margin: 0; padding-left: 24px; line-height: 1.6; color: var(--primary-text-color);">
-                    ${result.changes.map(c => `<li style="margin-bottom: 4px;">${c.description}</li>`).join('')}
+                    ${result.changes.map(c => `<li style="margin-bottom: 4px;">${this.escapeHtml(c.description)}</li>`).join('')}
                 </ul>
             </div>
         </div>
@@ -8194,7 +8211,7 @@ function _updateTypeCounts(el) {
     const editContainer = card.querySelector('#edit-btn-container');
     if (editUrl && editContainer) {
       editContainer.innerHTML = `
-        <a href="${editUrl}" target="_blank" style="text-decoration:none;">
+        <a href="${this.escapeHtml(editUrl)}" target="_blank" style="text-decoration:none;">
           <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);">
             ${_icon("pencil")} ${this.t('zombie.edit_manual')}
           </button>
@@ -8234,11 +8251,11 @@ function _updateTypeCounts(el) {
                 <div style="padding: 48px 32px; text-align: center; animation: fadeIn 0.4s ease-out;">
                     <div style="font-size: 64px; margin-bottom: 24px; filter: drop-shadow(0 4px 12px rgba(76, 175, 80, 0.4));">✅</div>
                     <h2 style="font-size: 24px; font-weight: 700; margin-bottom: 12px; color: var(--primary-text-color);">${this.t('fix.success')}</h2>
-                    <p style="color: var(--secondary-text-color); margin-bottom: 24px; line-height: 1.6;">${response.message}</p>
+                    <p style="color: var(--secondary-text-color); margin-bottom: 24px; line-height: 1.6;">${this.escapeHtml(response.message)}</p>
                     ${response.backup_path ? `
                         <div style="background: var(--secondary-background-color); padding: 12px; border-radius: 12px; margin-bottom: 32px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--divider-color);">
                             ${_icon("zip-box-outline")}
-                            <span style="font-family: monospace; font-size: 12px;">${this.t('backup.backup_created')}: ${response.backup_path.split(/[\\/]/).pop()}</span>
+                            <span style="font-family: monospace; font-size: 12px;">${this.t('backup.backup_created')}: ${this.escapeHtml(response.backup_path.split(/[\\/]/).pop())}</span>
                         </div>
                     ` : ''}
                     <div>
@@ -8712,20 +8729,24 @@ function _updateTypeCounts(el) {
     const state = this.hass?.states?.[entityId];
     const itemId = state?.attributes?.id;
 
-    // Map entity types to their edit URLs
+    // Map entity types to their edit URLs. The id comes from a state
+    // attribute, so it is encoded here rather than at each of the ten call
+    // sites that drop the result straight into an href="" attribute.
+    const seg = encodeURIComponent(itemId ?? '');
+    const fallbackSeg = encodeURIComponent(entityIdParts[1] ?? '');
     if (entityType === 'automation' && itemId) {
-      return `/config/automation/edit/${itemId}`;
+      return `/config/automation/edit/${seg}`;
     } else if (entityType === 'script' && itemId) {
-      return `/config/script/edit/${itemId}`;
+      return `/config/script/edit/${seg}`;
     } else if (entityType === 'scene' && itemId) {
-      return `/config/scene/edit/${itemId}`;
+      return `/config/scene/edit/${seg}`;
     } else if (entityType === 'automation') {
       // Fallback: try to use entity_id without the prefix
-      return `/config/automation/edit/${entityIdParts[1]}`;
+      return `/config/automation/edit/${fallbackSeg}`;
     } else if (entityType === 'script') {
-      return `/config/script/edit/${entityIdParts[1]}`;
+      return `/config/script/edit/${fallbackSeg}`;
     } else if (entityType === 'scene') {
-      return `/config/scene/edit/${entityIdParts[1]}`;
+      return `/config/scene/edit/${fallbackSeg}`;
     }
 
     return null;
