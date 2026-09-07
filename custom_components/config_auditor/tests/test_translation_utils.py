@@ -10,6 +10,7 @@ Guards against:
 from __future__ import annotations
 
 import json
+import re
 import pytest
 import sys
 from pathlib import Path
@@ -370,4 +371,85 @@ class TestNoDeadPanelKeys:
             f"language files, or, if one is built at runtime, teach "
             f"scripts/check_translation_keys.py about the pattern:\n"
             + "\n".join(f"  panel.{k}" for k in dead)
+        )
+
+
+# ── Untranslated strings ───────────────────────────────────────────────────────
+
+class TestNoUntranslatedStrings:
+    """A key that still carries the English text was never translated.
+
+    The project rule is that every key is hand-translated in all 13 languages,
+    with no English fallback. 1 989 strings had drifted past that by 1.8.0 —
+    whole tabs in English for 11 of the 12 languages. The detection, and the
+    list of strings that are legitimately the same in every language (a product
+    name, a format string with no words, another program's menu path), live in
+    scripts/check_untranslated.py.
+    """
+
+    def test_every_language_is_fully_translated(self):
+        root = Path(__file__).parent.parent.parent.parent
+        sys.path.insert(0, str(root / "scripts"))
+        from check_untranslated import find_untranslated
+
+        stale = find_untranslated()
+        total = sum(len(v) for v in stale.values())
+        assert not stale, (
+            f"{total} string(s) are still identical to English. Translate them, or, "
+            f"if one is the same word in that language, add it to EXPECTED_IDENTICAL "
+            f"in scripts/check_untranslated.py with the reason:\n"
+            + "\n".join(
+                f"  {lang} ({len(keys)}): " + ", ".join(keys[:5])
+                + (" ..." if len(keys) > 5 else "")
+                for lang, keys in stale.items()
+            )
+        )
+
+
+# ── Placeholder parity ─────────────────────────────────────────────────────────
+
+class TestPlaceholderParity:
+    """Every {placeholder} in an English string must survive translation.
+
+    ``_ts()`` ends with ``val.format(**kwargs)``. A placeholder dropped in
+    translation does not raise — the extra keyword is simply ignored — so the
+    string just comes out missing the value it exists to carry. That is how the
+    Danish and Swedish battery notifications lost their ``{entity_id}`` line and
+    named no entity for however long.
+    """
+
+    PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]*)?\}")
+
+    @staticmethod
+    def _leaves(node, prefix=""):
+        out = {}
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                out.update(TestPlaceholderParity._leaves(value, path))
+            elif isinstance(value, str):
+                out[path] = value
+        return out
+
+    def test_no_placeholder_is_lost_in_translation(self):
+        directory = Path(__file__).parent.parent / "translations"
+        english = self._leaves(_load_translation_file("en"))
+        problems = []
+        for path in sorted(directory.glob("*.json")):
+            if path.stem == "en":
+                continue
+            for key, value in self._leaves(
+                json.loads(path.read_text(encoding="utf-8"))
+            ).items():
+                if key not in english:
+                    continue
+                want = set(self.PLACEHOLDER.findall(english[key]))
+                got = set(self.PLACEHOLDER.findall(value))
+                if want != got:
+                    problems.append(
+                        f"{path.stem}: {key} — expected {sorted(want)}, got {sorted(got)}"
+                    )
+        assert not problems, (
+            f"{len(problems)} translated string(s) do not carry the same "
+            f"placeholders as en.json:\n" + "\n".join(problems)
         )
