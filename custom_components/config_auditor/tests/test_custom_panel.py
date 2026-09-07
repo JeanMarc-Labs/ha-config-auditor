@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import pytest
+import re
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, call
@@ -52,9 +53,15 @@ class TestStaticPathNotConflictingWithPanelURL:
             )
 
     def test_js_url_uses_domain_static(self):
+        """js_url must sit under /{DOMAIN}_static/, not /{DOMAIN}/.
+
+        The filename itself is built at runtime — the bundle is served as
+        `haca-panel.<hash>.js` so a new build cannot be served from cache — so
+        this checks the prefix, not a literal filename.
+        """
         src = self._read_source()
-        assert "_static/haca-panel.js" in src, (
-            "js_url must reference /{DOMAIN}_static/haca-panel.js, not /{DOMAIN}/haca-panel.js"
+        assert re.search(r'"js_url":\s*f?"/\{DOMAIN\}_static/', src), (
+            "js_url must reference /{DOMAIN}_static/<bundle>, not /{DOMAIN}/<bundle>"
         )
 
     def test_js_url_does_not_reference_bare_domain_path(self):
@@ -159,8 +166,8 @@ class TestRegisterPanelIntegration:
         # Create minimal www structure
         www = tmp_path / "www"
         www.mkdir()
-        (www / "haca-panel.js").write_text("// test")
-        (www / "haca-panel.hash").write_text("abcd1234")
+        (www / "haca-panel.js").write_text("// test", encoding="utf-8")
+        (www / "haca-panel.hash").write_text("abcd1234", encoding="utf-8")
 
         hass = MagicMock()
         hass.data = {}

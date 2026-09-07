@@ -272,6 +272,8 @@
       "unknown_device_id": "ukendt device_id"
     },
     "notifications": {
+      "copy_failed": "Kopiering mislykkedes",
+      "copied": "Kopieret",
       "new_issue": "Nyt problem opdaget",
       "new_issues": "nye problemer opdaget",
       "config_modified": "Konfiguration ændret",

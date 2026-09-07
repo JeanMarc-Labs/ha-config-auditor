@@ -272,6 +272,8 @@
       "unknown_device_id": "device_id inconnu"
     },
     "notifications": {
+      "copy_failed": "Échec de la copie",
+      "copied": "Copié",
       "new_issue": "Nouvelle issue détectée",
       "new_issues": "nouvelles issues détectées",
       "config_modified": "Configuration modifiée",

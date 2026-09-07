@@ -24,11 +24,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 class TestLLMApiSyntax:
     def test_llm_api_valid_syntax(self):
-        src = (Path(__file__).parent.parent / "llm_api.py").read_text()
+        src = (Path(__file__).parent.parent / "llm_api.py").read_text(encoding="utf-8")
         ast.parse(src)
 
     def test_mcp_server_valid_syntax(self):
-        src = (Path(__file__).parent.parent / "mcp_server.py").read_text()
+        src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
         ast.parse(src)
 
 
@@ -163,7 +163,7 @@ class TestAutoBackupDelegation:
     """_auto_backup must delegate to _tool_ha_backup_create (no duplication)."""
 
     def test_auto_backup_calls_tool(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text()
+        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
         # Find _auto_backup function body
         start = mcp_src.find("async def _auto_backup(")
         end   = mcp_src.find("\nasync def ", start + 1)
@@ -175,12 +175,12 @@ class TestAutoBackupDelegation:
             "_auto_backup must not duplicate BackupManager logic"
 
     def test_safe_write_and_reload_exists(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text()
+        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
         assert "async def _safe_write_and_reload(" in mcp_src, \
             "_safe_write_and_reload helper not found in mcp_server.py"
 
     def test_safe_write_and_reload_has_rollback(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text()
+        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
         start = mcp_src.find("async def _safe_write_and_reload(")
         end   = mcp_src.find("\nasync def ", start + 1)
         fn_body = mcp_src[start:end]
@@ -196,7 +196,7 @@ class TestDeepSearchTimeout:
     """deep_search must have a timeout to protect the event loop."""
 
     def test_wait_for_timeout_present(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text()
+        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
         start = mcp_src.find("async def _tool_ha_deep_search(")
         end   = mcp_src.find("\nasync def ", start + 1)
         fn_body = mcp_src[start:end]
@@ -212,7 +212,7 @@ class TestChatRateLimit:
     """_sendChatMessage must enforce rate limiting."""
 
     def test_rate_limit_in_js(self):
-        js_src = (Path(__file__).parent.parent / "www" / "src" / "core.js").read_text()
+        js_src = (Path(__file__).parent.parent / "www" / "src" / "core.js").read_text(encoding="utf-8")
         assert "_lastChatTime" in js_src, \
             "_lastChatTime rate limit variable not found in haca-panel.js"
         assert "3000" in js_src, \
