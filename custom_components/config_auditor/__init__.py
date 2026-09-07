@@ -132,6 +132,12 @@ from pathlib import Path as _Path
 # bloquant dans l'event loop (violation asyncio détectée par HA Python 3.14).
 _TS_CACHE: dict[str, dict] = {}   # {lang: {section: {key: value}}}
 
+# The same files, kept in their raw "panel" shape. The panel navigates from
+# ``panel.*`` and would not find a key in the merged tree above, so the two
+# forms are cached side by side rather than re-read from disk on every
+# ``haca/get_translations`` — a ~130 KB JSON parse per panel open.
+_TS_PANEL_CACHE: dict[str, dict] = {}   # {lang: raw "panel" subtree}
+
 
 def _ts(hass, section: str, key: str, **kwargs) -> str:
     """Get a translation string from in-memory cache (never does file I/O).
@@ -180,7 +186,7 @@ async def _async_preload_ts_cache(hass: "HomeAssistant") -> None:
                 merged.setdefault(key, {}).update(val)
             else:
                 merged[key] = val
-        return path.stem, merged
+        return path.stem, merged, panel
 
     def _list_translations() -> list[_Path]:
         """Blocking glob — must run in executor."""
@@ -192,8 +198,9 @@ async def _async_preload_ts_cache(hass: "HomeAssistant") -> None:
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for res in results:
         if isinstance(res, tuple):
-            lang_code, panel = res
-            _TS_CACHE[lang_code] = panel
+            lang_code, merged, raw_panel = res
+            _TS_CACHE[lang_code] = merged
+            _TS_PANEL_CACHE[lang_code] = raw_panel
     _LOGGER.debug("[HACA] Translation cache loaded: %s languages", len(_TS_CACHE))
 
 
@@ -401,6 +408,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def async_update_data() -> dict[str, Any]:
         """Update data."""
         _LOGGER.debug("Running scheduled scan")
+
+        # Seven analyzers ask for the haca_ignore set. Opening the window here
+        # means one registry walk per scan instead of one per analyzer; the
+        # slot is reset at every refresh, so a label added between two scans is
+        # picked up by the next one.
+        from .translation_utils import begin_haca_ignore_scan
+        begin_haca_ignore_scan(hass)
 
         # Catégories exclues configurées dans le panel HACA
         excluded: set = set(entry.options.get("excluded_categories", []))
@@ -768,6 +782,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_method=async_update_data,
         update_interval=timedelta(minutes=scan_interval) if scan_interval > 0 else None,
     )
+
+    # ── Tell the panel when a scan lands ──────────────────────────────────
+    # `haca_scan_complete` used to be fired only by the manual scan paths, so
+    # the panel had no way of knowing a scheduled scan had produced new data
+    # and polled `haca/get_data` every 60 seconds — for data that changes once
+    # an hour. Firing it here as well lets the panel refresh on the event and
+    # keep the timer as a mere safety net.
+    @callback
+    def _fire_scan_complete() -> None:
+        hass.bus.async_fire("haca_scan_complete", {
+            "entry_id": entry.entry_id,
+            "success": True,
+            "scheduled": True,
+        })
+
+    unsub_scan_complete = coordinator.async_add_listener(_fire_scan_complete)
     
     # In-memory state-change counter — see noisy_tracker.py for why this
     # exists. Listens to EVENT_STATE_CHANGED so HACA can flag noisy
@@ -789,6 +819,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "entry": entry,
+        "_unsub_scan_complete": unsub_scan_complete,
         "_scan_in_progress": False,
         "automation_analyzer": automation_analyzer,
         "entity_analyzer": entity_analyzer,
@@ -1151,8 +1182,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:
         pass
 
-    # Stop the in-memory state-change tracker (releases the bus listener).
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
+
+    # Release the coordinator listener that fires haca_scan_complete.
+    _unsub = entry_data.get("_unsub_scan_complete")
+    if callable(_unsub):
+        try:
+            _unsub()
+        except Exception:  # noqa: BLE001 — unloading must not fail over this
+            pass
+
+    # Stop the in-memory state-change tracker (releases the bus listener).
     tracker = entry_data.get("noisy_tracker")
     if tracker is not None:
         try:

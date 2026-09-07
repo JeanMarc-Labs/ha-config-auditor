@@ -4597,6 +4597,26 @@ def _resolve_blueprint_path(hass: "HomeAssistant", path_ref: str) -> tuple[str |
     return os.path.normpath(fpath), None
 
 
+async def _async_resolve_blueprint_path(
+    hass: "HomeAssistant", path_ref: str
+) -> tuple[str | None, dict | None, bool]:
+    """``_resolve_blueprint_path`` plus an existence check, off the event loop.
+
+    The guard calls ``os.path.realpath`` (which follows symlinks) and the
+    callers then stat the result: four blocking filesystem calls that Home
+    Assistant now logs a warning for. Returns ``(path, error, exists)``.
+    """
+    import os
+
+    def _work() -> tuple[str | None, dict | None, bool]:
+        fpath, err = _resolve_blueprint_path(hass, path_ref)
+        if err:
+            return None, err, False
+        return fpath, None, os.path.isfile(fpath)
+
+    return await hass.async_add_executor_job(_work)
+
+
 async def _tool_ha_list_blueprints(hass: HomeAssistant, params: dict) -> dict:
     """List all installed blueprints (automation + script domains)."""
     import os
@@ -4604,37 +4624,51 @@ async def _tool_ha_list_blueprints(hass: HomeAssistant, params: dict) -> dict:
     bp_base = hass.config.path("blueprints")
     results: list[dict] = []
 
-    if not os.path.isdir(bp_base):
+    def _walk_blueprints() -> list[tuple[str, str, str, str]] | None:
+        """(domain, path, rel_path, filename) for every blueprint on disk.
+
+        ``os.walk`` is the one genuinely expensive filesystem call in this
+        module; it runs here in the executor, together with the two isdir()
+        probes that used to sit on the event loop in front of it.
+        """
+        if not os.path.isdir(bp_base):
+            return None
+        found: list[tuple[str, str, str, str]] = []
+        for domain in ("automation", "script"):
+            if domain_filter and domain_filter != domain:
+                continue
+            domain_dir = os.path.join(bp_base, domain)
+            if not os.path.isdir(domain_dir):
+                continue
+            for root, _dirs, files in os.walk(domain_dir):
+                for fname in sorted(files):
+                    if not fname.endswith(".yaml"):
+                        continue
+                    fpath = os.path.join(root, fname)
+                    found.append((domain, fpath, os.path.relpath(fpath, bp_base), fname))
+        return found
+
+    walked = await hass.async_add_executor_job(_walk_blueprints)
+    if walked is None:
         return {"blueprints": [], "message": "No blueprints directory found."}
 
-    for domain in ("automation", "script"):
-        if domain_filter and domain_filter != domain:
-            continue
-        domain_dir = os.path.join(bp_base, domain)
-        if not os.path.isdir(domain_dir):
-            continue
-        for root, _dirs, files in os.walk(domain_dir):
-            for fname in sorted(files):
-                if not fname.endswith(".yaml"):
-                    continue
-                fpath = os.path.join(root, fname)
-                rel_path = os.path.relpath(fpath, bp_base)
-                try:
-                    # HA's loader, not safe_load: !input is a standard HA tag
-                    # and PyYAML has no constructor for it, so every real
-                    # blueprint used to come back as {"path", "error"}.
-                    data = await hass.async_add_executor_job(load_yaml_ha, str(fpath))
-                    bp_meta = data.get("blueprint", {}) if isinstance(data, dict) else {}
-                    results.append({
-                        "domain": domain,
-                        "path": rel_path,
-                        "name": bp_meta.get("name", fname),
-                        "description": bp_meta.get("description", ""),
-                        "source_url": bp_meta.get("source_url", ""),
-                        "inputs": list(bp_meta.get("input", {}).keys()),
-                    })
-                except Exception as exc:
-                    results.append({"domain": domain, "path": rel_path, "error": str(exc)})
+    for domain, fpath, rel_path, fname in walked:
+        try:
+            # HA's loader, not safe_load: !input is a standard HA tag
+            # and PyYAML has no constructor for it, so every real
+            # blueprint used to come back as {"path", "error"}.
+            data = await hass.async_add_executor_job(load_yaml_ha, str(fpath))
+            bp_meta = data.get("blueprint", {}) if isinstance(data, dict) else {}
+            results.append({
+                "domain": domain,
+                "path": rel_path,
+                "name": bp_meta.get("name", fname),
+                "description": bp_meta.get("description", ""),
+                "source_url": bp_meta.get("source_url", ""),
+                "inputs": list(bp_meta.get("input", {}).keys()),
+            })
+        except Exception as exc:
+            results.append({"domain": domain, "path": rel_path, "error": str(exc)})
 
     return {
         "blueprints": results,
@@ -4649,11 +4683,11 @@ async def _tool_ha_get_blueprint(hass: HomeAssistant, params: dict) -> dict:
     if not path_ref:
         return {"error": "path required (relative to /config/blueprints/, e.g. 'automation/haca/my_bp.yaml')"}
 
-    fpath, err = _resolve_blueprint_path(hass, path_ref)
+    fpath, err, exists = await _async_resolve_blueprint_path(hass, path_ref)
     if err:
         return err
 
-    if not os.path.isfile(fpath):
+    if not exists:
         return {"error": f"Blueprint file not found: {fpath}"}
 
     try:
@@ -4687,11 +4721,11 @@ async def _tool_ha_update_blueprint(hass: HomeAssistant, params: dict) -> dict:
     # Backup automatique avant opération destructive
     await _auto_backup(hass, "_tool_ha_update_blueprint")
 
-    fpath, err = _resolve_blueprint_path(hass, path_ref)
+    fpath, err, exists = await _async_resolve_blueprint_path(hass, path_ref)
     if err:
         return err
 
-    if not os.path.isfile(fpath):
+    if not exists:
         return {"error": f"Blueprint file not found: {fpath}. Use ha_create_blueprint to create it."}
 
     # Field-level patching is gone: it round-tripped the file through
@@ -4742,11 +4776,11 @@ async def _tool_ha_remove_blueprint(hass: HomeAssistant, params: dict) -> dict:
     # Safety: must really resolve inside /config/blueprints/. A bare
     # startswith() on the joined path let "../../secrets.yaml" through, since
     # the unresolved string still began with the base directory.
-    fpath, err = _resolve_blueprint_path(hass, path_ref)
+    fpath, err, exists = await _async_resolve_blueprint_path(hass, path_ref)
     if err:
         return {"error": "Cannot delete files outside /config/blueprints/"}
 
-    if not os.path.isfile(fpath):
+    if not exists:
         return {"error": f"Blueprint file not found: {fpath}"}
 
     try:
@@ -4916,7 +4950,7 @@ async def _tool_ha_import_blueprint(hass: HomeAssistant, params: dict) -> dict:
     bp_base = hass.config.path("blueprints")
     out_dir = os.path.join(bp_base, domain, "imported")
     out_path = os.path.join(out_dir, f"{slug}.yaml")
-    if not is_within(out_path, bp_base):
+    if not await hass.async_add_executor_job(is_within, out_path, bp_base):
         return {"error": "Refusing to write outside /config/blueprints/"}
     await hass.async_add_executor_job(os.makedirs, out_dir, 0o755, True)
 
@@ -5465,12 +5499,18 @@ async def _tool_ha_get_config_file(hass: HomeAssistant, params: dict) -> dict:
     else:
         fpath = hass.config.path(filename)
 
-    config_root = os.path.realpath(hass.config.config_dir)
-    fpath_real  = os.path.realpath(fpath)
+    # realpath() follows symlinks and isfile() stats: three blocking calls,
+    # grouped into one executor hop.
+    def _resolve_for_read() -> tuple[str, str, bool]:
+        root = os.path.realpath(hass.config.config_dir)
+        real = os.path.realpath(fpath)
+        return root, real, os.path.isfile(real)
+
+    config_root, fpath_real, _is_file = await hass.async_add_executor_job(_resolve_for_read)
     if not fpath_real.startswith(config_root + os.sep) and fpath_real != config_root:
         return {"error": f"Cannot read files outside {config_root}"}
 
-    if not os.path.isfile(fpath_real):
+    if not _is_file:
         return {"error": f"File not found: {fpath_real}"}
 
     try:
@@ -5530,8 +5570,13 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
         fpath = hass.config.path(filename)
 
     # Path traversal protection — os.path.realpath résout les symlinks et les ../
-    config_root = os.path.realpath(hass.config.config_dir)
-    fpath_real  = os.path.realpath(fpath)
+    # Both resolutions, plus the packages/ test below, in one executor hop.
+    def _resolve_for_write() -> tuple[str, str, bool]:
+        root = os.path.realpath(hass.config.config_dir)
+        real = os.path.realpath(fpath)
+        return root, real, is_within(real, os.path.join(root, "packages"))
+
+    config_root, fpath_real, in_packages = await hass.async_add_executor_job(_resolve_for_write)
     if not fpath_real.startswith(config_root + os.sep) and fpath_real != config_root:
         return {"error": f"Cannot write files outside {config_root} (resolved: {fpath_real})"}
 
@@ -5540,7 +5585,6 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
     # separator, so that branch could never fire and every package write was
     # refused. It now runs on the RESOLVED path, after the traversal guard, so
     # `packages/../secrets.yaml` cannot ride in on the prefix.
-    in_packages = is_within(fpath_real, os.path.join(config_root, "packages"))
     if basename not in _ALLOWED and not in_packages:
         return {
             "error": (

@@ -210,13 +210,51 @@ class TranslationHelper:
         return template
 
 
+# ── haca_ignore: one registry walk per scan ─────────────────────────────────
+# Seven analyzers ask for this set, and each answer used to mean a full walk of
+# the entity registry plus one of the device registry. `begin_haca_ignore_scan`
+# opens a cache window at the top of a coordinator refresh; the first analyzer
+# to ask fills it and the other six read it. Outside that window — a direct
+# call from a test or an ad-hoc tool — nothing is cached and the behaviour is
+# exactly what it was.
+_IGNORE_CACHE_KEY = "_haca_ignore_cache"
+
+
+def begin_haca_ignore_scan(hass) -> None:
+    """Open (and reset) the per-scan cache of haca_ignore entity ids."""
+    try:
+        from .const import DOMAIN
+        hass.data.setdefault(DOMAIN, {})[_IGNORE_CACHE_KEY] = None
+    except Exception:  # noqa: BLE001 — caching is an optimisation, never a requirement
+        _LOGGER.debug("[HACA] could not open the haca_ignore cache window")
+
+
+def _ignore_cache_store(hass) -> dict | None:
+    """The dict holding the cache slot, or None when no window is open."""
+    try:
+        from .const import DOMAIN
+        store = hass.data.get(DOMAIN)
+        if isinstance(store, dict) and _IGNORE_CACHE_KEY in store:
+            return store
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
     """Return the full set of entity_ids that should be ignored by HACA.
 
     Checks both entity_registry (label on the entity itself) and
     device_registry (label on the device — all its entities are then ignored).
+
+    Within a scan window opened by :func:`begin_haca_ignore_scan` the result is
+    computed once and shared. Treat the returned set as read-only.
     """
     from homeassistant.helpers import entity_registry as er, device_registry as dr
+
+    store = _ignore_cache_store(hass)
+    if store is not None and store[_IGNORE_CACHE_KEY] is not None:
+        return store[_IGNORE_CACHE_KEY]
 
     ignored: set[str] = set()
     try:
@@ -237,5 +275,7 @@ async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
     except Exception as exc:
         _LOGGER.warning("[HACA] Error building haca_ignore set: %s", exc)
 
+    if store is not None:
+        store[_IGNORE_CACHE_KEY] = ignored
     _LOGGER.debug("[HACA] haca_ignore: %d entity_ids will be skipped", len(ignored))
     return ignored

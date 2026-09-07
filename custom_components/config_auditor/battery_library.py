@@ -35,6 +35,11 @@ class BatteryLibrary:
     def __init__(self, hass) -> None:
         self.hass = hass
         self._entries: list[dict] = []
+        # manufacturer (normalised) -> entries, in library order. The
+        # manufacturer is always compared for exact equality, so it makes a
+        # perfect hash key: a lookup only ever walks the handful of entries
+        # that share the device's brand instead of all ~2100 of them.
+        self._by_manufacturer: dict[str, list[dict]] = {}
         self._user_count = 0
         self._loaded = False
 
@@ -55,6 +60,7 @@ class BatteryLibrary:
         seed = await self.hass.async_add_executor_job(self._load_from_disk, self._seed_path)
         user = await self.hass.async_add_executor_job(self._load_from_disk, self._user_path)
         self._entries = _merge_entries(seed or [], user or [])
+        self._by_manufacturer = _build_index(self._entries)
         self._user_count = len(user or [])
         self._loaded = bool(self._entries)
         _LOGGER.info(
@@ -75,28 +81,36 @@ class BatteryLibrary:
             return []
 
     def lookup(self, manufacturer: str, model: str, hw_version: str = "") -> dict | None:
-        """Return {'battery_type', 'battery_quantity'} or None if unknown."""
+        """Return {'battery_type', 'battery_quantity'} or None if unknown.
+
+        Entries are normalised once at load time and grouped by manufacturer,
+        so this walks only the entries of the device's own brand. It used to
+        scan the whole library and re-run ``strip().lower()`` on every field of
+        every entry, for every device — around 640 000 iterations per scan on
+        an installation with 300 battery devices.
+        """
         if not manufacturer or not model:
             return None
         mfr = manufacturer.strip().lower()
         mdl = model.strip().lower()
         hw  = (hw_version or "").strip().lower()
 
-        for entry in self._entries:
-            e_mfr = str(entry.get("manufacturer", "")).strip().lower()
-            e_mdl = str(entry.get("model", "")).strip().lower()
-            if e_mfr != mfr:
-                continue
-            method = entry.get("model_match_method", "exact")
-            if method == "exact" and e_mdl != mdl:
-                continue
-            if method == "startswith" and not mdl.startswith(e_mdl):
-                continue
-            if method == "endswith" and not mdl.endswith(e_mdl):
-                continue
-            if method == "contains" and e_mdl not in mdl:
-                continue
-            e_hw = str(entry.get("hw_version", "")).strip().lower()
+        for entry in self._by_manufacturer.get(mfr, ()):
+            e_mdl = entry[_K_MODEL]
+            method = entry[_K_METHOD]
+            if method == "exact":
+                if e_mdl != mdl:
+                    continue
+            elif method == "startswith":
+                if not mdl.startswith(e_mdl):
+                    continue
+            elif method == "endswith":
+                if not mdl.endswith(e_mdl):
+                    continue
+            elif method == "contains":
+                if e_mdl not in mdl:
+                    continue
+            e_hw = entry[_K_HW]
             if e_hw and e_hw != hw:
                 continue
             btype = entry.get("battery_type", "")
@@ -126,6 +140,32 @@ class BatteryLibrary:
     def user_path(self) -> str:
         """Public path of the user's own library file — the one to edit."""
         return self._user_path
+
+
+# Normalised fields cached on each entry at load time. Prefixed so they cannot
+# collide with a key coming from the JSON library.
+_K_MODEL  = "_haca_model"
+_K_HW     = "_haca_hw"
+_K_METHOD = "_haca_method"
+
+
+def _build_index(entries: list[dict]) -> dict[str, list[dict]]:
+    """Normalise every entry once, then group them by manufacturer.
+
+    Order inside a manufacturer bucket is the library order, so a user entry
+    still shadows the bundled one it replaces — ``lookup`` takes the first
+    match, exactly as it did over the flat list.
+    """
+    index: dict[str, list[dict]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        mfr = str(entry.get("manufacturer", "")).strip().lower()
+        entry[_K_MODEL]  = str(entry.get("model", "")).strip().lower()
+        entry[_K_HW]     = str(entry.get("hw_version", "")).strip().lower()
+        entry[_K_METHOD] = str(entry.get("model_match_method", "exact") or "exact").strip().lower()
+        index.setdefault(mfr, []).append(entry)
+    return index
 
 
 def _entry_key(entry: dict) -> tuple[str, str, str, str]:

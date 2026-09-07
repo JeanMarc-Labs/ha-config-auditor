@@ -165,6 +165,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             DOMAIN, service, _admin_only(hass, handler), **kwargs
         )
     
+    from .translation_utils import begin_haca_ignore_scan
+
     _scan_lock = asyncio.Lock()
 
     async def handle_scan_all(call: ServiceCall) -> None:
@@ -200,6 +202,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         coordinator = data["coordinator"]
         
         async def _run_scan():
+            # Fresh registry walk for this scan — see begin_haca_ignore_scan.
+            begin_haca_ignore_scan(hass)
             await automation_analyzer.analyze_all()
             
             # Mettre à jour le coordinator avec les nouvelles données séparées
@@ -258,6 +262,8 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         coordinator = data["coordinator"]
         
         async def _run_scan():
+            # Fresh registry walk for this scan — see begin_haca_ignore_scan.
+            begin_haca_ignore_scan(hass)
             issues = await entity_analyzer.analyze_all(
                 automation_analyzer.automation_configs,
                 automation_analyzer.script_configs,
