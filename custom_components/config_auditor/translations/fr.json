@@ -447,11 +447,11 @@
       "mark_replaced_done": "Pile marquée comme remplacée",
       "edit_library_link": "✏️ Éditer la bibliothèque HACA",
       "bn_edit_modal_title": "Étendre la bibliothèque de piles HACA",
-      "bn_edit_modal_body": "HACA inclut un fichier de bibliothèque de piles intégré. Ouvrez-le dans un éditeur de texte (via l'add-on File Editor, SSH ou Studio Code Server), puis ajoutez une nouvelle entrée dans le tableau « devices ».",
-      "bn_step1_title": "Ouvrir le fichier de bibliothèque",
-      "bn_step1_detail": "Ouvrez ce fichier existant dans l'éditeur de votre choix — il contient déjà toutes les entrées seed :",
+      "bn_edit_modal_body": "HACA embarque une bibliothèque de batteries intégrée. Plutôt que de la modifier, ajoutez vos appareils dans votre propre fichier : HACA le lit par-dessus la bibliothèque intégrée, et une mise à jour de HACA n'y touche jamais.",
+      "bn_step1_title": "Créez votre propre fichier de bibliothèque",
+      "bn_step1_detail": "Créez ce fichier avec un éditeur de texte (module File Editor, SSH ou Studio Code Server). Il se trouve dans votre dossier de configuration, hors de l'intégration :",
       "bn_step2_title": "Ajouter un nouvel appareil au tableau « devices »",
-      "bn_step2_detail": "Insérez un nouvel objet JSON dans le tableau « devices » (n'oubliez pas la virgule entre les entrées). Trouvez le fabricant et le modèle exact de votre appareil dans HA : Paramètres → Appareils et services → cliquez sur votre appareil. Exemple à copier :",
+      "bn_step2_detail": "Copiez ceci comme contenu du fichier, puis ajoutez un objet par appareil dans le tableau \"devices\". Retrouvez le fabricant et le modèle exacts dans HA : Paramètres → Appareils et services → cliquez sur votre appareil.",
       "bn_step3_title": "Redémarrer Home Assistant",
       "bn_step3_detail": "Après redémarrage, HACA recharge la bibliothèque mise à jour et l'utilise pour détecter les types de piles. Les nouvelles entrées apparaissent dès le prochain scan.",
       "bn_fields_label": "Référence des champs :",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "ex : \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "entier, nombre de piles (1, 2, 3, ...) — omettre si 1",
       "bn_field_match_help": "optionnel : \"exact\" (défaut), \"startswith\", \"endswith\" ou \"contains\" — utile pour les variantes de modèle",
-      "bn_warning_overwrite": "Important : ce fichier est écrasé lors d'une mise à jour de HACA. Conservez une sauvegarde de vos ajouts avant la mise à jour."
+      "bn_warning_overwrite": "Ce fichier est hors du dossier de l'intégration : une mise à jour de HACA ne l'écrase jamais. Une entrée ajoutée ici est aussi prioritaire sur la bibliothèque intégrée."
     },
     "issues": {
+      "truncated": "{shown} problèmes affichés sur {total} — la liste est plafonnée par le serveur.",
       "open_dashboard": "Ouvrir le dashboard",
       "optimize": "Optimiser",
       "complexity_score_title": "Score complexité {score}/100 — optimisable",

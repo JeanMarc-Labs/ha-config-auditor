@@ -668,11 +668,14 @@ class TestSceneNotInEntityIssues:
 
         a = _make_entity_analyzer(hass)
         a._ignored_entity_ids = set()
-        # Simulate scene referenced in automation but missing from states
-        a._entity_references = {
+        # Simulate scene referenced in automation but missing from states.
+        # Zombie detection reads the *strong* map (explicit `entity_id:` fields).
+        refs = {
             "scene.missing_scene": ["automation.test_auto"],
             "sensor.missing_sensor": ["automation.test_auto"],
         }
+        a._entity_references = dict(refs)
+        a._strong_entity_references = dict(refs)
         a._automation_alias_map = {"automation.test_auto": "Test Auto"}
         await a._analyze_zombie_entities()
 

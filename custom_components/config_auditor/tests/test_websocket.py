@@ -10,6 +10,8 @@ WS_FILE   = Path(__file__).parent.parent / "websocket.py"
 CONTENT   = WS_FILE.read_text(encoding="utf-8")
 MCP_FILE  = Path(__file__).parent.parent / "mcp_server.py"
 MCP_CONTENT = MCP_FILE.read_text(encoding="utf-8")
+YAML_SOURCES_FILE = Path(__file__).parent.parent / "yaml_sources.py"
+YAML_SOURCES_CONTENT = YAML_SOURCES_FILE.read_text(encoding="utf-8")
 
 
 # ── Handler registration ──────────────────────────────────────────────────────
@@ -177,9 +179,36 @@ class TestApplyFieldFix:
     """handle_apply_field_fix must write atomically and match by entity_id."""
 
     def test_atomic_write(self):
-        """YAML must be written atomically (tmp file + os.replace)."""
-        assert "_os.replace(" in CONTENT or "os.replace(" in CONTENT, \
-            "apply_field_fix must use atomic write (os.replace)"
+        """YAML must be written atomically (tmp file + os.replace).
+
+        The write itself lives in yaml_sources.write_roundtrip_yaml, which is
+        what apply_field_fix calls.
+        """
+        assert "write_roundtrip_yaml(" in CONTENT, \
+            "apply_field_fix must write through yaml_sources.write_roundtrip_yaml"
+        assert "os.replace(tmp, path)" in YAML_SOURCES_CONTENT, \
+            "write_roundtrip_yaml must use atomic write (os.replace)"
+
+    def test_roundtrip_write_preserves_comments(self):
+        """The field fix must not flatten the user's file (ruamel round-trip)."""
+        assert "yaml.preserve_quotes = True" in YAML_SOURCES_CONTENT, \
+            "write path must use ruamel round-trip, not yaml.safe_load/dump"
+        assert "_yaml.dump(data" not in CONTENT, \
+            "apply_field_fix must no longer re-dump the whole file with PyYAML"
+
+    def test_backup_before_write(self):
+        """A backup must be taken before the YAML is rewritten."""
+        fn_start = CONTENT.find("async def handle_apply_field_fix(")
+        body = CONTENT[fn_start:fn_start + 3000]
+        assert "_create_backup(" in body, \
+            "apply_field_fix must back the file up before writing"
+
+    def test_uses_shared_domain_resolver(self):
+        """Split configs: the entry may not live in <config>/automations.yaml."""
+        assert 'hass.config.config_dir) / ("scripts.yaml"' not in CONTENT, \
+            "apply_field_fix must not hardcode the flat YAML paths"
+        assert "_find_entry_sync(" in CONTENT, \
+            "apply_field_fix must locate the entry through the shared resolver"
 
     def test_supported_fields_only(self):
         """Only description and alias are supported fields."""
@@ -189,9 +218,16 @@ class TestApplyFieldFix:
 
     def test_entity_id_primary_match(self):
         """Match must use entity_id / id as primary key, not alias fallback."""
-        # The function must match by item_id == slug (HA numeric id)
-        assert 'item_id == slug' in CONTENT or 'item.get("id"' in CONTENT, \
-            "apply_field_fix must match automation by its numeric id"
+        # The first matching pass of the resolver compares the HA numeric id
+        # to the entity_id slug; alias passes only run after it.
+        resolver = CONTENT[CONTENT.index("def _find_entry_sync("):]
+        resolver = resolver[:resolver.index("\n\n\n")]
+        # Automation branch: the id pass must come before any alias pass.
+        automation_passes = resolver[resolver.rindex("passes = ["):]
+        by_id = automation_passes.index('e.get("id", "")).strip() == slug')
+        by_alias = automation_passes.index('e.get("alias", "")')
+        assert by_id < by_alias, \
+            "apply_field_fix must match an automation by its numeric id first"
 
 
 # ── MCP tools: backup before destructive ops ─────────────────────────────────

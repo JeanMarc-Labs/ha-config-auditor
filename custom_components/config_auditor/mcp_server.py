@@ -58,6 +58,7 @@ from .yaml_sources import (
     read_plain_yaml,
     scan_list_domain,
     scan_named_domain,
+    skipped_note,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -2403,16 +2404,8 @@ def _read_plain_yaml(path: str):
 
 
 def _skipped_note(skipped: list[str]) -> str:
-    """One sentence naming the files skipped above, or '' when there are none."""
-    if not skipped:
-        return ""
-    names = ", ".join(Path(p).name for p in skipped)
-    return (
-        f" {len(skipped)} file(s) could not be parsed for editing and were not "
-        f"searched: {names}. Usually a Home Assistant tag (!secret, !include) "
-        f"that cannot be safely rewritten, sometimes a syntax error — an entry "
-        f"defined in one of those is edited by hand."
-    )
+    """One sentence naming the files skipped above — see yaml_sources."""
+    return skipped_note(skipped)
 
 
 async def _async_scan_list_domain(

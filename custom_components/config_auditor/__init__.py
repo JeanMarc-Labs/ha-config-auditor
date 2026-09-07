@@ -694,7 +694,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 automation_configs=automation_analyzer.automation_configs,
                 script_configs=automation_analyzer.script_configs,
                 scene_configs=automation_analyzer.scene_configs,
-                entity_references=dict(entity_analyzer.entity_references),
+                # Explicit `entity_id:` references only. The full map also holds
+                # the entities reached through an `area_id` / `label_id` target,
+                # which is right for "is this entity used?" but would add one
+                # graph edge per entity of the area — a rendered graph that grows
+                # with the size of the house rather than with the config.
+                entity_references=dict(entity_analyzer.strong_entity_references),
                 alias_map=entity_analyzer.automation_alias_map,
                 all_issues=all_flat_issues,
             )

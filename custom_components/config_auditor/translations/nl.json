@@ -447,11 +447,11 @@
       "mark_replaced_done": "Batterij gemarkeerd als vervangen",
       "edit_library_link": "✏️ HACA-bibliotheek bewerken",
       "bn_edit_modal_title": "HACA-batterijbibliotheek uitbreiden",
-      "bn_edit_modal_body": "HACA bevat een ingebouwd batterijbibliotheek-bestand. Open het in een teksteditor (via File Editor-add-on, SSH of Studio Code Server) en voeg een nieuwe entry toe in de \"devices\" array.",
-      "bn_step1_title": "Open het bibliotheekbestand",
-      "bn_step1_detail": "Open dit bestaande bestand in je favoriete editor — het bevat al alle seed-entries:",
+      "bn_edit_modal_body": "HACA bevat een ingebouwde batterijbibliotheek. Bewerk die niet, maar zet je apparaten in je eigen bibliotheekbestand: HACA leest dat bovenop de ingebouwde, en een HACA-update raakt het nooit aan.",
+      "bn_step1_title": "Maak je eigen bibliotheekbestand",
+      "bn_step1_detail": "Maak dit bestand met een teksteditor (File Editor-add-on, SSH of Studio Code Server). Het staat in je configuratiemap, buiten de integratie:",
       "bn_step2_title": "Voeg een nieuw apparaat toe aan de \"devices\" array",
-      "bn_step2_detail": "Voeg een nieuw JSON-object toe in de \"devices\" array (vergeet de komma tussen de entries niet). Vind de exacte fabrikant en het model van je apparaat in HA: Instellingen → Apparaten en diensten → klik op je apparaat. Voorbeeld-entry om te kopiëren:",
+      "bn_step2_detail": "Kopieer dit als inhoud van het bestand en voeg per apparaat één object toe in de array \"devices\". Zoek de exacte fabrikant en het model op in HA: Instellingen → Apparaten en diensten → klik op je apparaat.",
       "bn_step3_title": "Home Assistant herstarten",
       "bn_step3_detail": "Na herstart laadt HACA de bijgewerkte bibliotheek opnieuw en gebruikt deze om batterijtypes te detecteren. Nieuwe items verschijnen direct in de volgende batterijscan.",
       "bn_fields_label": "Veld-referentie:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "bv. \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "geheel getal, aantal batterijen (1, 2, 3, ...) — weglaten bij 1",
       "bn_field_match_help": "optioneel: \"exact\" (standaard), \"startswith\", \"endswith\" of \"contains\" — handig voor modelvarianten",
-      "bn_warning_overwrite": "Belangrijk: dit bestand wordt overschreven bij een HACA-update. Bewaar een back-up van je toevoegingen vóór de update."
+      "bn_warning_overwrite": "Dit bestand staat buiten de integratiemap, dus een HACA-update overschrijft het nooit. Een vermelding hier gaat bovendien vóór de ingebouwde bibliotheek."
     },
     "issues": {
+      "truncated": "{shown} van {total} problemen weergegeven — de lijst wordt door de server begrensd.",
       "open_dashboard": "Dashboard openen",
       "optimize": "Optimaliseren",
       "complexity_score_title": "Complexiteitsscore {score}/100 — optimaliseerbaar",
