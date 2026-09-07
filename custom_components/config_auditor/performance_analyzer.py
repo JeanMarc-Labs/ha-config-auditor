@@ -6,20 +6,12 @@ import fnmatch
 import logging
 import os
 import re
-from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from .const import (
     DOMAIN,
-    ISSUE_HIGH_FREQUENCY,
-    ISSUE_VERY_HIGH_FREQUENCY,
-    ISSUE_BURST_PATTERN,
-    HIGH_FREQUENCY_TRIGGERS_PER_HOUR,
-    VERY_HIGH_FREQUENCY_TRIGGERS_PER_HOUR,
-    BURST_TRIGGERS_IN_MINUTES,
-    BURST_WINDOW_MINUTES,
 )
 from .translation_utils import TranslationHelper
 from .yaml_sources import load_yaml_any, resolve_packages_sources, walk_yaml_dir

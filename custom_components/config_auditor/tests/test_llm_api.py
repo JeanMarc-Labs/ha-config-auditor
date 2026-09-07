@@ -69,7 +69,6 @@ class TestInputSchemaToVol:
         assert isinstance(result, vol.Schema)
 
     def test_required_string_field(self):
-        import voluptuous as vol
         schema = self._convert({
             "type": "object",
             "required": ["name"],
@@ -80,7 +79,6 @@ class TestInputSchemaToVol:
         assert result["name"] == "test"
 
     def test_optional_field_with_default(self):
-        import voluptuous as vol
         schema = self._convert({
             "type": "object",
             "properties": {
@@ -91,7 +89,6 @@ class TestInputSchemaToVol:
         assert result.get("limit") == 50
 
     def test_enum_field(self):
-        import voluptuous as vol
         schema = self._convert({
             "type": "object",
             "properties": {
@@ -135,7 +132,6 @@ class TestHacaToolRouting:
         # Patch the handler to avoid real HA calls
         fake_result = {"success": True, "issues": []}
         with patch.dict(TOOL_HANDLERS, {tool_name: AsyncMock(return_value=fake_result)}):
-            from custom_components.config_auditor.llm_api import HacaTool as HT
             from homeassistant.helpers.llm import ToolInput
             tool_input = ToolInput(tool_name=tool_name, tool_args={})
             result = await tool.async_call(mock_hass, tool_input, mock_context)
@@ -214,9 +210,9 @@ class TestChatRateLimit:
     def test_rate_limit_in_js(self):
         js_src = (Path(__file__).parent.parent / "www" / "src" / "core.js").read_text(encoding="utf-8")
         assert "_lastChatTime" in js_src, \
-            "_lastChatTime rate limit variable not found in haca-panel.js"
+            "_lastChatTime rate limit variable not found in www/src/core.js"
         assert "3000" in js_src, \
-            "3000ms rate limit not found in haca-panel.js"
+            "3000ms rate limit not found in www/src/core.js"
 
 
 # ── Prompt injection hardening ────────────────────────────────────────────────

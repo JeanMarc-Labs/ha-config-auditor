@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import re
 import json
-import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from custom_components.config_auditor.tests.conftest import panel_bundle_path
+
 BASE = Path(__file__).parent.parent
 SRC  = BASE / "www" / "src"
-BUNDLE = BASE / "www" / "haca-panel.js"
 FR_JSON = BASE / "translations" / "fr.json"
+BUNDLE = panel_bundle_path()
 
 
 def get_panel_keys():
@@ -37,6 +41,26 @@ class TestBundleFreshness:
 
     def test_bundle_exists(self):
         assert BUNDLE.exists(), f"Compiled bundle not found: {BUNDLE}"
+
+    def test_only_one_bundle_is_shipped(self):
+        """build.sh emits haca-panel.<hash>.js and nothing else.
+
+        Up to 1.8.0 it also wrote a byte-identical haca-panel.js, which nothing
+        loaded: 656 KB of dead weight in the repository and in every HACS
+        download. The build now deletes it, so a copy reappearing means someone
+        restored the old script or copied a file by hand.
+        """
+        www = BASE / "www"
+        assert not (www / "haca-panel.js").exists(), (
+            "www/haca-panel.js is back. Only the hashed bundle is served — "
+            "run www/build.sh, which deletes this file."
+        )
+        hashed = sorted(p.name for p in www.glob("haca-panel.*.js")
+                        if re.fullmatch(r"haca-panel\.[0-9a-f]{8}\.js", p.name))
+        assert len(hashed) == 1, (
+            f"expected exactly one hashed bundle in www/, found {hashed} — "
+            "build.sh cleans up older ones, so a leftover means a stale copy"
+        )
 
     def test_bundle_has_reasonable_size(self):
         size = BUNDLE.stat().st_size
@@ -165,7 +189,7 @@ class TestTranslationCoverage:
             extra = lang_keys - fr_keys
             if missing or extra:
                 errors.append(f"{f.stem}: missing={len(missing)}, extra={len(extra)}")
-        assert not errors, f"Translation file key mismatches:\n" + "\n".join(errors)
+        assert not errors, "Translation file key mismatches:\n" + "\n".join(errors)
 
 
 # ── _buildActionPrompt coverage ──────────────────────────────────────────────
@@ -203,7 +227,7 @@ class TestBuildActionPromptCoverage:
             if f"'{issue_type}'" not in ai_explain and f'"{issue_type}"' not in ai_explain:
                 missing.append(issue_type)
         assert not missing, (
-            f"Issue types with no action prompt in _buildActionPrompt:\n"
+            "Issue types with no action prompt in _buildActionPrompt:\n"
             + "\n".join(f"  ❌ {t}" for t in missing)
         )
 

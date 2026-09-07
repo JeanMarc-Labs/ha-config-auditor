@@ -3312,7 +3312,6 @@ async def _tool_ha_get_logbook(hass: HomeAssistant, params: dict) -> dict:
     limit = int(params.get("limit", 50))
 
     try:
-        from homeassistant.components.logbook.queries.common import PSEUDO_EVENT_STATE_CHANGED
         from homeassistant.components import logbook
 
         entity_ids = [entity_id] if entity_id else None
@@ -3345,7 +3344,6 @@ async def _tool_ha_get_logbook(hass: HomeAssistant, params: dict) -> dict:
     except Exception as exc:
         # Fallback: use recorder directly
         try:
-            from homeassistant.components.recorder import get_instance
             return {
                 "success": False,
                 "error": f"Logbook API unavailable: {exc}",
@@ -3485,7 +3483,6 @@ async def _tool_ha_config_set_helper(hass: HomeAssistant, params: dict) -> dict:
                 service_data["duration"] = options["duration"]
 
         # Create via entity_component config create
-        from homeassistant.helpers import entity_component
         component = hass.data.get(helper_type)
 
         if component and hasattr(component, "async_create_entity"):
@@ -4678,7 +4675,6 @@ async def _tool_ha_list_blueprints(hass: HomeAssistant, params: dict) -> dict:
 
 async def _tool_ha_get_blueprint(hass: HomeAssistant, params: dict) -> dict:
     """Read the full YAML of an installed blueprint."""
-    import os
     path_ref = params.get("path", "").strip()
     if not path_ref:
         return {"error": "path required (relative to /config/blueprints/, e.g. 'automation/haca/my_bp.yaml')"}
@@ -4713,7 +4709,6 @@ async def _tool_ha_get_blueprint(hass: HomeAssistant, params: dict) -> dict:
 
 async def _tool_ha_update_blueprint(hass: HomeAssistant, params: dict) -> dict:
     """Replace an existing blueprint file with new YAML, written verbatim."""
-    import os
     path_ref = params.get("path", "").strip()
     if not path_ref:
         return {"error": "path required (relative to /config/blueprints/)"}
@@ -5247,9 +5242,6 @@ async def _tool_ha_get_helper(hass: HomeAssistant, params: dict) -> dict:
     if state is None:
         return {"error": f"Helper '{entity_id}' not found in HA state machine"}
 
-    er = hass.data.get("entity_registry") or hass.data.get(
-        "homeassistant.components.entity_registry.ent_reg", {}
-    )
     try:
         from homeassistant.helpers import entity_registry as er_mod
         registry = er_mod.async_get(hass)
@@ -5546,7 +5538,7 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
     Can do: full replace, line replace, or append.
     ALWAYS validate with ha_check_config after editing configuration.yaml.
     """
-    import os, re as _re
+    import os
     filename = params.get("filename", "").strip()
     content  = params.get("content")
     mode     = params.get("mode", "replace").lower()  # replace | append | patch_line

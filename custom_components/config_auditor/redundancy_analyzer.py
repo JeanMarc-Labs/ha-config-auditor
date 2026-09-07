@@ -10,7 +10,6 @@ Detects three classes of redundancy across all automation configs:
 from __future__ import annotations
 
 import logging
-import re
 from collections import defaultdict
 from typing import Any
 

@@ -14,10 +14,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Le module repairs.py a été retiré du package actif (MODULE_8_HA_REPAIRS désactivé).
-# Ces tests sont conservés comme archive de régression mais sont désactivés.
+# ARCHIVE — these tests target the pre-1.7 Repairs design: a HacaFixFlow with
+# init/confirm steps, a module-level async_create_fix_flow and _sanitize_ph, and
+# an `issues` section that had been dropped from the translation files.
+# repairs.py is live again (__init__.py wires async_update_repairs into the
+# coordinator, gated by the `repairs_enabled` option) but it only publishes
+# issues now — none of the symbols below exist any more, so all 30 of these
+# fail on import. Kept as a record of the regressions the old flow had; rewrite
+# or delete rather than un-skipping.
 # ---------------------------------------------------------------------------
-pytestmark = pytest.mark.skip(reason="repairs.py retiré du package actif (MODULE_8 désactivé)")
+pytestmark = pytest.mark.skip(reason="tests the pre-1.7 HacaFixFlow design, removed from repairs.py")
 
 import sys
 from pathlib import Path
@@ -78,7 +84,7 @@ class TestRepairsFlowStepMethods:
     def test_async_create_fix_flow_returns_haca_fix_flow(self):
         """async_create_fix_flow must return a HacaFixFlow, not a plain RepairsFlow."""
         import inspect
-        from custom_components.config_auditor.repairs import async_create_fix_flow, HacaFixFlow
+        from custom_components.config_auditor.repairs import async_create_fix_flow
         sig = inspect.signature(async_create_fix_flow)
         # Must accept (hass, issue_id, data)
         params = list(sig.parameters)

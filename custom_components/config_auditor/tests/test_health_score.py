@@ -7,7 +7,6 @@ score = max(20, round(100 - Σ penalty_c))
 """
 from __future__ import annotations
 
-import pytest
 import sys
 from pathlib import Path
 

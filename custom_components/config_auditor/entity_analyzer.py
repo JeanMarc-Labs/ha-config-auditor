@@ -10,7 +10,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     entity_registry as er,
     device_registry as dr,
-    area_registry as ar,
 )
 
 from .translation_utils import TranslationHelper

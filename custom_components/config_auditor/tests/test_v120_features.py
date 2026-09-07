@@ -25,7 +25,7 @@ from custom_components.config_auditor.tests.conftest import (
     MockHass,
     MockRegistryEntry,
     MockEntityRegistry,
-    MockState,
+    panel_bundle_path,
 )
 
 
@@ -782,14 +782,14 @@ class TestEdgeCases:
 
 class TestJSBundleSmoke:
     """
-    Vérifie que le bundle haca-panel.js contient les patterns critiques.
+    Vérifie que le bundle haca-panel.<hash>.js contient les patterns critiques.
     Ces tests auraient attrapé les 3 bugs signalés par l'utilisateur :
       1. Clé de traduction dans panel.actions (pas la racine)
       2. Event hass-more-info via window.parent (pas this.dispatchEvent)
       3. Logique denylist pour domaines (pas whitelist incomplète)
     """
 
-    BUNDLE = Path(__file__).parent.parent / "www" / "haca-panel.js"
+    BUNDLE = panel_bundle_path()
 
     def _text(self):
         return self.BUNDLE.read_text(encoding="utf-8")

@@ -153,14 +153,24 @@ ha-config-auditor/
         │   ├── fr.json
         │   └── en.json
         ├── www/
-        │   └── haca-panel.js    # Frontend (compiled bundle)
+        │   ├── src/                     # Frontend sources (22 modules)
+        │   ├── build.sh                 # Concatenates them into the bundle
+        │   ├── haca-panel.<hash>.js     # The bundle the panel loads
+        │   └── haca-panel.hash          # That hash
         └── tests/
             ├── conftest.py
             └── test_*.py
 ```
 
-The frontend source is in `www/src/` (not included in the HACS repository).  
-To modify the frontend, clone the separate development repository.
+The frontend sources are in `www/src/`. After editing one, rebuild the bundle:
+
+```bash
+bash custom_components/config_auditor/www/build.sh
+```
+
+The build writes a single `haca-panel.<hash>.js` — the hash is the cache-bust,
+so the URL changes on every rebuild and no browser or service worker can serve a
+stale copy. Commit the new bundle and the new `haca-panel.hash` together.
 
 ---
 
@@ -168,26 +178,37 @@ To modify the frontend, clone the separate development repository.
 
 ### Requirements
 
-- Python 3.12+
+- Python 3.14+ (the test suite imports the real `homeassistant` package, and
+  current Core releases require it)
 - Home Assistant in development mode or via Docker
 
 ### Setup
 
 ```bash
 git clone https://github.com/JeanMarc-Labs/ha-config-auditor
-cd ha-config-auditor/custom_components/config_auditor
+cd ha-config-auditor
 
 # Install test dependencies
-pip install pytest pytest-asyncio homeassistant PyYAML fpdf2 --break-system-packages
+pip install -r requirements_test.txt
 ```
 
 ### Running tests
 
 ```bash
-python3 -m pytest tests/ -v
+python3 -m pytest custom_components/config_auditor/tests -q
 # With short traceback
-python3 -m pytest tests/ -v --tb=short
+python3 -m pytest custom_components/config_auditor/tests -v --tb=short
 ```
+
+### Linting
+
+```bash
+ruff check .
+```
+
+`ruff.toml` enables pyflakes only (`F`) and the tree is clean against it, so any
+finding is yours. The same four checks run on every push and pull request from
+`.github/workflows/validate.yml`: hassfest, HACS, pytest, ruff.
 
 ### Local deployment for testing
 

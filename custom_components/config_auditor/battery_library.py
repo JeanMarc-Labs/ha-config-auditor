@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 

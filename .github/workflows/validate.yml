@@ -1,0 +1,68 @@
+name: Validate
+
+# Nothing checked this repository before 1.8.0: no hassfest, no HACS check, and
+# the 24 test files in custom_components/config_auditor/tests were never run
+# outside a developer's machine. That is how the 1.7.7 split-config fix reached
+# a release having missed two functions.
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so a Home Assistant release that breaks the integration shows up
+    # here rather than in a user's log.
+    - cron: "0 4 * * 1"
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Both of these are default-store requirements that a custom
+          # repository does not have to meet: `brands` wants an entry in
+          # home-assistant/brands, `topics` wants GitHub topics on the repo.
+          # Drop them from this list if H.A.C.A is ever submitted to the
+          # default HACS store.
+          ignore: brands topics
+
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The suite imports the real homeassistant package (see
+          # tests/conftest.py), and current Core releases require 3.14.
+          python-version: "3.14"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements_test.txt
+      - run: python -m pytest custom_components/config_auditor/tests -q
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install ruff
+      # Configuration lives in ruff.toml: pyflakes only, and the tree is clean
+      # against it. Widen the rule set there, never with a flag here.
+      - run: ruff check --output-format=github .

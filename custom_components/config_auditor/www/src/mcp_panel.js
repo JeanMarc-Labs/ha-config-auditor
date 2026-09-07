@@ -314,6 +314,10 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
 
   var mcpUrl    = (mcpStatus  && mcpStatus.full_url) || '/api/haca_mcp';
   var mcpSnippet = (mcpStatus && mcpStatus.claude_code_snippet) || '';
+  // Since 1.8.0 the MCP server is an option, off on a new install. Everything
+  // below still renders — the endpoint and the tool list are what you need to
+  // decide whether to switch it on — but say plainly that it is not answering.
+  var mcpActive  = !mcpStatus || mcpStatus.active !== false;
   var agentActive    = agentStatus && agentStatus.active;
   var correlations   = (agentStatus && agentStatus.correlations) || [];
   var lastReport     = (agentStatus && agentStatus.last_weekly_report) || null;
@@ -489,6 +493,15 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
       '<p style="margin:6px 0 14px;font-size:13px;color:var(--secondary-text-color);">' +
         _t('mcp.subtitle') +
       '</p>' +
+
+      // Server off
+      (mcpActive ? '' :
+        '<div style="background:rgba(var(--rgb-primary-color),0.08);border:1px solid var(--primary-color);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px;">' +
+          '<span style="font-size:16px;flex-shrink:0;">⏻</span>' +
+          '<span style="font-size:12px;color:var(--primary-text-color);line-height:1.5;">' +
+            _t('mcp.disabled_notice') +
+          '</span>' +
+        '</div>') +
 
       // IP warning
       '<div style="background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.3);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px;">' +

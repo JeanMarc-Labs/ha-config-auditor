@@ -1,0 +1,21 @@
+# Minimal ruff configuration for H.A.C.A.
+#
+# Only pyflakes (`F`) is enabled. The codebase predates any linter, so turning on
+# the full default set would bury real findings under thousands of style
+# warnings. `F` is the subset that only ever reports genuine dead code or
+# genuine mistakes — unused imports and variables, undefined names, f-strings
+# with no placeholders — and the tree is clean against it as of 1.8.0.
+#
+# Widen `select` one rule family at a time, each with the cleanup that makes it
+# pass; never add a rule that lands red.
+
+target-version = "py313"
+line-length = 120
+
+extend-exclude = [
+    "custom_components/config_auditor/www",   # generated JS bundle
+    "custom_components/config_auditor/data",  # bundled battery library
+]
+
+[lint]
+select = ["F"]

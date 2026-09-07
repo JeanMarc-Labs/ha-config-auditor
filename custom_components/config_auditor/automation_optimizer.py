@@ -218,7 +218,7 @@ class AutomationOptimizer:
         backup_path = await self._create_backup(entity_id)
 
         try:
-            result = await self.hass.async_add_executor_job(
+            await self.hass.async_add_executor_job(
                 self._write_automations, entity_id, docs
             )
             return {

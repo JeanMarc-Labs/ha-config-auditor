@@ -272,7 +272,6 @@ class TestHacaIgnoreInAutomationAnalyzer:
     async def test_is_ignored_returns_true_after_load(self):
         hass = MockHass()
         hass.add_registry_entry(MockRegistryEntry("automation.skip_me", labels={"haca_ignore"}))
-        import custom_components.config_auditor.automation_analyzer as _aa_mod
         with patch("custom_components.config_auditor.automation_analyzer.TranslationHelper") as TH:
             TH.return_value.t = lambda key, **kw: key
             TH.return_value.async_load_language = AsyncMock()

@@ -13,7 +13,7 @@ import pytest
 import re
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -45,7 +45,6 @@ class TestStaticPathNotConflictingWithPanelURL:
         src = self._read_source()
         # The www_dir StaticPathConfig must NOT be /{DOMAIN}" (bare)
         # Allowed patterns: /_static suffix OR /haca-cards (separate from panel URL)
-        import re
         static_lines = [l for l in src.split("\n") if "StaticPathConfig" in l and "www_dir" in l]
         for line in static_lines:
             assert "_static" in line or "CARDS_URL_BASE" in line, (
@@ -140,7 +139,6 @@ class TestStaticPathRegistrationSafety:
     def test_cache_headers_true(self):
         src = self._read_source()
         # www_dir StaticPathConfig must use cache_headers=True (not False)
-        import re
         static_with_www = [l for l in src.split("\n") if "StaticPathConfig" in l and "www_dir" in l]
         for line in static_with_www:
             assert "cache_headers=False" not in line, (
@@ -166,7 +164,7 @@ class TestRegisterPanelIntegration:
         # Create minimal www structure
         www = tmp_path / "www"
         www.mkdir()
-        (www / "haca-panel.js").write_text("// test", encoding="utf-8")
+        (www / "haca-panel.abcd1234.js").write_text("// test", encoding="utf-8")
         (www / "haca-panel.hash").write_text("abcd1234", encoding="utf-8")
 
         hass = MagicMock()
@@ -175,7 +173,7 @@ class TestRegisterPanelIntegration:
         hass.http.async_register_static_paths = AsyncMock()
 
         with patch("custom_components.config_auditor.custom_panel.Path") as MockPath, \
-             patch("custom_components.config_auditor.custom_panel.frontend") as mock_fe:
+             patch("custom_components.config_auditor.custom_panel.frontend") as _mock_fe:
             # Make Path(__file__).parent resolve to tmp_path
             MockPath.return_value.parent = tmp_path
             MockPath.side_effect = lambda *args: Path(*args)

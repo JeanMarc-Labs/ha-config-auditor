@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import ast
 import json
 from pathlib import Path
 from collections import Counter
@@ -120,7 +119,6 @@ class TestToolRegistry:
 
     def test_all_tools_have_description(self):
         """Every tool block must have a non-empty description."""
-        declared = set(re.findall(r'"name":\s*"(ha_\w+|haca_\w+)"', CONTENT))
         # Check each declared tool has a 'description' key within 800 chars of its name
         no_desc = []
         for m in re.finditer(r'"name":\s*"(ha_\w+|haca_\w+)"', CONTENT):
@@ -183,7 +181,7 @@ class TestNoHardcodedLanguage:
             for m in re.finditer(pat, CONTENT):
                 line_no = CONTENT[:m.start()].count('\n') + 1
                 found.append(f"L{line_no}: {m.group()}")
-        assert not found, f"French error messages found:\n" + "\n".join(found)
+        assert not found, "French error messages found:\n" + "\n".join(found)
 
     def test_no_mixed_language_messages(self):
         """Messages should not mix French and English."""

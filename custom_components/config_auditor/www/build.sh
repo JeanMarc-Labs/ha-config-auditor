@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # H.A.C.A Frontend Build Script
 #
-# Concatenates src/*.js in order and writes TWO files:
-#   - haca-panel.js              (canonical, kept for back-compat / tools)
-#   - haca-panel.<hash>.js       (the file actually loaded by the panel)
+# Concatenates src/*.js in order and writes ONE bundle:
+#   - haca-panel.<hash>.js       (the file the panel loads)
+#   - haca-panel.hash            (that hash, for custom_panel.py and the tests)
 #
 # The hashed filename is the cache-bust mechanism. Browsers and (more
 # importantly) the HA frontend service worker cannot serve a stale copy of
@@ -11,13 +11,15 @@
 # (`?v=<hash>`) was unreliable across some users because the SW could
 # intercept and ignore the query string.
 #
-# Old `haca-panel.<oldhash>.js` files in this directory are cleaned up so
-# the integration folder doesn't accumulate dead artefacts.
+# Up to 1.8.0 an identical copy was also written as `haca-panel.js`, for
+# back-compat with tooling that never materialised: 656 KB of dead weight in
+# the repository and in every HACS download. Old `haca-panel.<oldhash>.js`
+# files, and that canonical copy if it is still lying around, are cleaned up
+# so the integration folder doesn't accumulate dead artefacts.
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$SCRIPT_DIR/src"
-OUT="$SCRIPT_DIR/haca-panel.js"
 
 MODULES=(
   config_tab.js
@@ -51,28 +53,32 @@ for mod in "${MODULES[@]}"; do
   echo "" >> "$TMP"
 done
 
-# Compute content hash (first 8 chars of SHA256) for cache-busting
+# Compute content hash (first 8 chars of SHA256) for cache-busting. The name
+# is the hash, so the bundle is written straight to its final path — this is
+# the only file the build produces, and what custom_panel.py registers with HA.
 HASH=$(sha256sum "$TMP" | cut -c1-8)
-HEADER="// HACA-BUILD: $HASH  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "$HEADER" | cat - "$TMP" > "$OUT"
-rm "$TMP"
-
-# Hashed copy — this is what custom_panel.py registers with HA.
 HASHED_OUT="$SCRIPT_DIR/haca-panel.$HASH.js"
-cp "$OUT" "$HASHED_OUT"
+HEADER="// HACA-BUILD: $HASH  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "$HEADER" | cat - "$TMP" > "$HASHED_OUT"
+rm "$TMP"
 
 # Clean up older hashed bundles (any haca-panel.XXXXXXXX.js whose hash is
 # not the current one). Matches exactly 8 hex chars between the dots so we
 # don't touch anything else.
-for old in "$SCRIPT_DIR"/haca-panel.*.js; do
+for old in "$SCRIPT_DIR"/haca-panel.js "$SCRIPT_DIR"/haca-panel.*.js; do
   [ -e "$old" ] || continue
   base=$(basename "$old")
-  # Match: haca-panel.<8 hex>.js
+  # Match: haca-panel.js (the retired canonical copy), or haca-panel.<8 hex>.js
+  # from an earlier build.
+  is_stale_hashed=false
   if [[ "$base" =~ ^haca-panel\.[0-9a-f]{8}\.js$ ]] && [[ "$base" != "haca-panel.$HASH.js" ]]; then
+    is_stale_hashed=true
+  fi
+  if [[ "$base" == "haca-panel.js" ]] || [[ "$is_stale_hashed" == true ]]; then
     rm -f "$old"
     echo "🧹 removed stale bundle: $base"
   fi
 done
 
 echo "$HASH" > "$SCRIPT_DIR/haca-panel.hash"
-echo "✅ haca-panel.js + haca-panel.$HASH.js built — hash: $HASH  ($(wc -l < "$OUT") lines)"
+echo "✅ haca-panel.$HASH.js built — hash: $HASH  ($(wc -l < "$HASHED_OUT") lines)"

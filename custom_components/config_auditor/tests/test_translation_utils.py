@@ -13,7 +13,6 @@ import json
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -90,7 +89,6 @@ class TestAsyncLoadLanguageSection:
         """async_load_language_section must NOT clobber the analyzer section."""
         h = make_helper()
         h.load_language("en")
-        analyzer_key = list(h._translations.keys())[0]
         # Loading ai_prompts replaces _translations with ai_prompts content
         await h.async_load_language_section("en", "ai_prompts")
         # Now _translations contains ai_prompts, not analyzer
@@ -185,7 +183,7 @@ class TestTranslationFilesCompleteness:
         en_keys = self._flatten(self._load("en"))
         fr_keys = self._flatten(self._load("fr"))
         missing = en_keys - fr_keys
-        assert not missing, f"Keys in en.json missing from fr.json:\n" + "\n".join(sorted(missing))
+        assert not missing, "Keys in en.json missing from fr.json:\n" + "\n".join(sorted(missing))
 
     @pytest.mark.parametrize("lang", _OTHER_LANGUAGES)
     def test_all_en_keys_exist_in_each_language(self, lang):
@@ -342,4 +340,34 @@ class TestSourceCodeKeyReferences:
         assert not missing, (
             f"Source code references {len(missing)} translation key(s) "
             f"that are absent from en.json:\n" + "\n".join(missing)
+        )
+
+
+# ── Dead keys ──────────────────────────────────────────────────────────────────
+
+class TestNoDeadPanelKeys:
+    """The other direction of TestSourceCodeKeyReferences: a key that exists in
+    the language files but that nothing reads any more.
+
+    84 of them had piled up by 1.8.0 — an abandoned MCP-token screen, the old
+    redundancy tab labels, a config screen that had been rewritten — roughly
+    1 100 strings spread over the 13 files, all of them hand-translated and none
+    of them ever displayed. Detection lives in ``scripts/check_translation_keys.py``
+    so the same rules can be run standalone during a cleanup.
+    """
+
+    def test_no_dead_panel_keys(self):
+        root = Path(__file__).parent.parent.parent.parent
+        sys.path.insert(0, str(root / "scripts"))
+        from check_translation_keys import find_dead_keys
+
+        dead, total, scanned = find_dead_keys()
+        assert total > 500, f"Only {total} panel keys found — is en.json being read?"
+        assert scanned > 20, f"Only {scanned} source files scanned"
+        assert not dead, (
+            f"{len(dead)} panel translation key(s) are referenced nowhere in the "
+            f"sources (~{len(dead) * 13} dead strings). Remove them from all 13 "
+            f"language files, or, if one is built at runtime, teach "
+            f"scripts/check_translation_keys.py about the pattern:\n"
+            + "\n".join(f"  panel.{k}" for k in dead)
         )

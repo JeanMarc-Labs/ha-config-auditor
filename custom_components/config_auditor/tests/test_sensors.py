@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, PropertyMock
 
 # Minimal stubs for HA classes
 import sys

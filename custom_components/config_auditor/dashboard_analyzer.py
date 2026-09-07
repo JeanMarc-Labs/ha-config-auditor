@@ -21,8 +21,6 @@ from typing import Any
 import yaml
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import device_registry as dr
 # Note: entity_registry intentionally NOT used here.
 # Lovelace shows "Entity not found" when the entity has no state in hass.states,
 # regardless of whether it exists in the registry (disabled, ghost entries, etc.).

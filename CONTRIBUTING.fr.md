@@ -153,14 +153,26 @@ ha-config-auditor/
         │   ├── fr.json
         │   └── en.json
         ├── www/
-        │   └── haca-panel.js    # Frontend (bundle compilé)
+        │   ├── src/                     # Sources du frontend (22 modules)
+        │   ├── build.sh                 # Les concatène en un bundle
+        │   ├── haca-panel.<hash>.js     # Le bundle chargé par le panneau
+        │   └── haca-panel.hash          # Ce hash
         └── tests/
             ├── conftest.py
             └── test_*.py
 ```
 
-Le frontend source se trouve dans `www/src/` (non inclus dans le dépôt HACS).  
-Pour modifier le frontend, cloner le dépôt de développement séparé.
+Les sources du frontend se trouvent dans `www/src/`. Après avoir modifié l'une
+d'elles, reconstruire le bundle :
+
+```bash
+bash custom_components/config_auditor/www/build.sh
+```
+
+Le build écrit un seul `haca-panel.<hash>.js` — le hash est le cache-bust, donc
+l'URL change à chaque reconstruction et ni le navigateur ni le service worker ne
+peuvent servir une copie périmée. Committer le nouveau bundle et le nouveau
+`haca-panel.hash` ensemble.
 
 ---
 
@@ -168,26 +180,37 @@ Pour modifier le frontend, cloner le dépôt de développement séparé.
 
 ### Prérequis
 
-- Python 3.12+
+- Python 3.14+ (la suite de tests importe le vrai paquet `homeassistant`, et
+  les versions actuelles du Core l'exigent)
 - Home Assistant installé en mode développement ou via Docker
 
 ### Installation
 
 ```bash
 git clone https://github.com/JeanMarc-Labs/ha-config-auditor
-cd ha-config-auditor/custom_components/config_auditor
+cd ha-config-auditor
 
 # Installer les dépendances de test
-pip install pytest pytest-asyncio homeassistant PyYAML fpdf2 --break-system-packages
+pip install -r requirements_test.txt
 ```
 
 ### Lancer les tests
 
 ```bash
-python3 -m pytest tests/ -v
-# Avec couverture
-python3 -m pytest tests/ -v --tb=short
+python3 -m pytest custom_components/config_auditor/tests -q
+# Avec trace courte
+python3 -m pytest custom_components/config_auditor/tests -v --tb=short
 ```
+
+### Linter
+
+```bash
+ruff check .
+```
+
+`ruff.toml` n'active que pyflakes (`F`) et l'arbre est propre — toute remontée
+vient donc de vous. Les mêmes quatre contrôles tournent à chaque push et chaque
+pull request via `.github/workflows/validate.yml` : hassfest, HACS, pytest, ruff.
 
 ### Déploiement local pour test
 

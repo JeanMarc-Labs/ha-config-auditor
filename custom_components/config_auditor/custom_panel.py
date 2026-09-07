@@ -16,6 +16,7 @@ Reference: https://community.home-assistant.io/t/974909
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,12 @@ _LOGGER = logging.getLogger(__name__)
 _STATIC_PATHS_KEY = f"{DOMAIN}_static_paths_registered"
 _CARDS_PATH_KEY = f"{DOMAIN}_cards_path_registered"
 _CARDS_REGISTERED_KEY = f"{DOMAIN}_cards_registered"
+
+# ── Panel bundle ───────────────────────────────────────────────────────────
+# www/build.sh emits one bundle, named after the hash of its own contents, and
+# www/haca-panel.hash records that hash. This matches the name so a bundle can
+# still be found when the hash file is missing or stale.
+_BUNDLE_NAME_RE = re.compile(r"haca-panel\.([0-9a-f]{8})\.js")
 
 # ── Base URL for card JS files ─────────────────────────────────────────────
 CARDS_URL_BASE = "/haca-cards"
@@ -253,19 +260,30 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     www_dir = integration_dir / "www"
 
     def _probe_bundle() -> tuple[str, bool, bool]:
-        """Read the bundle hash and stat the two paths — one executor hop.
+        """Read the bundle hash and look for the bundle — one executor hop.
 
         Everything here touches the filesystem, so it stays off the event loop:
         Home Assistant warns about a blocking call for a bare `exists()` too.
+
+        Only ``haca-panel.<hash>.js`` is shipped. When the hash file is missing
+        or names a bundle that is not on disk, any hashed bundle that *is* there
+        still loads the panel and its own name still busts the cache, so the
+        directory is scanned before giving up.
         """
+        www_exists = www_dir.is_dir()
+        if not www_exists:
+            return VERSION.replace(".", "_"), False, False
         try:
             cache_bust = (www_dir / "haca-panel.hash").read_text(encoding="utf-8").strip()
-        except Exception:  # noqa: BLE001 — no hash file: fall back to the version
+        except Exception:  # noqa: BLE001 — no hash file: look at what shipped
             cache_bust = ""
-        cache_bust = cache_bust or VERSION.replace(".", "_")
-        www_exists = www_dir.is_dir()
-        hashed_exists = www_exists and (www_dir / f"haca-panel.{cache_bust}.js").is_file()
-        return cache_bust, www_exists, hashed_exists
+        if cache_bust and (www_dir / f"haca-panel.{cache_bust}.js").is_file():
+            return cache_bust, True, True
+        for path in sorted(www_dir.glob("haca-panel.*.js")):
+            found = _BUNDLE_NAME_RE.fullmatch(path.name)
+            if found:
+                return found.group(1), True, True
+        return cache_bust or VERSION.replace(".", "_"), True, False
 
     try:
         cache_bust, www_exists, hashed_exists = await hass.async_add_executor_job(_probe_bundle)
@@ -314,10 +332,16 @@ async def async_register_panel(hass: HomeAssistant) -> None:
         # so the URL itself changes with every rebuild. This is immune to
         # browser cache AND to the HA frontend service worker, which had been
         # observed serving stale `haca-panel.js?v=…` to some users despite
-        # the query-string bust. If the hashed file is somehow missing on
-        # disk, fall back to the canonical filename so the panel still loads.
-        hashed_name = f"haca-panel.{cache_bust}.js"
-        bundle_filename = hashed_name if hashed_exists else "haca-panel.js"
+        # the query-string bust.
+        bundle_filename = f"haca-panel.{cache_bust}.js"
+        if not hashed_exists:
+            # Register anyway: the sidebar entry and this log line are what tell
+            # the user which file the browser will fail to fetch.
+            _LOGGER.error(
+                "No panel bundle in %s — expected %s. Reinstall H.A.C.A, or run "
+                "www/build.sh if you are working from a checkout.",
+                www_dir, bundle_filename,
+            )
 
         frontend.async_register_built_in_panel(
             hass,
