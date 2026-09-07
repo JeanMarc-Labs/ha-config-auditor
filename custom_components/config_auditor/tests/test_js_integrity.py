@@ -16,7 +16,7 @@ FR_JSON = BASE / "translations" / "fr.json"
 
 def get_panel_keys():
     """Flatten all keys under panel.* in fr.json."""
-    data = json.loads(FR_JSON.read_text())
+    data = json.loads(FR_JSON.read_text(encoding="utf-8"))
     panel = data.get("panel", {})
     def flatten(d, prefix=""):
         keys = set()
@@ -45,7 +45,7 @@ class TestBundleFreshness:
 
     def test_bundle_contains_buildactionprompt(self):
         """_buildActionPrompt must be present in compiled bundle."""
-        content = BUNDLE.read_text()
+        content = BUNDLE.read_text(encoding="utf-8")
         assert "_buildActionPrompt" in content, (
             "_buildActionPrompt missing from compiled bundle. "
             "Run build.sh to recompile."
@@ -53,7 +53,7 @@ class TestBundleFreshness:
 
     def test_bundle_contains_redundancy_direct_chat(self):
         """_showRedundancyAI must use _openChatWithMessage directly, not suggestion modal."""
-        content = BUNDLE.read_text()
+        content = BUNDLE.read_text(encoding="utf-8")
         assert "_showRedundancyAI" in content
         # Must NOT contain the old suggestion pattern
         assert "Suggestion IA" not in content, \
@@ -63,7 +63,7 @@ class TestBundleFreshness:
 
     def test_bundle_contains_area_direct_chat(self):
         """_showAreaSuggestionAI must go directly to chat."""
-        content = BUNDLE.read_text()
+        content = BUNDLE.read_text(encoding="utf-8")
         assert "_showAreaSuggestionAI" in content
         # Must NOT call haca/explain_issue
         bundle_area_idx = content.find("_showAreaSuggestionAI")
@@ -73,7 +73,7 @@ class TestBundleFreshness:
 
     def test_no_explainwithai_called_for_blueprint(self):
         """Blueprint button must not call explainWithAI."""
-        content = BUNDLE.read_text()
+        content = BUNDLE.read_text(encoding="utf-8")
         # Find blueprint-ai-btn handler
         idx = content.find("blueprint-ai-btn")
         if idx >= 0:
@@ -104,7 +104,7 @@ class TestNoSuggestionPrompts:
         fpath = SRC / filename
         if not fpath.exists():
             pytest.skip(f"{filename} not found")
-        content = fpath.read_text()
+        content = fpath.read_text(encoding="utf-8")
         for pat in self.BAD_PATTERNS:
             assert not re.search(pat, content, re.IGNORECASE), (
                 f"Suggestion-style pattern '{pat}' found in {filename}. "
@@ -112,7 +112,7 @@ class TestNoSuggestionPrompts:
             )
 
     def test_no_suggestion_pattern_in_bundle(self):
-        content = BUNDLE.read_text()
+        content = BUNDLE.read_text(encoding="utf-8")
         for pat in self.BAD_PATTERNS:
             assert not re.search(pat, content, re.IGNORECASE), (
                 f"Suggestion-style pattern '{pat}' found in compiled bundle."
@@ -128,7 +128,7 @@ class TestTranslationCoverage:
         panel_keys = get_panel_keys()
         js_keys = set()
         for f in SRC.glob("*.js"):
-            content = f.read_text()
+            content = f.read_text(encoding="utf-8")
             for m in re.finditer(r"""this\.t\(['"]([a-z_][a-z0-9_.]+)['"]\)""", content):
                 k = m.group(1)
                 if "." in k:
@@ -149,7 +149,7 @@ class TestTranslationCoverage:
         for f in sorted(trans_dir.glob("*.json")):
             if f.stem == "fr":
                 continue
-            data = json.loads(f.read_text())
+            data = json.loads(f.read_text(encoding="utf-8"))
             panel = data.get("panel", {})
             def flatten(d, prefix=""):
                 keys = set()
@@ -197,7 +197,7 @@ class TestBuildActionPromptCoverage:
 
     def test_actionable_types_handled_in_source(self):
         """Each actionable issue type must have a branch in _buildActionPrompt."""
-        ai_explain = (SRC / "ai_explain.js").read_text()
+        ai_explain = (SRC / "ai_explain.js").read_text(encoding="utf-8")
         missing = []
         for issue_type in self.ACTIONABLE_TYPES:
             if f"'{issue_type}'" not in ai_explain and f'"{issue_type}"' not in ai_explain:
@@ -209,7 +209,7 @@ class TestBuildActionPromptCoverage:
 
     def test_buildactionprompt_returns_null_for_informational(self):
         """Purely informational issues should return null (fall back to explainWithAI)."""
-        ai_explain = (SRC / "ai_explain.js").read_text()
+        ai_explain = (SRC / "ai_explain.js").read_text(encoding="utf-8")
         assert "return null;" in ai_explain, \
             "_buildActionPrompt must return null for informational issues (fallback to explainWithAI)"
 

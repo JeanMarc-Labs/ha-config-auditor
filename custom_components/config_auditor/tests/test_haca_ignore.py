@@ -523,7 +523,7 @@ class TestHaCreateAutomationFormat:
             "triggers": [{"platform": "sun", "event": "sunset"}],
             "actions": [{"service": "light.turn_on", "target": {"entity_id": "light.z"}}],
         })
-        saved = _yaml.safe_load((tmp_path / "automations.yaml").read_text())
+        saved = _yaml.safe_load((tmp_path / "automations.yaml").read_text(encoding="utf-8"))
         assert len(saved) == 1
         auto = saved[0]
         assert "triggers" in auto, "Must use 'triggers' key in YAML"

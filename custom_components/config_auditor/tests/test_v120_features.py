@@ -33,6 +33,13 @@ from custom_components.config_auditor.tests.conftest import (
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+# `packages:` is nested under `homeassistant:` and has no default location: a
+# `packages/` folder Home Assistant was never told about is simply not loaded.
+# A test that expects its automations to be audited has to declare it, exactly
+# as a real installation does.
+PACKAGES_DECLARATION = "homeassistant:\n  packages: !include_dir_named packages/\n"
+
+
 def _make_hass(tmp_path):
     hass = MockHass(config_dir=str(tmp_path))
     (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
@@ -62,7 +69,7 @@ class TestMultiSourceAutomationLoading:
     async def test_loads_from_automations_yaml(self, tmp_path):
         import yaml
         automations = [{"id": "auto1", "alias": "Alarm", "trigger": [], "action": []}]
-        (tmp_path / "automations.yaml").write_text(yaml.dump(automations))
+        (tmp_path / "automations.yaml").write_text(yaml.dump(automations), encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry([
             MockRegistryEntry("automation.alarm", platform="automation", unique_id="auto1")
@@ -84,8 +91,8 @@ class TestMultiSourceAutomationLoading:
                 ]
             }
         }
-        (storage_dir / "core.automation").write_text(json.dumps(storage_data))
-        (tmp_path / "automations.yaml").write_text("[]")
+        (storage_dir / "core.automation").write_text(json.dumps(storage_data), encoding="utf-8")
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry()
         aa = self._make_analyzer(hass)
@@ -108,8 +115,11 @@ class TestMultiSourceAutomationLoading:
                 {"id": "pkg_auto_1", "alias": "Package Auto", "trigger": [], "action": []}
             ]
         }
-        (packages / "lights.yaml").write_text(yaml.dump(pkg_content))
-        (tmp_path / "automations.yaml").write_text("[]")
+        (packages / "lights.yaml").write_text(yaml.dump(pkg_content), encoding="utf-8")
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
+        # `packages:` has no default location — HA loads the folder only when
+        # configuration.yaml declares it (see resolve_packages_sources).
+        (tmp_path / "configuration.yaml").write_text(PACKAGES_DECLARATION, encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry()
         aa = self._make_analyzer(hass)
@@ -123,17 +133,45 @@ class TestMultiSourceAutomationLoading:
         assert found, "Package automation should have _source_file containing 'packages/'"
 
     @pytest.mark.asyncio
+    async def test_undeclared_packages_folder_is_not_audited(self, tmp_path):
+        """A `packages/` folder nothing declares is not loaded by Home Assistant.
+
+        Auditing it anyway — which HACA did until 1.7.7 — produces findings on
+        automations that do not exist.
+        """
+        import yaml
+        packages = tmp_path / "packages"
+        packages.mkdir()
+        (packages / "lights.yaml").write_text(yaml.dump({
+            "automation": [
+                {"id": "ghost_auto", "alias": "Never Loaded", "trigger": [], "action": []}
+            ]
+        }), encoding="utf-8")
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
+        # No configuration.yaml at all → HA loads no packages.
+        hass = MockHass(config_dir=str(tmp_path))
+        er_mock = MockEntityRegistry()
+        aa = self._make_analyzer(hass)
+        with patch("custom_components.config_auditor.automation_analyzer.er") as er_m:
+            er_m.async_get.return_value = er_mock
+            await aa._load_automation_configs()
+        assert not any(
+            "packages/" in str(cfg.get("_source_file", ""))
+            for cfg in aa._automation_configs.values()
+        ), "an undeclared packages/ folder must not be audited"
+
+    @pytest.mark.asyncio
     async def test_deduplicates_by_unique_id(self, tmp_path):
         """Same unique_id in automations.yaml and .storage should not be double-counted."""
         import yaml
         automations = [{"id": "dup_auto", "alias": "Dedup Test", "trigger": [], "action": []}]
-        (tmp_path / "automations.yaml").write_text(yaml.dump(automations))
+        (tmp_path / "automations.yaml").write_text(yaml.dump(automations), encoding="utf-8")
         storage_dir = tmp_path / ".storage"
         storage_dir.mkdir()
         storage_data = {"data": {"items": [
             {"id": "dup_auto", "alias": "Dedup Test", "trigger": [], "action": []}
         ]}}
-        (storage_dir / "core.automation").write_text(json.dumps(storage_data))
+        (storage_dir / "core.automation").write_text(json.dumps(storage_data), encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry()
         aa = self._make_analyzer(hass)
@@ -153,8 +191,9 @@ class TestMultiSourceAutomationLoading:
         packages.mkdir()
         # Automation without alias → triggers no_alias issue
         pkg_content = {"automation": [{"id": "pkg_noalias", "trigger": [], "action": []}]}
-        (packages / "test.yaml").write_text(yaml.dump(pkg_content))
-        (tmp_path / "automations.yaml").write_text("[]")
+        (packages / "test.yaml").write_text(yaml.dump(pkg_content), encoding="utf-8")
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
+        (tmp_path / "configuration.yaml").write_text(PACKAGES_DECLARATION, encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry()
         with patch("custom_components.config_auditor.automation_analyzer.TranslationHelper") as TH, \
@@ -178,10 +217,10 @@ class TestMultiSourceAutomationLoading:
         incl_dir = tmp_path / "automations_split"
         incl_dir.mkdir()
         automation = [{"id": "split_auto", "alias": "Split Auto", "trigger": [], "action": []}]
-        (incl_dir / "lights.yaml").write_text(yaml.dump(automation))
+        (incl_dir / "lights.yaml").write_text(yaml.dump(automation), encoding="utf-8")
         cfg_content = "automation: !include_dir_merge_list automations_split\n"
-        (tmp_path / "configuration.yaml").write_text(cfg_content)
-        (tmp_path / "automations.yaml").write_text("[]")
+        (tmp_path / "configuration.yaml").write_text(cfg_content, encoding="utf-8")
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry()
         aa = self._make_analyzer(hass)
@@ -706,30 +745,30 @@ class TestEdgeCases:
         issues = [i for i in ea.issues if i["entity_id"] == "input_boolean.ignored"]
         assert not issues, "haca_ignore entity must not generate any issues"
 
-    def test_automation_configs_source_file_is_private_key(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_automation_configs_source_file_is_private_key(self, tmp_path):
         """The _source_file key must be present in enriched configs."""
         import yaml
         packages = Path(tmp_path) / "packages"
         packages.mkdir()
         (packages / "test.yaml").write_text(yaml.dump({
             "automation": [{"id": "pkg_x", "alias": "Pkg X", "trigger": [], "action": []}]
-        }))
-        (Path(tmp_path) / "automations.yaml").write_text("[]")
+        }), encoding="utf-8")
+        (Path(tmp_path) / "automations.yaml").write_text("[]", encoding="utf-8")
+        (Path(tmp_path) / "configuration.yaml").write_text(PACKAGES_DECLARATION, encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         er_mock = MockEntityRegistry()
 
-        async def _run():
-            with patch("custom_components.config_auditor.automation_analyzer.TranslationHelper") as TH, \
-                 patch("custom_components.config_auditor.automation_analyzer.er") as er_m:
-                TH.return_value.async_load_language = AsyncMock()
-                TH.return_value.t = lambda k, **kw: k
-                er_m.async_get.return_value = er_mock
-                from custom_components.config_auditor.automation_analyzer import AutomationAnalyzer
-                aa = AutomationAnalyzer(hass)
-                await aa._load_automation_configs()
-                return aa._automation_configs
+        with patch("custom_components.config_auditor.automation_analyzer.TranslationHelper") as TH, \
+             patch("custom_components.config_auditor.automation_analyzer.er") as er_m:
+            TH.return_value.async_load_language = AsyncMock()
+            TH.return_value.t = lambda k, **kw: k
+            er_m.async_get.return_value = er_mock
+            from custom_components.config_auditor.automation_analyzer import AutomationAnalyzer
+            aa = AutomationAnalyzer(hass)
+            await aa._load_automation_configs()
+            configs = aa._automation_configs
 
-        configs = asyncio.get_event_loop().run_until_complete(_run())
         pkg_configs = [cfg for cfg in configs.values() if "packages/" in cfg.get("_source_file", "")]
         assert len(pkg_configs) == 1
         assert pkg_configs[0]["_source_file"].endswith(".yaml")

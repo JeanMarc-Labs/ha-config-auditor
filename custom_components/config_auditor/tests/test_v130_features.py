@@ -625,25 +625,51 @@ class TestHealthScoreV130:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestVersionConsistency:
+    """The version must agree everywhere it is written down.
+
+    These used to compare against a literal `"1.7.0"`, so they went red at the
+    first version bump and stayed red — a test that fails on every release
+    stops being read. They now check the files against each other, which is
+    what "consistency" was meant to mean.
+    """
+
     BASE = Path(__file__).parent.parent
 
-    def test_const_version(self):
+    def test_manifest_version_matches_const(self):
         from custom_components.config_auditor.const import VERSION
-        assert VERSION == "1.7.0"
+        manifest = json.loads((self.BASE / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["version"] == VERSION, (
+            f"manifest.json says {manifest['version']}, const.py says {VERSION}"
+        )
 
-    def test_manifest_version(self):
-        manifest = json.loads((self.BASE / "manifest.json").read_text())
-        assert manifest["version"] == "1.7.0"
+    def test_js_core_version_matches_const(self):
+        import re
 
-    def test_js_core_version(self):
-        txt = (self.BASE / "www" / "src" / "core.js").read_text()
-        assert f"HACA_VERSION = '" in txt
+        from custom_components.config_auditor.const import VERSION
+        txt = (self.BASE / "www" / "src" / "core.js").read_text(encoding="utf-8")
+        found = re.search(r"HACA_VERSION\s*=\s*'([^']+)'", txt)
+        assert found, "core.js must define HACA_VERSION"
+        assert found.group(1) == VERSION, (
+            f"core.js says {found.group(1)}, const.py says {VERSION}"
+        )
+
+    def test_bundle_version_matches_source(self):
+        """The shipped bundle is what users run — it must carry the same version."""
+        import re
+
+        from custom_components.config_auditor.const import VERSION
+        txt = (self.BASE / "www" / "haca-panel.js").read_text(encoding="utf-8")
+        found = re.search(r"HACA_VERSION\s*=\s*'([^']+)'", txt)
+        assert found, "haca-panel.js must define HACA_VERSION"
+        assert found.group(1) == VERSION, (
+            f"the bundle says {found.group(1)}, const.py says {VERSION} — rebuild www/build.sh"
+        )
 
     @pytest.mark.parametrize("lang", [
         "en", "fr", "de", "es", "it", "nl", "pl", "pt", "ru", "sv", "da", "zh-Hans", "ja"
     ])
     def test_translation_version(self, lang):
-        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text())
+        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text(encoding="utf-8"))
         v = data.get("panel", {}).get("version", "")
         from custom_components.config_auditor.const import VERSION; assert VERSION in v, f"{lang}: expected {VERSION} in panel.version, got {v!r}"
 
@@ -677,7 +703,7 @@ class TestTranslationKeysV130:
         "en", "fr", "de", "es", "it", "nl", "pl", "pt", "ru", "sv", "da", "zh-Hans", "ja"
     ])
     def test_all_new_keys_present(self, lang):
-        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text())
+        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text(encoding="utf-8"))
         analyzer = data.get("analyzer", {})
         missing = [k for k in self.REQUIRED_ANALYZER_KEYS if k not in analyzer]
         assert not missing, f"{lang}: missing analyzer keys: {missing}"
@@ -686,7 +712,7 @@ class TestTranslationKeysV130:
         "en", "fr", "de", "es", "it", "nl", "pl", "pt", "ru", "sv", "da", "zh-Hans", "ja"
     ])
     def test_generate_blueprint_action(self, lang):
-        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text())
+        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text(encoding="utf-8"))
         key = data.get("panel", {}).get("actions", {}).get("generate_blueprint")
         assert key, f"{lang}: panel.actions.generate_blueprint missing"
 
@@ -694,7 +720,7 @@ class TestTranslationKeysV130:
         "en", "fr", "de", "es", "it", "nl", "pl", "pt", "ru", "sv", "da", "zh-Hans", "ja"
     ])
     def test_no_empty_translation_values(self, lang):
-        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text())
+        data = json.loads((TRANSLATIONS_DIR / f"{lang}.json").read_text(encoding="utf-8"))
         analyzer = data.get("analyzer", {})
         empty = [k for k in self.REQUIRED_ANALYZER_KEYS if not analyzer.get(k)]
         assert not empty, f"{lang}: empty translation values for: {empty}"
@@ -754,7 +780,7 @@ class TestJSBundleSmokeV130:
         """script_cycle is a high-severity issue — it must appear in const or be
         consistent. We verify the string appears in the translations loaded."""
         # Check the EN translation file has it (indirect validation)
-        data = json.loads((TRANSLATIONS_DIR / "en.json").read_text())
+        data = json.loads((TRANSLATIONS_DIR / "en.json").read_text(encoding="utf-8"))
         assert "script_cycle" in data.get("analyzer", {}), (
             "script_cycle must be in en.json analyzer keys"
         )
@@ -794,7 +820,7 @@ class TestJSBundleSmokeV130:
 
     def test_translations_in_panel_section(self):
         for lang_file in TRANSLATIONS_DIR.glob("*.json"):
-            data = json.loads(lang_file.read_text())
+            data = json.loads(lang_file.read_text(encoding="utf-8"))
             assert "open_entity" in data.get("panel", {}).get("actions", {}), (
                 f"{lang_file.stem}: open_entity must be in panel.actions"
             )

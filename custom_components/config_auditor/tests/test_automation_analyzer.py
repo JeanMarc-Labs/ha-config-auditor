@@ -216,8 +216,8 @@ class TestGetUnavailableTriggerEntities:
 class TestDetectDeprecated:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        (tmp_path / "automations.yaml").write_text("[]")
-        (tmp_path / "scripts.yaml").write_text("{}")
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
+        (tmp_path / "scripts.yaml").write_text("{}", encoding="utf-8")
         hass = MockHass(config_dir=str(tmp_path))
         from custom_components.config_auditor.automation_optimizer import AutomationOptimizer
         self.opt = AutomationOptimizer(hass)

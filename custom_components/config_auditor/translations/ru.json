@@ -272,6 +272,8 @@
       "unknown_device_id": "неизвестный device_id"
     },
     "notifications": {
+      "copy_failed": "Не удалось скопировать",
+      "copied": "Скопировано",
       "new_issue": "Обнаружена новая проблема",
       "new_issues": "обнаружены новые проблемы",
       "config_modified": "Конфигурация изменена",

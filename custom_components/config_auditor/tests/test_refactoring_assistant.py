@@ -74,7 +74,7 @@ class TestBackupCreation:
         ra = make_ra(tmp_path, [AUTOMATION_DEVICE_ID])
         backup_path = await ra._create_backup()
         assert backup_path.exists()
-        content = yaml.safe_load(backup_path.read_text())
+        content = yaml.safe_load(backup_path.read_text(encoding="utf-8"))
         assert isinstance(content, list)
         assert content[0]["id"] == "auto_001"
 

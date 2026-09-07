@@ -272,6 +272,8 @@
       "unknown_device_id": "不明な device_id"
     },
     "notifications": {
+      "copy_failed": "コピーに失敗しました",
+      "copied": "コピーしました",
       "new_issue": "新しい問題が検出されました",
       "new_issues": "新しい問題が検出されました",
       "config_modified": "設定が変更されました",
