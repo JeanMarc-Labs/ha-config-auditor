@@ -27,7 +27,6 @@ from homeassistant.helpers import area_registry as ar, label_registry as lr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
-from .const import DOMAIN
 from .yaml_sources import (
     find_unloaded_in_sources,
     find_unloaded_yaml_files,
@@ -597,7 +596,6 @@ class ComplianceAnalyzer:
         """Détecte les helpers utilisateur sans icône ou sans area."""
         try:
             entity_reg = er.async_get(self._hass)
-            area_reg   = ar.async_get(self._hass)
         except Exception:
             return
 

@@ -151,6 +151,9 @@ SCRIPT_BLUEPRINT_MIN_AUTOMATIONS = 3  # used by > N automations → candidate
 # ─── v1.4.0 ────────────────────────────────────────────────────────────────
 
 # Module flags — v1.4.0
+# MODULE_15 et MODULE_16 restent le commutateur de compilation (retirer la
+# fonctionnalité du paquet), mais l'activation au quotidien passe désormais par
+# les options ci-dessous, réglables depuis l'onglet Configuration du panneau.
 MODULE_15_MCP_SERVER = True         # Serveur MCP natif
 MODULE_16_PROACTIVE_AGENT = True    # Agent IA proactif
 MODULE_17_COMPLIANCE_ANALYZER = True  # Analyse de conformité
@@ -161,6 +164,30 @@ MODULE_19_AREA_COMPLEXITY = True        # Heatmap complexité par zone
 MODULE_20_REDUNDANCY_ANALYZER = True    # Automations redondantes inter-modules
 MODULE_21_RECORDER_IMPACT = True        # Impact DB Recorder par automation
 MODULE_22_INTEGRATION_MONITOR = True    # Integration monitor (HACS/Core/Custom)
+
+# MODULE_8 n'existe pas : c'était l'intégration HA Repairs, et la numérotation a
+# sauté quand elle a été retirée du paquet. Repairs est revenu depuis, câblé dans
+# __init__.py sur le coordinator et commandé par l'option `repairs_enabled` — il
+# ne s'est jamais vu réattribuer de numéro de module. Ne pas renuméroter : les
+# noms MODULE_9 à MODULE_22 sont cités dans le CHANGELOG et la documentation.
+
+# ── Surfaces sensibles, désactivées par défaut ─────────────────────────────
+# Trois fonctionnalités exposent H.A.C.A hors du panneau : le serveur MCP écoute
+# en HTTP, l'agent proactif appelle un LLM tout seul, et l'API LLM donne des
+# outils HACA à n'importe quel agent conversationnel. Toutes trois sont réservées
+# aux administrateurs depuis 1.8.0, mais un endpoint puissant qu'on active en
+# connaissance de cause est un meilleur contrat qu'un endpoint toujours ouvert :
+# elles partent donc à False sur une nouvelle installation.
+#
+# Les installations existantes ne perdent rien : async_migrate_entry écrit True
+# dans les options des entrées créées avant 1.8.0 (config entry minor_version 1).
+OPT_MCP_SERVER_ENABLED = "mcp_server_enabled"
+OPT_PROACTIVE_AGENT_ENABLED = "proactive_agent_enabled"
+OPT_LLM_API_ENABLED = "llm_api_enabled"
+
+DEFAULT_MCP_SERVER_ENABLED = False
+DEFAULT_PROACTIVE_AGENT_ENABLED = False
+DEFAULT_LLM_API_ENABLED = False
 
 # Issue types - v1.4.0 — Compliance (Module 17)
 ISSUE_COMPLIANCE_NO_FRIENDLY_NAME       = "compliance_no_friendly_name"

@@ -5,8 +5,6 @@ import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import device_registry as dr
 
 from .translation_utils import TranslationHelper
 

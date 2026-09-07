@@ -1,13 +1,16 @@
-"""Shared pytest fixtures for H.A.C.A tests.
+"""Shared fixtures and helpers for the H.A.C.A tests.
 
 Run with:
-    pip install pytest pytest-asyncio
-    pytest tests/ -v
+    pip install -r requirements_test.txt
+    pytest custom_components/config_auditor/tests -q
 
-No real HA installation required — all HA dependencies are stubbed here.
+Home Assistant itself is required: MockHass below pre-populates hass.data with
+the real entity/device registry singleton keys, so the analyzers reach our mocks
+instead of building empty registries. Everything else about HA is stubbed here.
 """
 from __future__ import annotations
 
+import re
 import sys
 import json
 from datetime import datetime, timezone
@@ -18,6 +21,27 @@ import pytest
 # ── Make custom_components importable ────────────────────────────────────────
 _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT))
+
+_WWW = Path(__file__).parent.parent / "www"
+_BUNDLE_NAME_RE = re.compile(r"haca-panel\.[0-9a-f]{8}\.js")
+
+
+def panel_bundle_path() -> Path:
+    """The one bundle www/build.sh emits, named after the hash of its contents.
+
+    Resolved the way custom_panel.py resolves it: through haca-panel.hash, then
+    by scanning for a hashed bundle if that file is missing or stale. When there
+    is none, the name that should have been there is returned so the caller's
+    assertion fails with something readable rather than on a bare FileNotFound.
+    """
+    try:
+        cache_bust = (_WWW / "haca-panel.hash").read_text(encoding="utf-8").strip()
+    except OSError:
+        cache_bust = ""
+    if cache_bust and (_WWW / f"haca-panel.{cache_bust}.js").is_file():
+        return _WWW / f"haca-panel.{cache_bust}.js"
+    found = sorted(p for p in _WWW.glob("haca-panel.*.js") if _BUNDLE_NAME_RE.fullmatch(p.name))
+    return found[0] if found else _WWW / f"haca-panel.{cache_bust or '<no hash file>'}.js"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

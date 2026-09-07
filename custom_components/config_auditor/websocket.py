@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import json
 from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any, NamedTuple
@@ -12,10 +11,14 @@ from typing import Any, NamedTuple
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.translation import async_get_translations
+from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    OPT_MCP_SERVER_ENABLED,
+    OPT_PROACTIVE_AGENT_ENABLED,
+    OPT_LLM_API_ENABLED,
+)
 from .yaml_sources import (
     contains_ha_tag,
     iter_domain_files,
@@ -1254,8 +1257,10 @@ async def handle_ai_suggest_fix(
     }
     field = FIELD_MAP.get(issue_type)
     if not field:
-        connection.send_error(msg["id"], "unsupported_type",
-                              f"Issue type '{issue_type}' n'est pas une correction simple")
+        connection.send_error(
+            msg["id"], "unsupported_type",
+            _ts(hass, "websocket", "unsupported_type", connection=connection, issue_type=issue_type),
+        )
         return
 
     # ── Lire le YAML de l'automation/script ─────────────────────────────
@@ -1312,7 +1317,10 @@ async def handle_ai_suggest_fix(
         suggestion = await _async_call_ai(hass, prompt, "HACA Simple Fix")
         suggestion = suggestion.strip().strip('"').strip("'")
         if not suggestion:
-            connection.send_error(msg["id"], "no_suggestion", "L'IA n'a pas retourné de suggestion")
+            connection.send_error(
+                msg["id"], "no_suggestion",
+                _ts(hass, "websocket", "no_suggestion", connection=connection),
+            )
             return
         connection.send_result(msg["id"], {
             "field":     field,
@@ -1359,7 +1367,10 @@ async def handle_apply_field_fix(
     alias     = msg.get("alias", "").strip()
 
     if field not in ("description", "alias"):
-        connection.send_error(msg["id"], "unsupported_field", f"Champ '{field}' non supporté")
+        connection.send_error(
+            msg["id"], "unsupported_field",
+            _ts(hass, "websocket", "unsupported_field", connection=connection, field=field),
+        )
         return
 
     domain = "script" if entity_id.startswith("script.") else "automation"
@@ -1592,10 +1603,22 @@ async def handle_save_options(
         "battery_last_replaced",   # dict {entity_id: ISO datetime} — battery replacement tracking
         "noisy_scan_exclude_patterns",  # list[str] — glob patterns to skip in noisy entity scan
         "llm_write_enabled",   # false (default) — let conversation agents use HACA write tools
+        # The three surfaces that reach outside the panel. Off on a new install;
+        # an entry created before 1.8.0 was migrated to on. See const.py.
+        OPT_MCP_SERVER_ENABLED,
+        OPT_PROACTIVE_AGENT_ENABLED,
+        OPT_LLM_API_ENABLED,
     }
     for key, value in incoming.items():
         if key in ALLOWED_KEYS and value is not None:  # ignorer les None (token non modifié)
             new_options[key] = value
+
+    # These three are only read while the entry is being set up, so a plain
+    # option write would leave the toggle lying until the next HA restart.
+    exposure_changed = any(
+        key in incoming and bool(entry.options.get(key)) != bool(incoming[key])
+        for key in (OPT_MCP_SERVER_ENABLED, OPT_PROACTIVE_AGENT_ENABLED, OPT_LLM_API_ENABLED)
+    )
 
     hass.config_entries.async_update_entry(entry, options=new_options)
 
@@ -1643,7 +1666,16 @@ async def handle_save_options(
                 _LOGGER.info("[HACA] scan_interval updated: %s", "manual" if val == 0 else f"{val} min")
 
     _LOGGER.info("[HACA] Options saved via panel: %s", list(incoming.keys()))
-    connection.send_result(msg["id"], {"success": True, "options": new_options})
+    connection.send_result(
+        msg["id"],
+        {"success": True, "options": new_options, "reloading": exposure_changed},
+    )
+
+    # Answer first, then reload: the reload tears down and re-runs setup, and
+    # the panel resubscribes on reconnect.
+    if exposure_changed:
+        _LOGGER.info("[HACA] Exposed-feature toggle changed — reloading the entry")
+        hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
 
 
 @websocket_api.websocket_command(
@@ -1808,6 +1840,14 @@ async def handle_mcp_status(
     """Retourne le statut et l'URL du serveur MCP HACA."""
     try:
         import json as _json
+        # `active` used to be hardcoded True. Since 1.8.0 the server only starts
+        # when the option says so, so the panel has to be told the truth — the
+        # endpoint below answers 404 while this is False.
+        entry, _ = _get_entry_data(hass)
+        from .const import DEFAULT_MCP_SERVER_ENABLED as _mcp_default
+        active = bool(
+            entry.options.get(OPT_MCP_SERVER_ENABLED, _mcp_default)
+        ) if entry else _mcp_default
         base_url = hass.config.external_url or hass.config.internal_url or "http://homeassistant.local:8123"
         mcp_url = f"{base_url.rstrip('/')}/api/haca_mcp"
 
@@ -1824,7 +1864,7 @@ async def handle_mcp_status(
             }
         }
         connection.send_result(msg["id"], {
-            "active": True,
+            "active": active,
             "url": "/api/haca_mcp",
             "full_url": mcp_url,
             "info_url": f"{mcp_url}/info",

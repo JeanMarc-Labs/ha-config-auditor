@@ -10,6 +10,8 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Added
 
 - **Configuration → AI agents → Allow write tools** — the switch that lets a conversation agent use the HACA tools that change the instance. Off by default; see the last entry below.
+- **Configuration → Exposed features** — three switches for the surfaces that reach outside the panel: the MCP server, the proactive AI agent and the HACA LLM API. They are off on a new install, and toggling one reloads H.A.C.A. **An installation that predates 1.8.0 keeps all three on**, so nothing you rely on stops working. The MCP tab now says plainly when the server is off, instead of showing an endpoint that answers 404.
+- **Continuous integration** — every push and pull request runs hassfest, the HACS check, the test suite and `ruff`. Nothing checked this repository before, which is how the 1.7.7 split-config fix reached a release having missed two functions. `requirements_test.txt` makes the suite runnable locally in one command.
 
 ### Security
 
@@ -32,6 +34,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **A manual scan could stay blocked until the next restart** — the "scan in progress" flag was raised before the reply was sent, so closing the panel tab at the wrong moment threw past the line that starts the scan and left the flag up forever. The flag is now raised after the reply, cleared if the task fails to start, and ignored once it is more than ten minutes old.
 - **The copy buttons answered with a raw translation key** — `notifications.copied` and `notifications.copy_failed` were called by the panel but written in no language file, so pressing Copy popped a toast reading `notifications.copied`. Both are translated in all 13 languages now.
 - **The battery library told you to edit a file that Home Assistant overwrites** — the promised `battery_library_user.json` was never implemented, and the panel pointed at the bundled seed inside the integration folder, which HACS replaces wholesale on every update. Your own devices now go in `<config>/haca_battery_library_user.json`, read on top of the bundled library and never touched by an update. **⚠️ Devices you added to the seed file are lost at the next update — copy them into the new file.**
+- **Three websocket errors answered in French whatever your language** — "L'IA n'a pas retourné de suggestion", "Champ '…' non supporté" and the unsupported-issue-type message reached English readers untranslated. All three now go through the translation cache, in the 13 languages.
+
+### Changed
+
+- **The panel bundle is no longer shipped twice** — `haca-panel.js` and `haca-panel.<hash>.js` were byte-identical and only the hashed one was ever loaded: 656 KB of dead weight in the repository and in every HACS download. The build emits the hashed bundle alone.
+- **84 dead translation keys removed** — around 1 100 strings across the 13 language files, left behind by features that were dropped, an abandoned MCP-token screen among them. A test now fails the build if a new one accumulates.
+- **The tree is clean against `ruff --select=F`** — 121 findings, all of them dead imports and unused variables, are gone.
 
 ### Performance
 

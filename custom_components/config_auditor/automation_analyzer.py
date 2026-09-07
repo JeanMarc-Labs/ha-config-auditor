@@ -13,7 +13,6 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import area_registry as ar
 from homeassistant.util import slugify as ha_slugify
 
@@ -640,7 +639,7 @@ class AutomationAnalyzer:
         - mode:single scripts called in rapid-trigger automations (medium)
         - Orphan scripts never called by anything (low)
         """
-        from .const import SCRIPT_CALL_DEPTH_THRESHOLD, SCRIPT_BLUEPRINT_MIN_AUTOMATIONS
+        from .const import SCRIPT_CALL_DEPTH_THRESHOLD
         t = self._translator.t
 
         # ── Build call graph ─────────────────────────────────────────────

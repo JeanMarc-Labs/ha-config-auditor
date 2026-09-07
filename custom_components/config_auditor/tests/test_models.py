@@ -1,7 +1,6 @@
 """Tests for models.py — AuditIssue, ComplexityScore, BatteryEntry — v1.1.2."""
 from __future__ import annotations
 
-import pytest
 import sys
 from pathlib import Path
 

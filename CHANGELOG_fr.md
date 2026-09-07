@@ -10,6 +10,8 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ### Ajouté
 
 - **Configuration → Agents IA → Autoriser les outils d'écriture** — l'interrupteur qui autorise un agent conversationnel à utiliser les outils HACA qui modifient l'instance. Désactivé par défaut ; voir la dernière entrée ci-dessous.
+- **Configuration → Fonctions exposées** — trois interrupteurs pour les surfaces qui sortent du panneau : le serveur MCP, l'agent IA proactif et l'API LLM HACA. Elles sont éteintes sur une installation neuve, et en basculer une recharge H.A.C.A. **Une installation antérieure à 1.8.0 les garde toutes les trois allumées**, donc rien de ce dont vous dépendez ne s'arrête. L'onglet MCP dit désormais franchement que le serveur est éteint, au lieu d'afficher un point d'entrée qui répond 404.
+- **Intégration continue** — chaque push et chaque pull request lance hassfest, le contrôle HACS, la suite de tests et `ruff`. Rien ne vérifiait ce dépôt jusqu'ici, et c'est ainsi que le correctif 1.7.7 sur les configs éclatées est parti en release en ayant oublié deux fonctions. `requirements_test.txt` rend la suite exécutable en local en une commande.
 
 ### Sécurité
 
@@ -32,6 +34,13 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 - **Un scan manuel pouvait rester bloqué jusqu'au redémarrage suivant** — le drapeau « scan en cours » était posé avant l'envoi de la réponse : fermer l'onglet du panneau au mauvais moment faisait sauter la ligne qui lance le scan et laissait le drapeau levé pour de bon. Il est maintenant posé après la réponse, retiré si la tâche ne démarre pas, et ignoré au-delà de dix minutes.
 - **Les boutons de copie répondaient par une clé de traduction brute** — `notifications.copied` et `notifications.copy_failed` étaient appelées par le panneau mais écrites dans aucun fichier de langue : appuyer sur Copier affichait un toast disant `notifications.copied`. Les deux sont désormais traduites dans les 13 langues.
 - **La bibliothèque de batteries invitait à modifier un fichier écrasé à chaque mise à jour** — le `battery_library_user.json` annoncé n'a jamais été implémenté, et le panneau pointait sur le fichier seed livré dans le dossier de l'intégration, que HACS remplace intégralement à chaque mise à jour. Vos appareils vont désormais dans `<config>/haca_battery_library_user.json`, lu par-dessus la bibliothèque intégrée et jamais touché par une mise à jour. **⚠️ Les appareils ajoutés au fichier seed seront perdus à la prochaine mise à jour — recopiez-les dans le nouveau fichier.**
+- **Trois erreurs WebSocket répondaient en français quelle que soit votre langue** — « L'IA n'a pas retourné de suggestion », « Champ '…' non supporté » et le message sur les types d'issue non supportés arrivaient tels quels chez un lecteur anglophone. Les trois passent maintenant par le cache de traduction, dans les 13 langues.
+
+### Modifié
+
+- **Le bundle du panneau n'est plus livré en double** — `haca-panel.js` et `haca-panel.<hash>.js` étaient identiques à l'octet près et seul le second était chargé : 656 Ko de poids mort dans le dépôt et dans chaque téléchargement HACS. Le build ne produit plus que le bundle haché.
+- **84 clés de traduction mortes supprimées** — environ 1 100 chaînes réparties sur les 13 fichiers de langue, laissées derrière par des fonctionnalités abandonnées, dont un écran de jeton MCP. Un test fait désormais échouer le build si de nouvelles s'accumulent.
+- **L'arbre est propre pour `ruff --select=F`** — 121 remontées, toutes des imports morts et des variables inutilisées, ont disparu.
 
 ### Performance
 

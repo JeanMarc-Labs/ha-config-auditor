@@ -10,11 +10,9 @@ Guards against:
 from __future__ import annotations
 
 import ast
-import inspect
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -131,9 +129,11 @@ class TestFallbackExplanation:
     def test_no_hardcoded_french_in_english_output(self):
         result = self._call(self._make_hass("en"))
         fr_chars = set("àâäéèêëîïôùûüçÀÂÄÉÈÊËÎÏÔÙÛÜÇ")
-        # Core structural text must not contain French accented chars in EN mode
-        # (message/rec may contain user content, so just check non-empty)
+        # Core structural text must not contain French accented chars in EN mode.
+        # message/rec are caller-supplied, and the defaults used here carry none,
+        # so any accent left in the output comes from the template itself.
         assert len(result) > 0
+        assert not (fr_chars & set(result)), f"French accents in EN output: {sorted(fr_chars & set(result))}"
 
     def test_no_hardcoded_text_in_source(self):
         """conversation.py must not contain hardcoded user-visible French or English strings."""

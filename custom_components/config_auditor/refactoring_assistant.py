@@ -1397,14 +1397,10 @@ class RefactoringAssistant:
         
         # Prepare content for prompt
         if is_script:
-            triggers_part = "Actions (Script) :"
             triggers_yaml = yaml.dump(config.get("sequence", []), default_flow_style=False, allow_unicode=True)
-            actions_part = ""
             actions_yaml = ""
         else:
-            triggers_part = "Déclencheurs (YAML) :"
             triggers_yaml = yaml.dump(config.get("trigger", []) or config.get("triggers", []), default_flow_style=False, allow_unicode=True)
-            actions_part = "Actions (YAML) :"
             actions_yaml = yaml.dump(config.get("action", []) or config.get("actions", []), default_flow_style=False, allow_unicode=True)
 
         # Build the full YAML block from triggers + actions parts

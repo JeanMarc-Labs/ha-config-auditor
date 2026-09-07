@@ -1970,10 +1970,10 @@ auto_file.write_text(new_yaml)
 document.body.appendChild(modal);</pre></div>
     <h3>Build JS — toujours modifier src/*.js</h3>
     <div class="code-wrap"><div class="code-header"><div class="code-dots"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div></div><span class="code-lang">bash</span></div>
-    <pre><span class="c-cm"># 1. Modifier dans www/src/ (jamais haca-panel.js directement)</span>
-<span class="c-cm"># 2. Builder</span>
+    <pre><span class="c-cm"># 1. Modifier dans www/src/ (jamais le bundle directement)</span>
+<span class="c-cm"># 2. Builder — écrit haca-panel.&lt;hash&gt;.js</span>
 cd www && bash build.sh
-<span class="c-cm"># 3. Ctrl+Shift+R dans le navigateur</span></pre></div>
+<span class="c-cm"># 3. Redémarrer HA — le nom du fichier change, pas de Ctrl+F5 à faire</span></pre></div>
     <div class="adm adm-danger"><span class="adm-icon">🔒</span><div class="adm-body"><div class="adm-title">Sécurité — règles obligatoires</div>
     <strong>@require_admin</strong> sur tout handler WebSocket qui écrit/supprime des données.<br>
     <strong>os.path.realpath()</strong> pour valider tout chemin fourni par l'utilisateur.<br>

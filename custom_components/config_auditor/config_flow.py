@@ -10,13 +10,27 @@ from typing import Any
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
+from .const import (
+    DOMAIN,
+    DEFAULT_SCAN_INTERVAL,
+    OPT_MCP_SERVER_ENABLED,
+    OPT_PROACTIVE_AGENT_ENABLED,
+    OPT_LLM_API_ENABLED,
+    DEFAULT_MCP_SERVER_ENABLED,
+    DEFAULT_PROACTIVE_AGENT_ENABLED,
+    DEFAULT_LLM_API_ENABLED,
+)
 
 
 class ConfigAuditorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for H.A.C.A."""
 
     VERSION = 1
+    # 2 — 1.8.0 : le serveur MCP, l'agent proactif et l'API LLM sont devenus des
+    # options désactivées par défaut. Les entrées restées en minor_version 1 sont
+    # antérieures et passent par async_migrate_entry, qui leur écrit True pour
+    # qu'une mise à jour n'éteigne rien.
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -59,6 +73,11 @@ class ConfigAuditorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "battery_low": 15,
                         "battery_warning": 25,
                         "history_retention_days": 365,
+                        # Surfaces sensibles : à activer depuis l'onglet
+                        # Configuration du panneau, jamais d'office.
+                        OPT_MCP_SERVER_ENABLED: DEFAULT_MCP_SERVER_ENABLED,
+                        OPT_PROACTIVE_AGENT_ENABLED: DEFAULT_PROACTIVE_AGENT_ENABLED,
+                        OPT_LLM_API_ENABLED: DEFAULT_LLM_API_ENABLED,
                     },
                 )
 

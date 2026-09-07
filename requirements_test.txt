@@ -1,0 +1,25 @@
+# Dependencies needed to run the H.A.C.A test suite.
+#
+#   python -m pip install -r requirements_test.txt
+#   python -m pytest custom_components/config_auditor/tests -q
+#
+# `homeassistant` is deliberately unpinned: the suite imports the real
+# homeassistant.helpers (conftest.MockHass builds its hass.data around the real
+# entity/device registry singleton keys), so a Core release that moves those is
+# something we want CI to surface, not hide behind a pin. Note that recent Core
+# releases require Python 3.14 — see .github/workflows/validate.yml.
+homeassistant
+
+# Test tooling
+pytest>=8.0
+pytest-asyncio>=0.24
+
+# manifest.json requirements. PyYAML and ruamel.yaml are exercised by the tests
+# (yaml_sources round-trips); fpdf2 is imported lazily by report_generator and
+# is listed so a local run matches production.
+PyYAML>=6.0
+ruamel.yaml>=0.17.21
+fpdf2>=2.7.4
+
+# Linter — same version range CI uses.
+ruff>=0.16

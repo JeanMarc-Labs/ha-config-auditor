@@ -1,4 +1,4 @@
-// HACA-BUILD: afa7fe55  2026-09-07T07:56:03Z
+// HACA-BUILD: e1f2e348  2026-09-07T14:19:18Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -304,6 +304,36 @@ function renderConfigTab(options, lang, t) {
     '</div>' +
     '</div>' +
 
+    // ── Section Fonctions exposées ──
+    // Les trois surfaces qui font sortir HACA du panneau. Neuves = éteintes ;
+    // une installation antérieure à 1.8.0 les garde allumées (migration de la
+    // config entry). Basculer l'une d'elles recharge l'intégration.
+    '<div class="cfg-section" style="margin-top:4px;">' +
+    '<div class="cfg-section-title">' + _icon("shield-lock-outline", 18) + t('config.exposure_section_title') + '</div>' +
+    '<div class="cfg-row-hint" style="margin-bottom:8px;">' + t('config.exposure_section_hint') + '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.mcp_server_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.mcp_server_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-mcp-server"' + (options.mcp_server_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.proactive_agent_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.proactive_agent_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-proactive-agent"' + (options.proactive_agent_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.llm_api_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.llm_api_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-llm-api"' + (options.llm_api_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '</div>' +
+
     // ── Section Agents IA ──
     '<div class="cfg-section" style="margin-top:4px;">' +
     '<div class="cfg-section-title">' + _icon("robot", 18) + t('config.llm_section_title') + '</div>' +
@@ -472,6 +502,9 @@ var DEFAULT_OPTIONS = {
   notify_low_severity: false,
   noisy_scan_exclude_patterns: [],
   llm_write_enabled: false,
+  mcp_server_enabled: false,
+  proactive_agent_enabled: false,
+  llm_api_enabled: false,
 };
 
 // ─── Collecte des valeurs ─────────────────────────────────────────────────
@@ -507,6 +540,9 @@ function collectFormOptions(root) {
     notify_low_severity: bool('#cfg-notify-low', false),
     debug_mode: bool('#cfg-debug-toggle', false),
     llm_write_enabled: bool('#cfg-llm-write', false),
+    mcp_server_enabled: bool('#cfg-mcp-server', false),
+    proactive_agent_enabled: bool('#cfg-proactive-agent', false),
+    llm_api_enabled: bool('#cfg-llm-api', false),
     noisy_scan_exclude_patterns: (function () {
       var el = q('#cfg-noisy-exclude-patterns');
       if (!el) return [];
@@ -11403,6 +11439,10 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
 
   var mcpUrl    = (mcpStatus  && mcpStatus.full_url) || '/api/haca_mcp';
   var mcpSnippet = (mcpStatus && mcpStatus.claude_code_snippet) || '';
+  // Since 1.8.0 the MCP server is an option, off on a new install. Everything
+  // below still renders — the endpoint and the tool list are what you need to
+  // decide whether to switch it on — but say plainly that it is not answering.
+  var mcpActive  = !mcpStatus || mcpStatus.active !== false;
   var agentActive    = agentStatus && agentStatus.active;
   var correlations   = (agentStatus && agentStatus.correlations) || [];
   var lastReport     = (agentStatus && agentStatus.last_weekly_report) || null;
@@ -11578,6 +11618,15 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
       '<p style="margin:6px 0 14px;font-size:13px;color:var(--secondary-text-color);">' +
         _t('mcp.subtitle') +
       '</p>' +
+
+      // Server off
+      (mcpActive ? '' :
+        '<div style="background:rgba(var(--rgb-primary-color),0.08);border:1px solid var(--primary-color);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px;">' +
+          '<span style="font-size:16px;flex-shrink:0;">⏻</span>' +
+          '<span style="font-size:12px;color:var(--primary-text-color);line-height:1.5;">' +
+            _t('mcp.disabled_notice') +
+          '</span>' +
+        '</div>') +
 
       // IP warning
       '<div style="background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.3);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px;">' +

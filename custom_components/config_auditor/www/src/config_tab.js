@@ -302,6 +302,36 @@ function renderConfigTab(options, lang, t) {
     '</div>' +
     '</div>' +
 
+    // ── Section Fonctions exposées ──
+    // Les trois surfaces qui font sortir HACA du panneau. Neuves = éteintes ;
+    // une installation antérieure à 1.8.0 les garde allumées (migration de la
+    // config entry). Basculer l'une d'elles recharge l'intégration.
+    '<div class="cfg-section" style="margin-top:4px;">' +
+    '<div class="cfg-section-title">' + _icon("shield-lock-outline", 18) + t('config.exposure_section_title') + '</div>' +
+    '<div class="cfg-row-hint" style="margin-bottom:8px;">' + t('config.exposure_section_hint') + '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.mcp_server_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.mcp_server_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-mcp-server"' + (options.mcp_server_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.proactive_agent_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.proactive_agent_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-proactive-agent"' + (options.proactive_agent_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label">' +
+    '<span>' + t('config.llm_api_enabled') + '</span>' +
+    '<span class="cfg-row-hint">' + t('config.llm_api_enabled_hint') + '</span>' +
+    '</div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-llm-api"' + (options.llm_api_enabled === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
+    '</div>' +
+
     // ── Section Agents IA ──
     '<div class="cfg-section" style="margin-top:4px;">' +
     '<div class="cfg-section-title">' + _icon("robot", 18) + t('config.llm_section_title') + '</div>' +
@@ -470,6 +500,9 @@ var DEFAULT_OPTIONS = {
   notify_low_severity: false,
   noisy_scan_exclude_patterns: [],
   llm_write_enabled: false,
+  mcp_server_enabled: false,
+  proactive_agent_enabled: false,
+  llm_api_enabled: false,
 };
 
 // ─── Collecte des valeurs ─────────────────────────────────────────────────
@@ -505,6 +538,9 @@ function collectFormOptions(root) {
     notify_low_severity: bool('#cfg-notify-low', false),
     debug_mode: bool('#cfg-debug-toggle', false),
     llm_write_enabled: bool('#cfg-llm-write', false),
+    mcp_server_enabled: bool('#cfg-mcp-server', false),
+    proactive_agent_enabled: bool('#cfg-proactive-agent', false),
+    llm_api_enabled: bool('#cfg-llm-api', false),
     noisy_scan_exclude_patterns: (function () {
       var el = q('#cfg-noisy-exclude-patterns');
       if (!el) return [];

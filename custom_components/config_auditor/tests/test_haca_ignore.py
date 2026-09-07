@@ -339,7 +339,6 @@ class TestJsonSerialization:
         er_mock.async_get.return_value.entities.get.return_value = None
 
         from custom_components.config_auditor.mcp_server import _tool_ha_get_entities
-        import custom_components.config_auditor.mcp_server as _mcp
 
         # Patch the local namespace via the module's helper imports
         with patch("homeassistant.helpers.area_registry.async_get", ar_mock.async_get), \
@@ -438,7 +437,6 @@ class TestSceneEntityIdSlugify:
     @pytest.mark.asyncio
     async def test_scene_key_uses_slugify(self, tmp_path):
         """Scenes with accented names must be keyed with slugified entity_ids."""
-        from homeassistant.util import slugify
         scenes_yaml = tmp_path / "scenes.yaml"
         scenes_yaml.write_text(
             "- id: '111'\n  name: 'Soirée cinéma'\n  entities: {}\n"
@@ -636,13 +634,10 @@ class TestSceneNotInEntityIssues:
     @pytest.mark.asyncio
     async def test_stale_scene_produces_issue(self):
         """A stale scene MUST produce an issue in entity_analyzer (routed to Scenes tab by __init__)."""
-        from datetime import timezone
-        from unittest.mock import MagicMock
         import datetime as dt
 
         hass = MockHass()
 
-        import datetime as dt2
         old_dt2 = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=100)
         hass.add_state("scene.vieille_scene", "scening")
         hass._states["scene.vieille_scene"].last_updated = old_dt2

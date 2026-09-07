@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant, Context
 
-from .const import DOMAIN
 from .yaml_sources import iter_domain_files, load_yaml_any
 
 _LOGGER = logging.getLogger(__name__)
@@ -388,7 +387,6 @@ async def _async_call_ai(hass: HomeAssistant, prompt: str, task_name: str = "HAC
 
 async def explain_issue_ai(hass: HomeAssistant, issue_data: dict[str, Any]) -> str:
     """Explain a HACA issue using the best available AI provider."""
-    import json as _json
     from .translation_utils import resolve_notification_language
     _lang = resolve_notification_language(hass)
     _th = TranslationHelper(hass)

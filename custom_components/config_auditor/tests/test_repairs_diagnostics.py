@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock
 
 _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT))

@@ -9,25 +9,21 @@ which is called once from async_setup_entry.
 from __future__ import annotations
 
 
-from .translation_utils import TranslationHelper
 
 import asyncio
 import functools
 import logging
-from typing import Any
 
 import voluptuous as vol
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import Unauthorized
 from homeassistant.config_entries import ConfigEntry
-from homeassistant import config_entries as ce
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
     DOMAIN,
     MODULE_4_COMPLIANCE_REPORT,
     MODULE_5_REFACTORING_ASSISTANT,
-    MODULE_9_DASHBOARD_ANALYZER,
     SERVICE_SCAN_ALL,
     SERVICE_SCAN_AUTOMATIONS,
     SERVICE_SCAN_ENTITIES,

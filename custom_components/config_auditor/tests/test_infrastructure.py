@@ -13,7 +13,7 @@ import re
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -193,7 +193,10 @@ class TestModelsImportIntegration:
             AuditIssue, ComplexityScore, BatteryEntry,
             IssueDict, GraphNodeDict, GraphEdgeDict, CoordinatorData,
         )
-        assert AuditIssue is not None
+        assert all(m is not None for m in (
+            AuditIssue, ComplexityScore, BatteryEntry,
+            IssueDict, GraphNodeDict, GraphEdgeDict, CoordinatorData,
+        ))
 
     def test_coordinator_data_has_required_keys(self):
         from custom_components.config_auditor.models import CoordinatorData
@@ -285,4 +288,131 @@ class TestServicesAreAdminOnly:
         assert registrations >= 20, (
             f"only {registrations} _register_admin references — services were "
             "probably registered some other way"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Exposed features: MCP server / proactive agent / LLM API
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExposedFeatureOptions:
+    """The three surfaces that reach outside the panel are options now (1.8.0).
+
+    They are off on a new install, and an entry created before 1.8.0 — when all
+    three ran unconditionally — is migrated to on, so upgrading H.A.C.A never
+    silently switches off a server somebody is talking to.
+    """
+
+    BASE = Path(__file__).parent.parent
+
+    def _entry(self, *, version=1, minor_version=1, options=None):
+        entry = MagicMock()
+        entry.version = version
+        entry.minor_version = minor_version
+        entry.options = options if options is not None else {}
+        entry.entry_id = "haca_entry"
+        return entry
+
+    @pytest.mark.asyncio
+    async def test_pre_1_8_0_entry_keeps_all_three_enabled(self):
+        from custom_components.config_auditor import async_migrate_entry
+        from custom_components.config_auditor.const import (
+            OPT_MCP_SERVER_ENABLED,
+            OPT_PROACTIVE_AGENT_ENABLED,
+            OPT_LLM_API_ENABLED,
+        )
+
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._entry(options={"scan_interval": 60})
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        _, kwargs = hass.config_entries.async_update_entry.call_args
+        assert kwargs["minor_version"] == 2
+        assert kwargs["options"][OPT_MCP_SERVER_ENABLED] is True
+        assert kwargs["options"][OPT_PROACTIVE_AGENT_ENABLED] is True
+        assert kwargs["options"][OPT_LLM_API_ENABLED] is True
+        # Untouched options survive the migration.
+        assert kwargs["options"]["scan_interval"] == 60
+
+    @pytest.mark.asyncio
+    async def test_migration_does_not_override_an_explicit_choice(self):
+        from custom_components.config_auditor import async_migrate_entry
+        from custom_components.config_auditor.const import OPT_MCP_SERVER_ENABLED
+
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._entry(options={OPT_MCP_SERVER_ENABLED: False})
+
+        await async_migrate_entry(hass, entry)
+
+        _, kwargs = hass.config_entries.async_update_entry.call_args
+        assert kwargs["options"][OPT_MCP_SERVER_ENABLED] is False
+
+    @pytest.mark.asyncio
+    async def test_already_migrated_entry_is_left_alone(self):
+        from custom_components.config_auditor import async_migrate_entry
+
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+
+        assert await async_migrate_entry(hass, self._entry(minor_version=2)) is True
+        hass.config_entries.async_update_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_entry_from_a_newer_haca_is_refused(self):
+        from custom_components.config_auditor import async_migrate_entry
+
+        hass = MagicMock()
+        hass.config_entries.async_update_entry = MagicMock()
+
+        assert await async_migrate_entry(hass, self._entry(version=2)) is False
+        hass.config_entries.async_update_entry.assert_not_called()
+
+    def test_config_flow_declares_the_migration_target(self):
+        from custom_components.config_auditor.config_flow import ConfigAuditorConfigFlow
+
+        assert ConfigAuditorConfigFlow.VERSION == 1
+        assert ConfigAuditorConfigFlow.MINOR_VERSION == 2, (
+            "async_migrate_entry migrates to minor_version 2 — HA only calls it "
+            "while the flow declares a higher version than the stored entry"
+        )
+
+    def test_defaults_are_off(self):
+        from custom_components.config_auditor.const import (
+            DEFAULT_MCP_SERVER_ENABLED,
+            DEFAULT_PROACTIVE_AGENT_ENABLED,
+            DEFAULT_LLM_API_ENABLED,
+        )
+
+        assert DEFAULT_MCP_SERVER_ENABLED is False
+        assert DEFAULT_PROACTIVE_AGENT_ENABLED is False
+        assert DEFAULT_LLM_API_ENABLED is False
+
+    def test_setup_reads_the_options(self):
+        """Each of the three setups must be gated on its option, not just its
+        MODULE_* compile flag."""
+        src = (self.BASE / "__init__.py").read_text(encoding="utf-8")
+        for opt in ("OPT_MCP_SERVER_ENABLED", "OPT_PROACTIVE_AGENT_ENABLED",
+                    "OPT_LLM_API_ENABLED"):
+            assert f"entry.options.get(\n        {opt}" in src or f"get({opt}," in src, (
+                f"{opt} is never read in async_setup_entry — the toggle would do nothing"
+            )
+
+    def test_panel_can_save_the_options(self):
+        """A toggle the panel cannot write is a toggle that does nothing."""
+        src = (self.BASE / "websocket.py").read_text(encoding="utf-8")
+        # Slice on the closing line, not the next "}": several entries carry a
+        # comment that contains one ("# dict {entity_id: ISO datetime}").
+        lines = src.split("\n")
+        start = next(i for i, l in enumerate(lines) if "ALLOWED_KEYS = {" in l)
+        end = next(i for i, l in enumerate(lines[start:], start) if l.strip() == "}")
+        allowed = "\n".join(lines[start:end])
+        for opt in ("OPT_MCP_SERVER_ENABLED", "OPT_PROACTIVE_AGENT_ENABLED",
+                    "OPT_LLM_API_ENABLED"):
+            assert opt in allowed, f"{opt} missing from handle_save_options ALLOWED_KEYS"
+        assert "async_reload(entry.entry_id)" in src, (
+            "the three options are read only at setup, so save_options must "
+            "reload the entry when one of them changes"
         )

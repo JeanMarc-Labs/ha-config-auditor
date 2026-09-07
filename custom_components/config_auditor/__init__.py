@@ -4,49 +4,28 @@ from __future__ import annotations
 import asyncio
 
 import logging
-import os
 import shutil
-import json
 from datetime import timedelta
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
-from homeassistant.helpers import device_registry as dr, config_validation as cv
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as _dt_util
 from .const import (
     MODULE_9_DASHBOARD_ANALYZER,
     MODULE_10_EVENT_MONITORING,
-    DEFAULT_EVENT_DEBOUNCE_SECONDS,
     MODULE_11_RECORDER_ANALYZER,
     MODULE_12_AUDIT_HISTORY,
     DOMAIN,
     NAME,
     VERSION,
     DEFAULT_SCAN_INTERVAL,
-    SERVICE_SCAN_ALL,
-    SERVICE_SCAN_AUTOMATIONS,
-    SERVICE_SCAN_ENTITIES,
-    SERVICE_GENERATE_REPORT,
-    SERVICE_LIST_REPORTS,
-    SERVICE_GET_REPORT_CONTENT,
-    SERVICE_FIX_DEVICE_ID,
-    SERVICE_PREVIEW_DEVICE_ID,
-    SERVICE_FIX_MODE,
-    SERVICE_PREVIEW_MODE,
-    SERVICE_FIX_TEMPLATE,
-    SERVICE_PREVIEW_TEMPLATE,
-    SERVICE_LIST_BACKUPS,
-    SERVICE_RESTORE_BACKUP,
-    SERVICE_PURGE_GHOSTS,
-    SERVICE_FUZZY_SUGGESTIONS,
     MODULE_4_COMPLIANCE_REPORT,
     MODULE_5_REFACTORING_ASSISTANT,
     BACKUP_DIR,
@@ -68,7 +47,7 @@ from .recorder_analyzer import RecorderAnalyzer
 from .history_manager import HistoryManager
 from .custom_panel import async_register_panel, async_unregister_panel, async_register_cards
 from .websocket import async_register_websocket_handlers
-from .conversation import async_setup_conversation, explain_issue_ai, analyze_complexity_ai
+from .conversation import async_setup_conversation
 from .health_score import calculate_health_score
 from .event_monitor import async_setup_event_monitor
 from .repairs import async_update_repairs
@@ -86,6 +65,12 @@ from .const import (
     MODULE_15_MCP_SERVER,
     MODULE_16_PROACTIVE_AGENT,
     MODULE_17_COMPLIANCE_ANALYZER,
+    OPT_MCP_SERVER_ENABLED,
+    OPT_PROACTIVE_AGENT_ENABLED,
+    OPT_LLM_API_ENABLED,
+    DEFAULT_MCP_SERVER_ENABLED,
+    DEFAULT_PROACTIVE_AGENT_ENABLED,
+    DEFAULT_LLM_API_ENABLED,
 )
 
 if MODULE_15_MCP_SERVER:
@@ -314,6 +299,35 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring an older config entry up to the current schema.
+
+    minor_version 1 → 2 (1.8.0): the MCP server, the proactive agent and the LLM
+    API became options and now default to off. An entry still at 1 was created
+    before that, when all three ran unconditionally, so it is given an explicit
+    True — upgrading H.A.C.A must not silently switch off a server somebody is
+    talking to. New entries are created at 2 and get the off defaults.
+    """
+    if entry.version > 1:
+        # Written by a newer H.A.C.A than the one running: refuse rather than
+        # guess what its data means.
+        return False
+
+    if entry.minor_version < 2:
+        options = dict(entry.options)
+        for key in (OPT_MCP_SERVER_ENABLED, OPT_PROACTIVE_AGENT_ENABLED, OPT_LLM_API_ENABLED):
+            options.setdefault(key, True)
+        hass.config_entries.async_update_entry(
+            entry, options=options, version=1, minor_version=2
+        )
+        _LOGGER.info(
+            "[HACA] Config entry migrated to 1.2 — MCP server, proactive agent and "
+            "LLM API kept enabled (they were always on before 1.8.0; new installs "
+            "start with them off)."
+        )
+
+    return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up H.A.C.A from a config entry."""
@@ -419,17 +433,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Catégories exclues configurées dans le panel HACA
         excluded: set = set(entry.options.get("excluded_categories", []))
 
+        # analyze_all() fills the analyzer's own issue lists, read back below;
+        # its return value is not needed here.
         try:
-            automation_issues = (
+            if "automations" not in excluded:
                 await automation_analyzer.analyze_all()
-                if "automations" not in excluded else []
-            )
         except Exception as _auto_err:
             _LOGGER.error(
                 "HACA: automation_analyzer.analyze_all() CRASHED — %s",
                 _auto_err, exc_info=True,
             )
-            automation_issues = []
 
         try:
             entity_issues = (
@@ -962,20 +975,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── End Event-Based Monitoring ────────────────────────────────────────
 
     # ── v1.4.0 : Serveur MCP (MODULE 15) ─────────────────────────────────
-    if MODULE_15_MCP_SERVER:
+    # Trois surfaces sensibles, chacune commandée par une option du panneau et
+    # désactivée sur une installation neuve (voir const.py). Une entrée créée
+    # avant 1.8.0 est passée à True par async_migrate_entry, donc rien ne
+    # s'éteint sur une mise à jour.
+    if MODULE_15_MCP_SERVER and entry.options.get(
+        OPT_MCP_SERVER_ENABLED, DEFAULT_MCP_SERVER_ENABLED
+    ):
         await async_setup_mcp_server(hass)
 
     # ── v1.5.1 : LLM API — expose les outils HACA à Mistral/OpenAI/etc. ──
     # L'utilisateur configure : HA Settings → Voice Assistants → [agent] → LLM API → HACA
-    try:
-        from homeassistant.helpers import llm as _llm
-        _llm.async_register_api(hass, HacaLLMAPI(hass))
-        _LOGGER.info("[HACA] LLM API 'HACA' enregistrée — configurez-la dans Voice Assistants")
-    except Exception as _llm_err:
-        _LOGGER.warning("[HACA] Impossible d'enregistrer le LLM API: %s", _llm_err)
+    if entry.options.get(OPT_LLM_API_ENABLED, DEFAULT_LLM_API_ENABLED):
+        try:
+            from homeassistant.helpers import llm as _llm
+            _llm.async_register_api(hass, HacaLLMAPI(hass))
+            _LOGGER.info("[HACA] LLM API 'HACA' enregistrée — configurez-la dans Voice Assistants")
+        except Exception as _llm_err:
+            _LOGGER.warning("[HACA] Impossible d'enregistrer le LLM API: %s", _llm_err)
 
     # ── v1.4.0 : Agent IA Proactif (MODULE 16) ───────────────────────────
-    if MODULE_16_PROACTIVE_AGENT:
+    if MODULE_16_PROACTIVE_AGENT and entry.options.get(
+        OPT_PROACTIVE_AGENT_ENABLED, DEFAULT_PROACTIVE_AGENT_ENABLED
+    ):
         async_setup_proactive_agent(hass, entry)
 
     # ── Post-scan notification listener ──────────────────────────────────

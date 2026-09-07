@@ -19,19 +19,17 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from custom_components.config_auditor.tests.conftest import (
     MockHass,
-    MockRegistryEntry,
     MockEntityRegistry,
-    MockState,
+    panel_bundle_path,
 )
 
 TRANSLATIONS_DIR = Path(__file__).parent.parent / "translations"
-BUNDLE = Path(__file__).parent.parent / "www" / "haca-panel.js"
+BUNDLE = panel_bundle_path()
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -658,9 +656,9 @@ class TestVersionConsistency:
         import re
 
         from custom_components.config_auditor.const import VERSION
-        txt = (self.BASE / "www" / "haca-panel.js").read_text(encoding="utf-8")
+        txt = BUNDLE.read_text(encoding="utf-8")
         found = re.search(r"HACA_VERSION\s*=\s*'([^']+)'", txt)
-        assert found, "haca-panel.js must define HACA_VERSION"
+        assert found, f"{BUNDLE.name} must define HACA_VERSION"
         assert found.group(1) == VERSION, (
             f"the bundle says {found.group(1)}, const.py says {VERSION} — rebuild www/build.sh"
         )
