@@ -63,6 +63,12 @@ _TARGET_ID_FIELDS: frozenset[str] = frozenset({"device_id", "area_id", "label_id
 _MAX_CONFIG_DEPTH = 30
 
 
+def _iter_entity_tokens(text: str):
+    """Yield every `domain.object_id` token found in a raw config dump."""
+    for domain, object_id in _TEMPLATE_ENTITY_RE.findall(text):
+        yield f"{domain}.{object_id}"
+
+
 class EntityAnalyzer:
     """Analyze entities for issues."""
 
@@ -73,9 +79,13 @@ class EntityAnalyzer:
         self._entity_references: dict[str, list[str]] = defaultdict(list)
         # Explicit `entity_id:` references only — see _build_entity_references.
         self._strong_entity_references: dict[str, list[str]] = defaultdict(list)
-        # JSON dump of every automation/script config, used as a last-resort
-        # substring net by the "unused helper" checks.
-        self._all_config_text: str = ""
+        # Every `domain.object_id` token that appears anywhere in the raw
+        # automation/script configs — the last-resort net behind the "unused
+        # helper" checks, for ids sitting in a plain string under a key the
+        # reference walk does not read as an entity or a template. Held as a
+        # set rather than as one multi-megabyte blob of text: the check used to
+        # be a substring scan of the whole dump *per helper*.
+        self._all_config_entity_ids: set[str] = set()
         # Maps automation/script entity_id → human-readable alias
         self._automation_alias_map: dict[str, str] = {}
         self._translator = TranslationHelper(hass)
@@ -204,7 +214,7 @@ class EntityAnalyzer:
         if script_configs:
             sources.extend(script_configs.items())
 
-        dumps: list[str] = []
+        text_ids: set[str] = set()
 
         for idx, (source_id, config) in enumerate(sources):
             explicit, templates, targets = self._walk_config(config)
@@ -226,16 +236,17 @@ class EntityAnalyzer:
             for entity_id in explicit | weak:
                 self._entity_references[entity_id].append(source_id)
 
-            # Text dump reused as a safety net by the "unused helper" checks.
+            # Safety net for the "unused helper" checks: every entity-shaped
+            # token in the raw config, whatever key it hides under.
             try:
-                dumps.append(json.dumps(config, default=str))
+                text_ids.update(_iter_entity_tokens(json.dumps(config, default=str)))
             except Exception:  # noqa: BLE001 — an unserialisable config just skips the net
                 pass
 
             if idx % 10 == 0:
                 await asyncio.sleep(0)
 
-        self._all_config_text = " ".join(dumps)
+        self._all_config_entity_ids = text_ids
 
     def _collect_known_entity_ids(self) -> set[str]:
         """Every entity id Home Assistant knows about (state machine + registry)."""
@@ -580,7 +591,7 @@ class EntityAnalyzer:
             # Same safety net as _analyze_input_helpers: a bare substring hit in
             # the raw configs is enough to consider the helper used.
             refs = self._entity_references.get(entity_id) or []
-            if not refs and entity_id not in self._all_config_text:
+            if not refs and entity_id not in self._all_config_entity_ids:
                 self.issues.append({
                     "entity_id": entity_id,
                     "type": "unused_input_boolean",
@@ -606,18 +617,17 @@ class EntityAnalyzer:
             "input_select", "input_datetime",
         )
 
-        # Flat text dump of all configs, for fast template scanning. Built once
-        # by _build_entity_references; rebuilt here only when this analyzer is
+        # Entity-shaped tokens found in the raw configs. Built once by
+        # _build_entity_references; rebuilt here only when this analyzer is
         # driven directly (tests, ad-hoc calls) without a reference pass.
-        all_config_text = self._all_config_text
-        if not all_config_text and (automation_configs or script_configs):
-            dumps = []
+        text_ids = self._all_config_entity_ids
+        if not text_ids and (automation_configs or script_configs):
+            text_ids = set()
             for cfg in list(automation_configs.values()) + list(script_configs.values()):
                 try:
-                    dumps.append(json.dumps(cfg, default=str))
+                    text_ids.update(_iter_entity_tokens(json.dumps(cfg, default=str)))
                 except Exception:  # noqa: BLE001 — an unserialisable config just skips the net
                     pass
-            all_config_text = " ".join(dumps)
 
         all_states = self.hass.states.async_all()
         helpers = [s for s in all_states if s.entity_id.split(".")[0] in INPUT_DOMAINS]
@@ -633,7 +643,7 @@ class EntityAnalyzer:
 
             # ── Check if referenced in any automation/script ──────────────
             refs = self._entity_references.get(entity_id, [])
-            if not refs and entity_id not in all_config_text:
+            if not refs and entity_id not in text_ids:
                 self.issues.append({
                     "entity_id": entity_id,
                     "type": "helper_unused",

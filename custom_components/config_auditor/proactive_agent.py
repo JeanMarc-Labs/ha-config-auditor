@@ -435,7 +435,9 @@ class ProactiveAgent:
         try:
             from .const import REPORTS_DIR
             reports_dir = Path(self._hass.config.config_dir) / REPORTS_DIR
-            reports_dir.mkdir(exist_ok=True)
+            await self._hass.async_add_executor_job(
+                lambda: reports_dir.mkdir(exist_ok=True)
+            )
 
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             score = cdata.get("health_score", "?")

@@ -388,20 +388,25 @@ class AutomationAnalyzer:
 
         # ── 2. .storage/core.automation (UI automations) ──────────────────
         storage_file = config_dir / ".storage" / "core.automation"
-        if storage_file.exists():
-            try:
-                def _read_storage():
+        try:
+            # The existence probe is a stat() like any other: it belongs in the
+            # executor with the read, not on the event loop in front of it.
+            def _read_storage():
+                try:
                     with open(storage_file, "r", encoding="utf-8") as f:
                         return json.load(f)
+                except FileNotFoundError:
+                    return None
 
-                storage_data = await self.hass.async_add_executor_job(_read_storage)
+            storage_data = await self.hass.async_add_executor_job(_read_storage)
+            if storage_data is not None:
                 items = storage_data.get("data", {}).get("items", [])
                 for cfg in items:
                     if isinstance(cfg, dict):
                         _register(cfg, ".storage/core.automation")
                 _LOGGER.debug(".storage/core.automation: loaded %d entries", len(items))
-            except Exception as e:
-                _LOGGER.error("Error loading .storage/core.automation: %s", e, exc_info=True)
+        except Exception as e:
+            _LOGGER.error("Error loading .storage/core.automation: %s", e, exc_info=True)
 
         # ── 3. packages (homeassistant: packages:) ────────────────────────
         #   Routed through the shared resolver like every other domain since

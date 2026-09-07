@@ -50,9 +50,19 @@ SCAN_LOCK_TIMEOUT = 600  # seconds
 DEFAULT_ISSUE_LIMIT = 2000
 
 
-def _ts(hass, section: str, key: str, **kwargs) -> str:
-    """Get a translation string from the in-memory cache (websocket-local copy)."""
-    lang = hass.data.get("config_auditor", {}).get("user_language") or hass.config.language or "en"
+def _ts(hass, section: str, key: str, connection=None, **kwargs) -> str:
+    """Get a translation string from the in-memory cache (websocket-local copy).
+
+    When the caller has the connection in hand, the answer follows *that*
+    user's profile language. Without it, the last language seen by
+    ``haca/get_translations`` is the best guess available.
+    """
+    store = hass.data.get("config_auditor", {})
+    lang = None
+    user_id = getattr(getattr(connection, "user", None), "id", None)
+    if user_id:
+        lang = (store.get("user_languages") or {}).get(user_id)
+    lang = lang or store.get("user_language") or hass.config.language or "en"
     # Import cache lazily to avoid circular import at module load time
     try:
         from . import _TS_CACHE  # noqa: PLC0415
@@ -964,12 +974,15 @@ async def handle_delete_history(
     msg: dict,
 ) -> None:
     """Supprime des entrées de l'historique par timestamp."""
-    domain_data = hass.data.get(DOMAIN, {})
-    if not domain_data:
+    # `hass.data[DOMAIN]` is not a dict of entries only: it also carries the
+    # panel language slots and the per-scan caches. Taking `next(iter(...))`
+    # as the entry id worked while the entry happened to be inserted first,
+    # but a reload pops the entry and puts it back *after* those keys — the
+    # handler then read a string where it expected the entry dict.
+    _entry, data = _get_entry_data(hass)
+    if not data:
         connection.send_error(msg["id"], "not_ready", "HACA not initialized")
         return
-    entry_id = next(iter(domain_data), None)
-    data = domain_data.get(entry_id, {}) if entry_id else {}
     history_manager = data.get("history_manager")
     if not history_manager:
         connection.send_error(msg["id"], "no_history", "History manager unavailable")
@@ -981,6 +994,54 @@ async def handle_delete_history(
     except Exception as exc:
         _LOGGER.error("HACA delete_history error: %s", exc)
         connection.send_error(msg["id"], "delete_error", str(exc))
+
+
+# Server-emitted text (persistent notifications, Repairs, scan messages) follows
+# the panel user's profile language through the ``notification_language_auto``
+# entry option. Persisting it wrote to `.storage/core.config_entries` every time
+# the value changed, so two admins in two languages opening the panel in turn
+# produced one disk write each. At most one write per hour is enough: the option
+# only decides the language of background notifications.
+_AUTO_LANG_MIN_INTERVAL = 3600.0
+_AUTO_LANG_LAST_WRITE_KEY = "_auto_language_last_write"
+
+
+def _track_auto_notification_language(hass: HomeAssistant, language: str) -> None:
+    """Persist the panel profile language for server-side notifications.
+
+    Skipped when the entry already carries this language, and rate-limited to
+    one write per hour so that alternating users cannot turn every panel open
+    into a config-entry write. An explicit ``notification_language`` set from
+    the Configuration tab always wins and is never overwritten — see
+    ``translation_utils.resolve_notification_language``.
+    """
+    try:
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            return
+        entry = entries[0]
+        if (entry.options or {}).get("notification_language_auto") == language:
+            return
+
+        store = hass.data.setdefault(DOMAIN, {})
+        last = store.get(_AUTO_LANG_LAST_WRITE_KEY)
+        now = _monotonic()
+        if last is not None and now - last < _AUTO_LANG_MIN_INTERVAL:
+            _LOGGER.debug(
+                "HACA: auto-tracked language %s not persisted yet (last write %.0fs ago)",
+                language, now - last,
+            )
+            return
+
+        new_options = dict(entry.options or {})
+        new_options["notification_language_auto"] = language
+        hass.config_entries.async_update_entry(entry, options=new_options)
+        store[_AUTO_LANG_LAST_WRITE_KEY] = now
+        _LOGGER.info(
+            "[HACA] Tracked panel profile language for notifications: %s", language
+        )
+    except Exception as exc:  # noqa: BLE001 — never break the panel over this
+        _LOGGER.debug("HACA: could not persist auto-tracked language: %s", exc)
 
 
 @websocket_api.websocket_command(
@@ -996,65 +1057,44 @@ async def handle_get_translations(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Handle get translations request for the panel."""
+    """Handle get translations request for the panel.
+
+    Served entirely from ``_TS_PANEL_CACHE``, which ``_async_preload_ts_cache``
+    fills with all 13 files at setup. This used to re-read and re-parse a
+    ~130 KB JSON from disk on every panel open, next to a copy of the same
+    file already sitting in memory.
+    """
     try:
         # Language comes from the frontend (= user profile language, not system
-        # language). It ends up in a file path, so it goes through the
-        # allow-list first — see _safe_language().
+        # language). Only the codes HACA actually ships are accepted — see
+        # _safe_language().
         language = _safe_language(msg.get("language"), hass.config.language)
-        # Store so panel-targeted WebSocket responses can stay in this user's
-        # language for the duration of the connection.
-        hass.data.setdefault(DOMAIN, {})["user_language"] = language
+        store = hass.data.setdefault(DOMAIN, {})
+        # Remembered per user: a single shared slot meant that the last admin
+        # to open the panel decided the language of everyone else's websocket
+        # answers. The shared slot is kept as a fallback for callers that have
+        # no connection in hand.
+        user_id = getattr(getattr(connection, "user", None), "id", None)
+        if user_id:
+            store.setdefault("user_languages", {})[user_id] = language
+        store["user_language"] = language
         _LOGGER.debug("HACA: user language = %s", language)
 
-        # Persist the panel user's profile language to the entry options under
-        # ``notification_language_auto``. This makes server-emitted text
-        # (persistent notifications, HA Repairs, scan messages) follow the
-        # frontend profile language WITHOUT relying on the volatile per-panel
-        # slot. The auto-tracked value is used by ``resolve_notification_language``
-        # only when no explicit ``notification_language`` override is set, so a
-        # user who pinned a notification language via the Configuration tab
-        # is never overwritten.
-        # Updated only when the value changes to avoid spamming entry writes.
-        try:
-            entries = hass.config_entries.async_entries(DOMAIN)
-            if entries:
-                entry = entries[0]
-                current_auto = (entry.options or {}).get("notification_language_auto")
-                if current_auto != language:
-                    new_options = dict(entry.options or {})
-                    new_options["notification_language_auto"] = language
-                    hass.config_entries.async_update_entry(entry, options=new_options)
-                    _LOGGER.info(
-                        "[HACA] Tracked panel profile language for notifications: %s",
-                        language,
-                    )
-        except Exception as exc:
-            _LOGGER.debug("HACA: could not persist auto-tracked language: %s", exc)
-        
-        # Build path to translations file
-        integration_path = Path(__file__).parent
-        translations_file = integration_path / "translations" / f"{language}.json"
-        
-        # Fallback to English if the language file doesn't exist
-        if not translations_file.exists():
-            translations_file = integration_path / "translations" / "en.json"
-            _LOGGER.debug("Translation file for %s not found, falling back to English", language)
-        
-        # Load translations (in executor to avoid blocking the event loop)
-        translations = {}
-        if translations_file.exists():
-            try:
-                def _read_translations():
-                    with open(translations_file, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                translations = await hass.async_add_executor_job(_read_translations)
-            except Exception as e:
-                _LOGGER.error("Error loading translations: %s", e)
-        
-        # Return the panel translations section (the JS navigates from panel.* root)
-        panel_translations = translations.get("panel", {})
-        
+        _track_auto_notification_language(hass, language)
+
+        # The panel navigates from `panel.*`, so it gets the raw subtree — not
+        # the merged tree the server-side helpers read.
+        from . import _TS_PANEL_CACHE  # noqa: PLC0415
+        panel_translations = (
+            _TS_PANEL_CACHE.get(language)
+            or _TS_PANEL_CACHE.get("en")
+            or {}
+        )
+        if not panel_translations:
+            _LOGGER.warning(
+                "HACA: translation cache is empty — panel will show raw keys"
+            )
+
         connection.send_result(
             msg["id"],
             {
@@ -1062,7 +1102,7 @@ async def handle_get_translations(
                 "translations": panel_translations,
             },
         )
-        
+
     except Exception as e:
         _LOGGER.error("Error getting translations: %s", e, exc_info=True)
         connection.send_error(msg["id"], "error", str(e))
@@ -1404,7 +1444,11 @@ async def handle_chat(
     if not agents:
         connection.send_result(
             msg["id"],
-            {"reply": _ts(hass, "misc", "no_ai_model"), "conversation_id": conv_id, "agent_id": None},
+            {
+                "reply": _ts(hass, "misc", "no_ai_model", connection=connection),
+                "conversation_id": conv_id,
+                "agent_id": None,
+            },
         )
         return
 
@@ -1474,7 +1518,11 @@ async def handle_chat(
     _LOGGER.error("[HACA Chat] All agents failed. Last error: %s", last_error)
     connection.send_result(
         msg["id"],
-        {"reply": last_error or _ts(hass, "misc", "ai_error"), "conversation_id": conv_id, "agent_id": None},
+        {
+            "reply": last_error or _ts(hass, "misc", "ai_error", connection=connection),
+            "conversation_id": conv_id,
+            "agent_id": None,
+        },
     )
 
 

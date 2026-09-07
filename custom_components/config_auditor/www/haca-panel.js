@@ -1,4 +1,4 @@
-// HACA-BUILD: c8ab1bcc  2026-09-07T07:06:14Z
+// HACA-BUILD: afa7fe55  2026-09-07T07:56:03Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -829,6 +829,7 @@ function _updateTypeCounts(el) {
               msg.includes('Connection lost') || msg.includes('Lost connection')) {
             event.preventDefault();
             this._unsubNewIssues = null;
+            this._unsubScanComplete = null;
           }
         };
         window.addEventListener('unhandledrejection', this._rejectionHandler);
@@ -859,6 +860,10 @@ function _updateTypeCounts(el) {
       if (this._unsubNewIssues) {
         try { this._unsubNewIssues(); } catch (_) { }
         this._unsubNewIssues = null;
+      }
+      if (this._unsubScanComplete) {
+        try { this._unsubScanComplete(); } catch (_) { }
+        this._unsubScanComplete = null;
       }
       if (this._bootRetryTimer) {
         clearInterval(this._bootRetryTimer);
@@ -898,9 +903,14 @@ function _updateTypeCounts(el) {
       if (hass?.connection && hass.connection !== this._lastConnection) {
         this._lastConnection = hass.connection;
         this._unsubNewIssues = null;
+        // La souscription à haca_scan_complete est morte avec l'ancienne
+        // connexion : sans ce reset, le panneau ne se rechargerait plus qu'au
+        // filet de sécurité (5 min) après chaque reconnexion.
+        this._unsubScanComplete = null;
         _hlog('WRN', 'set hass(): NEW WebSocket connection — resubscribing');
         if (this._fullyReady) {
           this._subscribeToNewIssues();
+          this._subscribeToScanComplete();
           this.loadData();
         }
       }
@@ -1348,14 +1358,43 @@ function _updateTypeCounts(el) {
       }
     }
 
+    // Le backend n'a de données neuves qu'à la fin d'un scan, et il émet
+    // haca_scan_complete à ce moment-là : le panneau se recharge sur
+    // l'événement, et le chronomètre n'est plus qu'un filet de sécurité (5 min)
+    // pour un événement manqué pendant une reconnexion WebSocket. Il appelait
+    // get_data toutes les 60 s pour une donnée qui change toutes les 60 min :
+    // 59 réponses sur 60 étaient identiques à la précédente — graphe de
+    // dépendances, liste des batteries et scores de complexité compris.
+    _SAFETY_REFRESH_MS = 5 * 60 * 1000;
+
+    _subscribeToScanComplete() {
+      if (this._unsubScanComplete) return;
+      if (!this.hass?.connection) return;
+
+      this.hass.connection.subscribeEvents(() => {
+        if (!this._connected || !this._hass) return;
+        _hlog('INF', 'haca_scan_complete received — reloading data');
+        this.loadData();
+      }, 'haca_scan_complete').then(unsub => {
+        this._unsubScanComplete = unsub;
+      }).catch(() => {
+        // Peut arriver pendant une reconnexion — le filet de sécurité prend
+        // le relais et _startAutoRefresh réessaiera au prochain boot.
+      });
+    }
+
     _startAutoRefresh() {
       this._stopAutoRefresh(); // annuler tout intervalle existant (et le timer global)
       this._dataErrorCount = 0;
+      this._subscribeToScanComplete();
+
       const timerId = setInterval(() => {
         if (!this._connected || !this._hass) return;
-        // Watchdog : après 5 erreurs consécutives, afficher un bandeau d'erreur récupérable
-        if (this._dataErrorCount >= 5) {
-          if (!this._reconnectOverlayShown) {
+
+        // ── Mode dégradé : le backend ne répond plus ──────────────────────
+        if (this._dataErrorCount > 0) {
+          // Watchdog : après 5 erreurs consécutives, afficher un bandeau d'erreur récupérable
+          if (this._dataErrorCount >= 5 && !this._reconnectOverlayShown) {
             this._reconnectOverlayShown = true;
             _hlog('ERR', '_startAutoRefresh(): 5+ consecutive errors — showing reconnect banner');
             this._showReconnectBanner();
@@ -1363,12 +1402,16 @@ function _updateTypeCounts(el) {
           this.loadData();
           return;
         }
-        if (this._reconnectOverlayShown && this._dataErrorCount === 0) {
+
+        if (this._reconnectOverlayShown) {
           this._reconnectOverlayShown = false;
           this._hideReconnectBanner();
         }
-        this.loadData();
-      }, 60_000); // 60 secondes
+
+        // ── Régime normal : filet de sécurité uniquement ──────────────────
+        if (Date.now() - (this._lastDataAt || 0) < this._SAFETY_REFRESH_MS) return;
+        this.loadData({ skipIfUnchanged: true });
+      }, 30_000); // tick court pour garder le watchdog réactif
       this._refreshTimer = timerId;
     }
 
@@ -4061,7 +4104,11 @@ function _updateTypeCounts(el) {
       await this._hass.callWS({ type: 'haca/save_options', options });
     }
 
-    async loadData() {
+    // `opts.skipIfUnchanged` : ne pas redessiner si le backend renvoie le même
+    // scan que la dernière fois. Réservé au filet de sécurité — un appel
+    // déclenché par une correction doit toujours redessiner, même si le
+    // coordinateur n'a pas encore rescanné.
+    async loadData(opts = {}) {
       if (!this._hass) return;
       if (!this._connected) return; // élément hors DOM — ne rien faire
       // Garde de concurrence : évite d'empiler des appels si le précédent est encore en cours
@@ -4070,10 +4117,19 @@ function _updateTypeCounts(el) {
       try {
         _hlog('INF', 'loadData(): calling haca/get_data');
         const result = await this._hass.callWS({ type: 'haca/get_data' });
+        this._lastDataAt = Date.now();
+        const unchanged = opts.skipIfUnchanged
+          && result?.last_scan
+          && this._cachedData?.last_scan === result.last_scan;
         this._cachedData = result;
         _HC.data = result;           // cache module : survive aux navigations
         this._dataErrorCount = 0;
         window._HACA_STATE.errors = 0;
+        if (unchanged) {
+          _hlog('INF', 'loadData(): same scan (' + result.last_scan + ') — UI left as is');
+          this._hideBootSplash();
+          return;
+        }
         // Invalider le cache conformité (nouvelles données = rescan)
         this._complianceAll = null;
         this._integrationsLoaded = false;

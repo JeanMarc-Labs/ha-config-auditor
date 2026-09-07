@@ -344,7 +344,7 @@ async def async_add_entity_to_recorder_exclude(
         }
 
     config_file = _config_yaml_path(hass)
-    if not config_file.exists():
+    if not await hass.async_add_executor_job(config_file.is_file):
         return {
             "success": False, "already_excluded": False,
             "backup_path": None,
@@ -355,6 +355,19 @@ async def async_add_entity_to_recorder_exclude(
     backups_dir = config_file.parent / BACKUP_DIR
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = backups_dir / f"configuration.yaml.{ts}.bak"
+
+    async def _backup_path_if_written() -> str | None:
+        """The backup path, or None when nothing was written there.
+
+        A bare ``backup_path.exists()`` is a stat() on the event loop, which
+        Home Assistant now logs as a blocking call.
+        """
+        try:
+            return str(backup_path) if await hass.async_add_executor_job(
+                backup_path.is_file
+            ) else None
+        except Exception:  # noqa: BLE001 — reporting the path is best-effort
+            return None
 
     # Serialise the whole edit-and-validate sequence: backup, read, mutate,
     # atomic write, check_config, restore-on-failure. Concurrent UI clicks
@@ -368,7 +381,7 @@ async def async_add_entity_to_recorder_exclude(
             _LOGGER.error("[HACA] configuration.yaml edit failed: %s", exc, exc_info=True)
             return {
                 "success": False, "already_excluded": False,
-                "backup_path": str(backup_path) if backup_path.exists() else None,
+                "backup_path": await _backup_path_if_written(),
                 "message": str(exc), "errors": [str(exc)], "code": "io_error",
             }
 
@@ -378,14 +391,14 @@ async def async_add_entity_to_recorder_exclude(
             code = "include_used" if "!include" in error or "included file" in error else "io_error"
             return {
                 "success": False, "already_excluded": False,
-                "backup_path": str(backup_path) if backup_path.exists() else None,
+                "backup_path": await _backup_path_if_written(),
                 "message": error, "errors": [error], "code": code,
             }
 
         if already:
             return {
                 "success": True, "already_excluded": True,
-                "backup_path": str(backup_path) if backup_path.exists() else None,
+                "backup_path": await _backup_path_if_written(),
                 "message": f"{entity_id} is already in recorder.exclude.entities",
                 "errors": [], "code": "already",
             }

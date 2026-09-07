@@ -217,7 +217,9 @@ class RefactoringAssistant:
         self.hass = hass
         self._config_dir = str(hass.config.config_dir)
         self._backup_dir = Path(hass.config.config_dir) / BACKUP_DIR
-        self._backup_dir.mkdir(exist_ok=True)
+        # Created lazily, in the executor, the first time a backup is written:
+        # this constructor runs on the event loop during setup, where a mkdir()
+        # is a blocking call Home Assistant logs a warning for.
         # No `_automations_file` / `_scripts_file`: which file holds an entry is
         # a per-target question, not an install-wide constant. With a split
         # config (`automation: !include_dir_merge_list automations/`) the flat
@@ -884,13 +886,15 @@ class RefactoringAssistant:
 
     async def list_backups(self) -> list[dict]:
         """List available backups."""
-        
-        if not self._backup_dir.exists():
-            _LOGGER.debug("Backup directory does not exist: %s", self._backup_dir)
-            return []
-            
+
         def _scan_backups():
             results = []
+            # The directory probe belongs in here with the walk: on the event
+            # loop it is one more blocking stat() for Home Assistant to warn
+            # about.
+            if not self._backup_dir.is_dir():
+                _LOGGER.debug("Backup directory does not exist: %s", self._backup_dir)
+                return results
             try:
                 _LOGGER.debug("Scanning backups in: %s", self._backup_dir)
                 for entry in self._backup_dir.iterdir():
@@ -933,6 +937,21 @@ class RefactoringAssistant:
             _LOGGER.error("Error listing backups: %s", e)
             return []
 
+    def _check_backup_path_sync(self, backup_file: Path) -> str:
+        """Validate one backup path. Returns "ok", "outside" or "missing".
+
+        Both halves touch the filesystem — ``resolve()`` follows symlinks and
+        ``is_file()`` stats — so they run together in the executor rather than
+        four blocking calls deep in an async handler.
+        """
+        try:
+            backup_file.resolve().relative_to(self._backup_dir.resolve())
+        except ValueError:
+            return "outside"
+        except OSError:
+            return "outside"
+        return "ok" if backup_file.is_file() else "missing"
+
     async def restore_backup(self, backup_path: str) -> dict[str, Any]:
         """Restore automations from backup.
 
@@ -944,9 +963,10 @@ class RefactoringAssistant:
         # ── Path-traversal guard ──────────────────────────────────────────────
         # Resolve both paths to their canonical (symlink-free) absolute forms,
         # then assert the backup file is inside _backup_dir.
-        try:
-            backup_file.resolve().relative_to(self._backup_dir.resolve())
-        except ValueError:
+        verdict = await self.hass.async_add_executor_job(
+            self._check_backup_path_sync, backup_file
+        )
+        if verdict == "outside":
             _LOGGER.warning(
                 "restore_backup: rejected path outside backup dir: %s", backup_path
             )
@@ -954,8 +974,7 @@ class RefactoringAssistant:
                 "success": False,
                 "error": "Invalid backup path — file must be inside the HACA backup directory.",
             }
-
-        if not backup_file.exists():
+        if verdict == "missing":
             return {
                 "success": False,
                 "error": "Backup file not found"
@@ -1052,17 +1071,17 @@ class RefactoringAssistant:
     async def delete_backup(self, backup_path: str) -> dict[str, Any]:
         """Delete a specific backup file."""
         backup_file = Path(backup_path)
-        
+
         # Security check: ensure file is in backup directory
-        try:
-            backup_file.resolve().relative_to(self._backup_dir.resolve())
-        except ValueError:
+        verdict = await self.hass.async_add_executor_job(
+            self._check_backup_path_sync, backup_file
+        )
+        if verdict == "outside":
             return {
                 "success": False,
                 "error": "Invalid backup path - file must be in backup directory"
             }
-        
-        if not backup_file.exists():
+        if verdict == "missing":
             return {
                 "success": False,
                 "error": "Backup file not found"
@@ -1112,6 +1131,7 @@ class RefactoringAssistant:
                     "no automation YAML file to back up — `automation:` resolves "
                     "to nothing that exists on disk"
                 )
+            self._backup_dir.mkdir(parents=True, exist_ok=True)
             # One-second timestamps collide: two operations in the same second
             # produced the same name, and the second silently overwrote the
             # first. `restore_backup` takes a pre-restore snapshot, so that

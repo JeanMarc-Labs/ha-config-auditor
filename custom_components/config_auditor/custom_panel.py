@@ -249,19 +249,31 @@ def _url_version(url: str) -> str:
 
 async def async_register_panel(hass: HomeAssistant) -> None:
     """Register H.A.C.A custom panel in the sidebar."""
-    try:
-        _hash_path = Path(__file__).parent / "www" / "haca-panel.hash"
-        cache_bust = await hass.async_add_executor_job(
-            lambda: _hash_path.read_text(encoding="utf-8").strip()
-        ) or VERSION.replace(".", "_")
-    except Exception:
-        cache_bust = VERSION.replace(".", "_")
+    integration_dir = Path(__file__).parent
+    www_dir = integration_dir / "www"
+
+    def _probe_bundle() -> tuple[str, bool, bool]:
+        """Read the bundle hash and stat the two paths — one executor hop.
+
+        Everything here touches the filesystem, so it stays off the event loop:
+        Home Assistant warns about a blocking call for a bare `exists()` too.
+        """
+        try:
+            cache_bust = (www_dir / "haca-panel.hash").read_text(encoding="utf-8").strip()
+        except Exception:  # noqa: BLE001 — no hash file: fall back to the version
+            cache_bust = ""
+        cache_bust = cache_bust or VERSION.replace(".", "_")
+        www_exists = www_dir.is_dir()
+        hashed_exists = www_exists and (www_dir / f"haca-panel.{cache_bust}.js").is_file()
+        return cache_bust, www_exists, hashed_exists
 
     try:
-        integration_dir = Path(__file__).parent
-        www_dir = integration_dir / "www"
+        cache_bust, www_exists, hashed_exists = await hass.async_add_executor_job(_probe_bundle)
+    except Exception:  # noqa: BLE001
+        cache_bust, www_exists, hashed_exists = VERSION.replace(".", "_"), True, False
 
-        if not www_dir.exists():
+    try:
+        if not www_exists:
             _LOGGER.error("WWW directory not found: %s", www_dir)
             return
 
@@ -305,8 +317,7 @@ async def async_register_panel(hass: HomeAssistant) -> None:
         # the query-string bust. If the hashed file is somehow missing on
         # disk, fall back to the canonical filename so the panel still loads.
         hashed_name = f"haca-panel.{cache_bust}.js"
-        hashed_path = www_dir / hashed_name
-        bundle_filename = hashed_name if hashed_path.exists() else "haca-panel.js"
+        bundle_filename = hashed_name if hashed_exists else "haca-panel.js"
 
         frontend.async_register_built_in_panel(
             hass,
