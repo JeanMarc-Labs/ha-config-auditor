@@ -447,11 +447,11 @@
       "mark_replaced_done": "Batteria contrassegnata come sostituita",
       "edit_library_link": "✏️ Modifica libreria HACA",
       "bn_edit_modal_title": "Estendere la libreria batterie HACA",
-      "bn_edit_modal_body": "HACA include un file di libreria batterie integrato. Aprilo in un editor di testo (tramite l'add-on File Editor, SSH o Studio Code Server), e aggiungi una nuova voce nell'array \"devices\".",
-      "bn_step1_title": "Apri il file della libreria",
-      "bn_step1_detail": "Apri questo file esistente nel tuo editor preferito — contiene già tutte le voci seed:",
+      "bn_edit_modal_body": "HACA include una libreria batterie integrata. Invece di modificarla, aggiungi i tuoi dispositivi al tuo file personale: HACA lo legge sopra quella integrata e un aggiornamento di HACA non lo tocca mai.",
+      "bn_step1_title": "Crea il tuo file di libreria",
+      "bn_step1_detail": "Crea questo file con un editor di testo (add-on File Editor, SSH o Studio Code Server). Si trova nella tua cartella di configurazione, fuori dall'integrazione:",
       "bn_step2_title": "Aggiungi un nuovo dispositivo all'array \"devices\"",
-      "bn_step2_detail": "Inserisci un nuovo oggetto JSON nell'array \"devices\" (non dimenticare la virgola tra le voci). Trova produttore e modello esatti del tuo dispositivo in HA: Impostazioni → Dispositivi e servizi → clic sul dispositivo. Voce di esempio da copiare:",
+      "bn_step2_detail": "Copia questo come contenuto del file, poi aggiungi un oggetto per dispositivo nell'array \"devices\". Trova produttore e modello esatti in HA: Impostazioni → Dispositivi e servizi → fai clic sul dispositivo.",
       "bn_step3_title": "Riavviare Home Assistant",
       "bn_step3_detail": "Dopo il riavvio, HACA ricaricherà la libreria aggiornata e la userà per rilevare i tipi di batterie. Le nuove voci appaiono subito al prossimo scan.",
       "bn_fields_label": "Riferimento dei campi:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "es: \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "intero, numero di batterie (1, 2, 3, ...) — omettere se 1",
       "bn_field_match_help": "opzionale: \"exact\" (default), \"startswith\", \"endswith\" o \"contains\" — utile per varianti di modello",
-      "bn_warning_overwrite": "Importante: questo file viene sovrascritto all'aggiornamento di HACA. Conserva un backup delle tue aggiunte prima dell'aggiornamento."
+      "bn_warning_overwrite": "Questo file è fuori dalla cartella dell'integrazione, quindi un aggiornamento di HACA non lo sovrascrive mai. Una voce inserita qui ha inoltre la precedenza sulla libreria integrata."
     },
     "issues": {
+      "truncated": "Visualizzati {shown} problemi su {total} — l'elenco è limitato dal server.",
       "open_dashboard": "Apri cruscotto",
       "optimize": "Ottimizza",
       "complexity_score_title": "Punteggio complessità {score}/100 — ottimizzabile",

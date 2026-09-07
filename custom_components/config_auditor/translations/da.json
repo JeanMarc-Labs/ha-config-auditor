@@ -447,11 +447,11 @@
       "mark_replaced_done": "Batteri markeret som skiftet",
       "edit_library_link": "✏️ Rediger HACA-biblioteket",
       "bn_edit_modal_title": "Udvid HACA-batteribiblioteket",
-      "bn_edit_modal_body": "HACA indeholder en indbygget batteribiblioteksfil. Åbn den i en teksteditor (via File Editor-tilføjelsen, SSH eller Studio Code Server) og tilføj en ny post i \"devices\"-arrayet.",
-      "bn_step1_title": "Åbn biblioteksfilen",
-      "bn_step1_detail": "Åbn denne eksisterende fil i din foretrukne editor — den indeholder allerede alle seed-poster:",
+      "bn_edit_modal_body": "HACA indeholder et indbygget batteribibliotek. Redigér det ikke — læg i stedet dine enheder i din egen biblioteksfil: HACA læser den oven på det indbyggede, og en HACA-opdatering rører den aldrig.",
+      "bn_step1_title": "Opret din egen biblioteksfil",
+      "bn_step1_detail": "Opret filen i en teksteditor (File Editor-tilføjelsen, SSH eller Studio Code Server). Den ligger i din konfigurationsmappe, uden for integrationen:",
       "bn_step2_title": "Tilføj en ny enhed til \"devices\"-arrayet",
-      "bn_step2_detail": "Indsæt et nyt JSON-objekt i \"devices\"-arrayet (glem ikke kommaet mellem poster). Find din enheds nøjagtige producent og model i HA: Indstillinger → Enheder og tjenester → klik på din enhed. Eksempelpost til kopiering:",
+      "bn_step2_detail": "Kopiér dette som filens indhold, og tilføj derefter ét objekt pr. enhed i arrayet \"devices\". Den præcise producent og model finder du i HA: Indstillinger → Enheder og tjenester → klik på din enhed.",
       "bn_step3_title": "Genstart Home Assistant",
       "bn_step3_detail": "Efter genstart genindlæser HACA det opdaterede bibliotek og bruger det til at registrere batterityper. Nye poster vises straks ved næste batteriscan.",
       "bn_fields_label": "Feltreference:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "f.eks. \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "heltal, antal batterier (1, 2, 3, ...) — udelad hvis 1",
       "bn_field_match_help": "valgfri: \"exact\" (standard), \"startswith\", \"endswith\" eller \"contains\" — nyttig til modelvarianter",
-      "bn_warning_overwrite": "Vigtigt: Denne fil overskrives ved en HACA-opdatering. Gem en sikkerhedskopi af dine tilføjelser før opdateringen."
+      "bn_warning_overwrite": "Filen ligger uden for integrationsmappen, så en HACA-opdatering overskriver den aldrig. En post her har desuden forrang frem for det indbyggede bibliotek."
     },
     "issues": {
+      "truncated": "Viser {shown} af {total} problemer — listen begrænses af serveren.",
       "open_dashboard": "Åbn dashboard",
       "optimize": "Optimér",
       "complexity_score_title": "Kompleksitetsscore {score}/100 — optimaliserbar",

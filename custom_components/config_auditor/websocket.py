@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import json
 from pathlib import Path
-from typing import Any
+from time import monotonic as _monotonic
+from typing import Any, NamedTuple
 
 import voluptuous as vol
 
@@ -14,6 +16,39 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.translation import async_get_translations
 
 from .const import DOMAIN
+from .yaml_sources import (
+    contains_ha_tag,
+    iter_domain_files,
+    read_roundtrip_yaml,
+    skipped_note,
+    write_roundtrip_yaml,
+)
+
+# Issue categories the panel can ask for, and the coordinator key each one holds.
+# Used both to validate `category` and to build the response, so the two can
+# never drift apart again.
+ISSUE_CATEGORY_MAP: dict[str, str] = {
+    "automation":  "automation_issue_list",
+    "script":      "script_issue_list",
+    "scene":       "scene_issue_list",
+    "blueprint":   "blueprint_issue_list",
+    "entity":      "entity_issue_list",
+    "helper":      "helper_issue_list",
+    "performance": "performance_issue_list",
+    "security":    "security_issue_list",
+    "dashboard":   "dashboard_issue_list",
+    "compliance":  "compliance_issue_list",
+}
+
+# A manual scan that has been "in progress" for longer than this is treated as
+# dead: the lock is taken again rather than left blocking every further scan.
+SCAN_LOCK_TIMEOUT = 600  # seconds
+
+# How many issues per category one `haca/get_data` call returns by default.
+# Deliberately larger than any realistic category on a real installation: the
+# panel filters and paginates client-side, so a low ceiling silently hid issues.
+DEFAULT_ISSUE_LIMIT = 2000
+
 
 def _ts(hass, section: str, key: str, **kwargs) -> str:
     """Get a translation string from the in-memory cache (websocket-local copy)."""
@@ -120,12 +155,9 @@ def async_register_websocket_handlers(hass: HomeAssistant) -> None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "haca/get_data",
-        vol.Optional("limit", default=200): int,
+        vol.Optional("limit", default=DEFAULT_ISSUE_LIMIT): int,
         vol.Optional("offset", default=0): int,
-        vol.Optional("category"): vol.In([
-            "automation", "script", "scene", "blueprint",
-            "entity", "performance", "security", "dashboard", "compliance"
-        ]),
+        vol.Optional("category"): vol.In(list(ISSUE_CATEGORY_MAP)),
     }
 )
 @websocket_api.require_admin
@@ -148,102 +180,80 @@ async def handle_get_data(
         coordinator = data["coordinator"]
         cdata = coordinator.data or {}
 
-        limit  = msg.get("limit", 200)
+        limit  = msg.get("limit", DEFAULT_ISSUE_LIMIT)
         offset = msg.get("offset", 0)
         category = msg.get("category")
 
-        def _paginate(lst: list) -> list:
-            return lst[offset: offset + limit]
-
-        # If a category filter is requested, only return that list
-        category_map = {
-            "automation":  "automation_issue_list",
-            "script":      "script_issue_list",
-            "scene":       "scene_issue_list",
-            "blueprint":   "blueprint_issue_list",
-            "entity":      "entity_issue_list",
-            "performance": "performance_issue_list",
-            "security":    "security_issue_list",
-            "dashboard":   "dashboard_issue_list",
-            "compliance":  "compliance_issue_list",
+        # Full lists, straight from the coordinator, before any slicing.
+        full: dict[str, list] = {
+            key: (cdata.get(key) or []) for key in ISSUE_CATEGORY_MAP.values()
         }
 
         def _get_list(key: str) -> list:
-            lst = cdata.get(key, [])
-            if category and category_map.get(category) == key:
-                return _paginate(lst)
-            if not category:
-                return _paginate(lst)
-            return lst if category_map.get(category) != key else []
+            """The slice of one issue list to send back.
 
-        auto_list  = cdata.get("automation_issue_list", [])
-        script_list = cdata.get("script_issue_list", [])
-        scene_list  = cdata.get("scene_issue_list", [])
-        bp_list     = cdata.get("blueprint_issue_list", [])
-        ent_list    = cdata.get("entity_issue_list", [])
-        perf_list   = cdata.get("performance_issue_list", [])
-        sec_list    = cdata.get("security_issue_list", [])
-        dash_list   = cdata.get("dashboard_issue_list", [])
-        comp_list   = cdata.get("compliance_issue_list", [])
+            Asking for a category narrows the answer to that category — every
+            other list comes back empty. Without a category, every list is sent,
+            each one sliced to the same window.
+            """
+            if category and ISSUE_CATEGORY_MAP[category] != key:
+                return []
+            return full[key][offset: offset + limit]
 
-        connection.send_result(
-            msg["id"],
-            {
-                "health_score":         cdata.get("health_score", 0),
-                "automation_issues":    cdata.get("automation_issues", 0),
-                "script_issues":        cdata.get("script_issues", 0),
-                "scene_issues":         cdata.get("scene_issues", 0),
-                "blueprint_issues":     cdata.get("blueprint_issues", 0),
-                "entity_issues":        cdata.get("entity_issues", 0),
-                "performance_issues":   cdata.get("performance_issues", 0),
-                "security_issues":      cdata.get("security_issues", 0),
-                "dashboard_issues":     cdata.get("dashboard_issues", 0),
-                "compliance_issues":    cdata.get("compliance_issues", 0),
-                "total_issues":         cdata.get("total_issues", 0),
-                "last_scan":            cdata.get("last_scan"),
-                # Paginated lists
-                "automation_issue_list":    _paginate(auto_list)   if not category or category == "automation"  else auto_list,
-                "script_issue_list":        _paginate(script_list) if not category or category == "script"      else script_list,
-                "scene_issue_list":         _paginate(scene_list)  if not category or category == "scene"       else scene_list,
-                "blueprint_issue_list":     _paginate(bp_list)     if not category or category == "blueprint"   else bp_list,
-                "entity_issue_list":        _paginate(ent_list)    if not category or category == "entity"      else ent_list,
-                "performance_issue_list":   _paginate(perf_list)   if not category or category == "performance" else perf_list,
-                "security_issue_list":      _paginate(sec_list)    if not category or category == "security"    else sec_list,
-                "dashboard_issue_list":     _paginate(dash_list)   if not category or category == "dashboard"   else dash_list,
-                "compliance_issue_list":   _paginate(comp_list)   if not category or category == "compliance"   else comp_list,
-                # Dependency graph
-                "dependency_graph": cdata.get("dependency_graph", {"nodes": [], "edges": []}),
-                # Battery monitor
-                "battery_list":   cdata.get("battery_list", []),
-                "battery_count":  cdata.get("battery_count", 0),
-                "battery_alerts": cdata.get("battery_alerts", 0),
-                # Complexity / stats tables
-                "complexity_scores":         cdata.get("complexity_scores", []),
-                "script_complexity_scores":  cdata.get("script_complexity_scores", []),
-                "scene_stats":               cdata.get("scene_stats", []),
-                "blueprint_stats":           cdata.get("blueprint_stats", []),
-                # Recorder orphan data (not paginated, usually small)
-                "recorder_orphans":          cdata.get("recorder_orphans", []),
-                "recorder_orphan_count":      cdata.get("recorder_orphan_count", 0),
-                "recorder_wasted_mb":         cdata.get("recorder_wasted_mb", 0.0),
-                "recorder_db_available":      cdata.get("recorder_db_available", False),
-                # Pagination metadata
-                "pagination": {
-                    "limit":  limit,
-                    "offset": offset,
-                    "category": category,
-                    "total_automation":  len(auto_list),
-                    "total_script":      len(script_list),
-                    "total_scene":       len(scene_list),
-                    "total_blueprint":   len(bp_list),
-                    "total_entity":      len(ent_list),
-                    "total_performance": len(perf_list),
-                    "total_security":    len(sec_list),
-                    "total_dashboard":   len(dash_list),
-                    "total_compliance":  len(comp_list),
+        # Per-category truncation flags, so the panel can say "200 of 247 shown"
+        # instead of quietly dropping the rest.
+        truncated = {
+            name: len(_get_list(key)) < len(full[key])
+            for name, key in ISSUE_CATEGORY_MAP.items()
+            if not category or name == category
+        }
+
+        payload = {
+            "health_score":         cdata.get("health_score", 0),
+            "automation_issues":    cdata.get("automation_issues", 0),
+            "script_issues":        cdata.get("script_issues", 0),
+            "scene_issues":         cdata.get("scene_issues", 0),
+            "blueprint_issues":     cdata.get("blueprint_issues", 0),
+            "entity_issues":        cdata.get("entity_issues", 0),
+            "helper_issues":        cdata.get("helper_issues", 0),
+            "performance_issues":   cdata.get("performance_issues", 0),
+            "security_issues":      cdata.get("security_issues", 0),
+            "dashboard_issues":     cdata.get("dashboard_issues", 0),
+            "compliance_issues":    cdata.get("compliance_issues", 0),
+            "total_issues":         cdata.get("total_issues", 0),
+            "last_scan":            cdata.get("last_scan"),
+            # Dependency graph
+            "dependency_graph": cdata.get("dependency_graph", {"nodes": [], "edges": []}),
+            # Battery monitor
+            "battery_list":   cdata.get("battery_list", []),
+            "battery_count":  cdata.get("battery_count", 0),
+            "battery_alerts": cdata.get("battery_alerts", 0),
+            # Complexity / stats tables
+            "complexity_scores":         cdata.get("complexity_scores", []),
+            "script_complexity_scores":  cdata.get("script_complexity_scores", []),
+            "scene_stats":               cdata.get("scene_stats", []),
+            "blueprint_stats":           cdata.get("blueprint_stats", []),
+            # Recorder orphan data (not paginated, usually small)
+            "recorder_orphans":          cdata.get("recorder_orphans", []),
+            "recorder_orphan_count":      cdata.get("recorder_orphan_count", 0),
+            "recorder_wasted_mb":         cdata.get("recorder_wasted_mb", 0.0),
+            "recorder_db_available":      cdata.get("recorder_db_available", False),
+            # Pagination metadata
+            "pagination": {
+                "limit":  limit,
+                "offset": offset,
+                "category": category,
+                "truncated": truncated,
+                **{
+                    f"total_{name}": len(full[key])
+                    for name, key in ISSUE_CATEGORY_MAP.items()
                 },
             },
-        )
+        }
+        # Paginated lists
+        payload.update({key: _get_list(key) for key in ISSUE_CATEGORY_MAP.values()})
+
+        connection.send_result(msg["id"], payload)
     except Exception as e:
         _LOGGER.error("Error getting data: %s", e, exc_info=True)
         connection.send_error(msg["id"], "error", str(e))
@@ -277,17 +287,31 @@ async def handle_scan_all(
             connection.send_error(msg["id"], "no_data", "No H.A.C.A data found")
             return
 
-        # Guard anti-spam : si un scan est déjà en cours, on rejette sans bloquer
+        # Guard anti-spam : si un scan est déjà en cours, on rejette sans bloquer.
+        # Le drapeau est daté : un scan qui dépasse SCAN_LOCK_TIMEOUT est de toute
+        # façon anormal, et un verrou resté coincé ne doit pas condamner tous les
+        # scans manuels jusqu'au rechargement de l'intégration.
+        started_at = data.get("_scan_started_at")
         if data.get("_scan_in_progress"):
-            connection.send_result(msg["id"], {"accepted": False, "reason": "scan_in_progress"})
-            _LOGGER.warning("[HACA WS] Scan already in progress — request ignored")
-            return
+            age = _monotonic() - started_at if started_at else None
+            if age is None or age < SCAN_LOCK_TIMEOUT:
+                connection.send_result(msg["id"], {"accepted": False, "reason": "scan_in_progress"})
+                _LOGGER.warning("[HACA WS] Scan already in progress — request ignored")
+                return
+            _LOGGER.warning(
+                "[HACA WS] Stale scan lock (%.0fs old) — starting a new scan anyway", age
+            )
 
         coordinator = data["coordinator"]
-        data["_scan_in_progress"] = True
 
-        # Répondre IMMÉDIATEMENT — le scan tourne en tâche de fond
+        # Répondre IMMÉDIATEMENT — le scan tourne en tâche de fond.
+        # send_result peut lever si l'utilisateur a fermé l'onglet entre-temps ;
+        # le drapeau n'est posé qu'ensuite, juste avant de lancer la tâche, pour
+        # qu'un échec d'envoi ne laisse pas le verrou fermé à vie.
         connection.send_result(msg["id"], {"accepted": True})
+
+        data["_scan_in_progress"] = True
+        data["_scan_started_at"] = _monotonic()
 
         async def _run_scan() -> None:
             try:
@@ -297,13 +321,20 @@ async def handle_scan_all(
                 _LOGGER.error("[HACA WS] Background scan error: %s", scan_err, exc_info=True)
             finally:
                 data["_scan_in_progress"] = False
+                data["_scan_started_at"] = None
                 # Notifier le frontend via l'event bus HA
                 hass.bus.async_fire("haca_scan_complete", {
                     "entry_id": entry.entry_id,
                     "success": True,
                 })
 
-        hass.async_create_task(_run_scan())
+        try:
+            hass.async_create_task(_run_scan())
+        except Exception:
+            # The task never started, so nothing will ever clear the flag.
+            data["_scan_in_progress"] = False
+            data["_scan_started_at"] = None
+            raise
 
     except Exception as e:
         _LOGGER.error("Error starting scan: %s", e, exc_info=True)
@@ -1061,6 +1092,96 @@ async def handle_explain_issue(
         connection.send_error(msg["id"], "error", str(e))
 
 
+class _EntryMatch(NamedTuple):
+    """One automation/script entry, found in the file HA actually loads it from."""
+
+    path: str | None
+    yaml: Any           # the ruamel instance that parsed `document`
+    document: Any       # file root: a list for automations, a mapping for scripts
+    entry: Any          # the matched mapping, still attached to `document`
+    files: list[str]    # every file the domain key resolved to
+    skipped: list[str]  # files that could not be parsed for editing
+
+
+def _find_entry_sync(config_dir: str, entity_id: str, alias: str) -> _EntryMatch:
+    """Locate an automation or script across the config HA actually loads.
+
+    A split config (`automation: !include_dir_merge_list automations/`) keeps its
+    entries in several files; the flat `<config>/automations.yaml` this used to
+    read may not even exist. Every candidate file is parsed in ruamel round-trip
+    mode, so the caller can edit the entry without flattening the comments and
+    formatting around it.
+
+    Matching runs in priority passes over *all* files, so an exact `id` always
+    wins over an alias that happens to collide in another file.
+    """
+    is_script = entity_id.startswith("script.")
+    key, default_filename = ("script", "scripts.yaml") if is_script else ("automation", "automations.yaml")
+    slug = entity_id.split(".", 1)[-1]
+    alias = (alias or "").strip()
+    alias_lower = alias.lower()
+
+    files = iter_domain_files(config_dir, key, default_filename)
+    skipped: list[str] = []
+    loaded: list[tuple[str, Any, Any]] = []
+
+    for path in files:
+        try:
+            yaml, data = read_roundtrip_yaml(path)
+        except Exception:  # noqa: BLE001 — syntax error, unreadable file
+            skipped.append(path)
+            continue
+        # An empty parse, the wrong shape, or a Home Assistant tag we would have
+        # to rewrite: skip rather than risk replacing the file with something else.
+        if data is None or contains_ha_tag(data):
+            skipped.append(path)
+            continue
+        if not isinstance(data, dict if is_script else list):
+            skipped.append(path)
+            continue
+        loaded.append((path, yaml, data))
+
+    def _entries(document):
+        """(key, mapping) pairs of one file, whatever shape the domain has."""
+        if is_script:
+            return [(k, v) for k, v in document.items() if isinstance(v, dict)]
+        return [(None, item) for item in document if isinstance(item, dict)]
+
+    def _slugified(entry) -> str:
+        return str(entry.get("alias", "")).strip().lower().replace(" ", "_")
+
+    if is_script:
+        passes = [
+            lambda k, e: k == slug,
+            lambda k, e: bool(alias) and str(e.get("alias", "")).strip() == alias,
+            lambda k, e: bool(alias) and str(e.get("alias", "")).strip().lower() == alias_lower,
+        ]
+    else:
+        passes = [
+            lambda k, e: bool(str(e.get("id", "")).strip()) and str(e.get("id", "")).strip() == slug,
+            lambda k, e: bool(alias) and str(e.get("alias", "")).strip() == alias,
+            lambda k, e: bool(alias) and str(e.get("alias", "")).strip().lower() == alias_lower,
+            lambda k, e: _slugified(e) == slug,
+        ]
+
+    for matches in passes:
+        for path, yaml, document in loaded:
+            for entry_key, entry in _entries(document):
+                if matches(entry_key, entry):
+                    return _EntryMatch(path, yaml, document, entry, files, skipped)
+
+    return _EntryMatch(None, None, None, None, files, skipped)
+
+
+def _entry_not_found_message(entity_id: str, alias: str, match: _EntryMatch) -> str:
+    """Miss message that says what was searched — same wording as the MCP tools."""
+    return (
+        f"'{entity_id}' (alias={alias!r}) was not found in any YAML file for its "
+        f"domain ({len(match.files)} scanned). Only YAML entries can be edited "
+        f"this way." + skipped_note(match.skipped)
+    )
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "haca/ai_suggest_fix",
@@ -1079,8 +1200,6 @@ async def handle_ai_suggest_fix(
     Retourne {field, suggestion, entity_id} — pas de modification effectuée.
     L'utilisateur peut éditer la suggestion dans la modale avant d'appliquer.
     """
-    from pathlib import Path as _Path
-    import yaml as _yaml
     from .conversation import _async_call_ai
 
     issue      = msg.get("issue", {})
@@ -1100,26 +1219,23 @@ async def handle_ai_suggest_fix(
         return
 
     # ── Lire le YAML de l'automation/script ─────────────────────────────
+    # Passe par le résolveur partagé : sur une config éclatée, l'entrée ne vit
+    # pas dans <config>/automations.yaml, et la suggestion sortait sans contexte.
     yaml_snippet = ""
     try:
-        is_script = entity_id.startswith("script.")
-        target = _Path(hass.config.config_dir) / ("scripts.yaml" if is_script else "automations.yaml")
-        slug   = entity_id.split(".", 1)[-1]
+        def _read_snippet() -> str:
+            match = _find_entry_sync(hass.config.config_dir, entity_id, alias)
+            if match.entry is None:
+                _LOGGER.debug(
+                    "[HACA suggest] %s not found in %d file(s)%s",
+                    entity_id, len(match.files), skipped_note(match.skipped),
+                )
+                return ""
+            buffer = io.StringIO()
+            match.yaml.dump(match.entry, buffer)
+            return buffer.getvalue()
 
-        def _read_yaml():
-            data = _yaml.safe_load(target.read_text(encoding="utf-8")) or []
-            if not isinstance(data, list):
-                data = [data]
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                if (item.get("alias") == alias
-                        or str(item.get("id", "")) == slug
-                        or item.get("alias", "").lower().replace(" ", "_") == slug):
-                    return _yaml.dump(item, allow_unicode=True, default_flow_style=False)
-            return ""
-
-        yaml_snippet = await hass.async_add_executor_job(_read_yaml)
+        yaml_snippet = await hass.async_add_executor_job(_read_snippet)
     except Exception as exc:
         _LOGGER.debug("[HACA suggest] Could not read YAML for %s: %s", entity_id, exc)
 
@@ -1185,7 +1301,10 @@ async def handle_apply_field_fix(
 ) -> None:
     """Applique une correction simple (description, alias) directement dans le YAML.
 
-    Pas de sauvegarde — l'opération est non-destructive (on ajoute/modifie un champ texte).
+    L'écriture est en round-trip ruamel : commentaires, ordre des clés, styles de
+    guillemets et ancres du fichier survivent à l'édition. Une sauvegarde est
+    prise avant toute écriture, dans le même dossier que celles du module de
+    refactoring — donc restaurable depuis le panneau.
     Recharge les automations/scripts après modification.
     """
     # Rate-limit: prevent spamming YAML writes
@@ -1194,87 +1313,52 @@ async def handle_apply_field_fix(
         connection.send_error(msg["id"], "rate_limited", "Too many requests — please wait a moment")
         return
 
-    from pathlib import Path as _Path
-    import yaml as _yaml
-
     entity_id = msg["entity_id"]
     field     = msg["field"]
     value     = msg["value"].strip()
+    alias     = msg.get("alias", "").strip()
 
     if field not in ("description", "alias"):
         connection.send_error(msg["id"], "unsupported_field", f"Champ '{field}' non supporté")
         return
 
-    is_script  = entity_id.startswith("script.")
-    target     = _Path(hass.config.config_dir) / ("scripts.yaml" if is_script else "automations.yaml")
-    slug       = entity_id.split(".", 1)[-1]
-    domain     = "script" if is_script else "automation"
-
-    def _apply():
-        raw  = target.read_text(encoding="utf-8")
-        data = _yaml.safe_load(raw) or []
-        if not isinstance(data, list):
-            data = [data]
-
-        # Matching par priorité décroissante (même logique que les outils MCP) :
-        # 1. id HA numérique exact
-        # 2. entity_id slug exact  (ex: "automation.lumiere_salon" → slug "lumiere_salon")
-        # 3. alias exact (case-sensitive, puis case-insensitive)
-        #
-        # Le fallback msg.get("alias", item_alias) était supprimé car il matchait
-        # systématiquement le premier élément quand l'alias n'était pas fourni.
-        alias_provided = msg.get("alias", "").strip()
-
-        found_item = None
-        # Pass 1 — id numérique exact
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("id", "")).strip() == slug:
-                found_item = item
-                break
-
-        # Pass 2 — alias exact (case-sensitive puis insensitive)
-        if found_item is None and alias_provided:
-            for sensitive in (True, False):
-                for item in data:
-                    if not isinstance(item, dict):
-                        continue
-                    a = item.get("alias", "")
-                    if (a if sensitive else a.lower()) == \
-                       (alias_provided if sensitive else alias_provided.lower()):
-                        found_item = item
-                        break
-                if found_item is not None:
-                    break
-
-        if found_item is None:
-            raise ValueError(
-                f"Automation/script '{entity_id}' (alias={alias_provided!r}) "
-                f"introuvable dans {target.name}. "
-                f"Check that entity_id and alias are correct."
-            )
-
-        found_item[field] = value
-        matched = True  # noqa: F841 — kept for clarity
-
-        # Écriture atomique — évite la corruption si HA crashe pendant l'écriture
-        import os as _os
-        _tmp = str(target) + ".tmp"
-        try:
-            with open(_tmp, "w", encoding="utf-8") as _fh:
-                _fh.write(_yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False))
-            _os.replace(_tmp, str(target))
-        except Exception:
-            try: _os.unlink(_tmp)
-            except OSError: pass
-            raise
+    domain = "script" if entity_id.startswith("script.") else "automation"
 
     try:
-        await hass.async_add_executor_job(_apply)
+        match = await hass.async_add_executor_job(
+            _find_entry_sync, hass.config.config_dir, entity_id, alias
+        )
+        if match.entry is None:
+            connection.send_error(
+                msg["id"], "not_found", _entry_not_found_message(entity_id, alias, match)
+            )
+            return
+
+        # Backup first — this rewrites a file the user maintains by hand.
+        entry_data = _get_entry_data(hass)[1] or {}
+        refactoring = entry_data.get("refactoring_assistant")
+        if refactoring is None:
+            # Refactoring module disabled: build one just for its backup logic,
+            # so the naming stays compatible with the panel's restore list.
+            from .refactoring_assistant import RefactoringAssistant
+            refactoring = RefactoringAssistant(hass)
+        backup_path = await refactoring._create_backup(Path(match.path))
+
+        def _write() -> None:
+            match.entry[field] = value
+            write_roundtrip_yaml(match.path, match.yaml, match.document)
+
+        await hass.async_add_executor_job(_write)
+
         # Recharger pour que HA prenne en compte
         await hass.services.async_call(domain, "reload", {}, blocking=True)
-        connection.send_result(msg["id"], {"success": True, "field": field, "value": value})
+        connection.send_result(msg["id"], {
+            "success": True,
+            "field": field,
+            "value": value,
+            "file": Path(match.path).name,
+            "backup": Path(backup_path).name,
+        })
     except Exception as exc:
         _LOGGER.error("[HACA apply_field_fix] %s: %s", entity_id, exc)
         connection.send_error(msg["id"], "apply_error", str(exc))
@@ -1595,20 +1679,26 @@ async def handle_get_battery_library_info(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Return absolute path of HACA battery library seed file."""
+    """Return the paths of the HACA battery library — bundled seed and user file."""
     seed_path = ""
+    user_path = ""
     size = 0
+    user_count = 0
     try:
         lib = hass.data.get("haca_battery_library")
         if lib is not None:
             seed_path = lib.seed_path
+            user_path = lib.user_path
             size = lib.size
+            user_count = lib.user_count
     except Exception as exc:
         _LOGGER.debug("[HACA] battery_library_info: %s", exc)
 
     connection.send_result(msg["id"], {
         "seed_path": seed_path,
+        "user_path": user_path,
         "size": size,
+        "user_count": user_count,
     })
 
 

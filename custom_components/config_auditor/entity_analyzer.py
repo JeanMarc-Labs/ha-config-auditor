@@ -1,7 +1,9 @@
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
+import json
 import logging
+import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -44,6 +46,22 @@ _UNKNOWN_NORMAL_DOMAINS: frozenset[str] = frozenset({
     "device_tracker", "notify", "scene",
 })
 
+# A well-formed entity_id: "<domain>.<object_id>", both slugified by HA.
+# Deliberately strict — it rejects half-templated values such as
+# "sensor.{{ room }}_temperature", which used to be reported as zombie entities.
+_ENTITY_ID_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+
+# Same shape, matched anywhere inside a Jinja template. Hits are kept only when
+# they name an entity that actually exists (see _build_entity_references).
+_TEMPLATE_ENTITY_RE = re.compile(r"\b([a-z][a-z0-9_]*)\.([a-z0-9_]+)\b")
+
+# `target:` selectors that reach entities indirectly.
+_TARGET_ID_FIELDS: frozenset[str] = frozenset({"device_id", "area_id", "label_id"})
+
+# Depth cap for the config walk — real automations nest a handful of levels;
+# this only guards against a pathological or hand-crafted config.
+_MAX_CONFIG_DEPTH = 30
+
 
 class EntityAnalyzer:
     """Analyze entities for issues."""
@@ -53,14 +71,24 @@ class EntityAnalyzer:
         self.hass = hass
         self.issues: list[dict[str, Any]] = []
         self._entity_references: dict[str, list[str]] = defaultdict(list)
+        # Explicit `entity_id:` references only — see _build_entity_references.
+        self._strong_entity_references: dict[str, list[str]] = defaultdict(list)
+        # JSON dump of every automation/script config, used as a last-resort
+        # substring net by the "unused helper" checks.
+        self._all_config_text: str = ""
         # Maps automation/script entity_id → human-readable alias
         self._automation_alias_map: dict[str, str] = {}
         self._translator = TranslationHelper(hass)
 
     @property
     def entity_references(self) -> dict[str, list[str]]:
-        """Public view of entity → referencing automation map."""
+        """Public view of entity → referencing automation map (strong + weak)."""
         return dict(self._entity_references)
+
+    @property
+    def strong_entity_references(self) -> dict[str, list[str]]:
+        """Same map, restricted to explicit `entity_id:` references."""
+        return dict(self._strong_entity_references)
 
     @property
     def automation_alias_map(self) -> dict[str, str]:
@@ -136,29 +164,28 @@ class EntityAnalyzer:
         script_configs: dict[str, dict] = None,
     ) -> None:
         """Build a map of which automations AND scripts reference which entities.
-        
+
+        The walk is fully recursive, so `choose:`, `if / then / else`, `repeat:`,
+        `parallel:`, nested `sequence:`, `default:` and service `data:` blocks are
+        covered, as are Jinja templates and `target.device_id` / `area_id` /
+        `label_id`.
+
+        Two maps come out of it:
+
+        * ``_strong_entity_references`` — entities named explicitly in an
+          ``entity_id`` field. Only those can prove that a *missing* entity is
+          still referenced, so this is what zombie detection reads.
+        * ``_entity_references`` — the strong references plus the "weak" ones
+          inferred from templates and from device / area / label targets. A weak
+          reference proves an entity is *used*; it can never prove a zombie,
+          because a regex hit or a registry lookup may be coincidental.
+
         Supports both legacy (trigger/condition/action) and new HA UI format
         (triggers/conditions/actions).
         """
         self._entity_references.clear()
+        self._strong_entity_references.clear()
         self._automation_alias_map.clear()
-
-        def _is_valid_entity_id(eid: str) -> bool:
-            """Check if a string looks like a valid HA entity_id (domain.object_id)."""
-            if not isinstance(eid, str) or "." not in eid:
-                return False
-            parts = eid.split(".", 1)
-            # domain must be alpha/underscore, object_id must not be empty
-            return len(parts) == 2 and len(parts[0]) > 0 and len(parts[1]) > 0 and parts[0].replace("_", "").isalpha()
-
-        def _add_ref(entity_id, automation_id):
-            """Add entity reference only if entity_id is valid."""
-            if isinstance(entity_id, list):
-                for eid in entity_id:
-                    if _is_valid_entity_id(eid):
-                        self._entity_references[eid].append(automation_id)
-            elif _is_valid_entity_id(entity_id):
-                self._entity_references[entity_id].append(automation_id)
 
         # Build alias map: entity_id → friendly alias for display
         for entity_id, config in automation_configs.items():
@@ -169,70 +196,143 @@ class EntityAnalyzer:
                 alias = config.get("alias") or config.get("id") or script_id
                 self._automation_alias_map[script_id] = alias
 
-        for idx, (automation_id, config) in enumerate(automation_configs.items()):
-            # Support both old and new HA YAML key formats
-            triggers = config.get("triggers") or config.get("trigger", [])
-            if not isinstance(triggers, list):
-                triggers = [triggers] if triggers else []
-            
-            for trigger in triggers:
-                if not isinstance(trigger, dict):
-                    continue
-                entity_id = trigger.get("entity_id")
-                if entity_id:
-                    _add_ref(entity_id, automation_id)
-            
-            # Extract from conditions (support both key formats)
-            conditions = config.get("conditions") or config.get("condition", [])
-            if not isinstance(conditions, list):
-                conditions = [conditions] if conditions else []
-            
-            for condition in conditions:
-                if not isinstance(condition, dict):
-                    continue
-                entity_id = condition.get("entity_id")
-                if entity_id:
-                    _add_ref(entity_id, automation_id)
-            
-            # Extract from actions (support both key formats)
-            actions = config.get("actions") or config.get("action", [])
-            if not isinstance(actions, list):
-                actions = [actions] if actions else []
-            
-            for action in actions:
-                if not isinstance(action, dict):
-                    continue
-                # Check entity_id at action level
-                action_entity = action.get("entity_id")
-                if action_entity:
-                    _add_ref(action_entity, automation_id)
-                # Check entity_id in target
-                target = action.get("target", {})
-                if isinstance(target, dict):
-                    entity_id = target.get("entity_id")
-                    if entity_id:
-                        _add_ref(entity_id, automation_id)
-            
-            if idx % 10 == 0: await asyncio.sleep(0)
-        
-        # Also scan scripts for entity references
+        known_ids = self._collect_known_entity_ids()
+        by_device, by_area, by_label = self._build_target_indexes()
+        indexes = {"device_id": by_device, "area_id": by_area, "label_id": by_label}
+
+        sources: list[tuple[str, dict]] = list(automation_configs.items())
         if script_configs:
-            for idx, (script_id, config) in enumerate(script_configs.items()):
-                sequence = config.get("sequence", [])
-                if not isinstance(sequence, list):
-                    sequence = [sequence] if sequence else []
-                for action in sequence:
-                    if not isinstance(action, dict):
-                        continue
-                    action_entity = action.get("entity_id")
-                    if action_entity:
-                        _add_ref(action_entity, script_id)
-                    target = action.get("target", {})
-                    if isinstance(target, dict):
-                        entity_id = target.get("entity_id")
-                        if entity_id:
-                            _add_ref(entity_id, script_id)
-                if idx % 10 == 0: await asyncio.sleep(0)
+            sources.extend(script_configs.items())
+
+        dumps: list[str] = []
+
+        for idx, (source_id, config) in enumerate(sources):
+            explicit, templates, targets = self._walk_config(config)
+
+            weak: set[str] = set()
+            for text in templates:
+                for domain, object_id in _TEMPLATE_ENTITY_RE.findall(text):
+                    candidate = f"{domain}.{object_id}"
+                    # A regex hit only counts when it names an entity that really
+                    # exists — otherwise service names ("light.turn_on") and dotted
+                    # Jinja attributes would masquerade as entity references.
+                    if candidate in known_ids:
+                        weak.add(candidate)
+            for field, value in targets:
+                weak.update(indexes[field].get(value, ()))
+
+            for entity_id in explicit:
+                self._strong_entity_references[entity_id].append(source_id)
+            for entity_id in explicit | weak:
+                self._entity_references[entity_id].append(source_id)
+
+            # Text dump reused as a safety net by the "unused helper" checks.
+            try:
+                dumps.append(json.dumps(config, default=str))
+            except Exception:  # noqa: BLE001 — an unserialisable config just skips the net
+                pass
+
+            if idx % 10 == 0:
+                await asyncio.sleep(0)
+
+        self._all_config_text = " ".join(dumps)
+
+    def _collect_known_entity_ids(self) -> set[str]:
+        """Every entity id Home Assistant knows about (state machine + registry)."""
+        known = {state.entity_id for state in self.hass.states.async_all()}
+        try:
+            known.update(er.async_get(self.hass).entities.keys())
+        except Exception:  # noqa: BLE001 — registry not loaded yet
+            pass
+        return known
+
+    def _build_target_indexes(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
+        """Index entities by device_id, area_id and label_id.
+
+        Built once per scan so that resolving a `target:` block is a dict lookup.
+        An entity inherits the area and the labels of its device, which is how
+        Home Assistant itself resolves a service call.
+        """
+        by_device: dict[str, set[str]] = defaultdict(set)
+        by_area: dict[str, set[str]] = defaultdict(set)
+        by_label: dict[str, set[str]] = defaultdict(set)
+
+        try:
+            ent_reg = er.async_get(self.hass)
+            dev_reg = dr.async_get(self.hass)
+        except Exception:  # noqa: BLE001 — registries not loaded yet
+            return by_device, by_area, by_label
+
+        devices = getattr(dev_reg, "devices", None) or {}
+
+        for entry in (getattr(ent_reg, "entities", None) or {}).values():
+            entity_id = getattr(entry, "entity_id", None)
+            if not entity_id:
+                continue
+            device_id = getattr(entry, "device_id", None)
+            device = devices.get(device_id) if device_id else None
+            if device_id:
+                by_device[device_id].add(entity_id)
+
+            area_id = getattr(entry, "area_id", None) or getattr(device, "area_id", None)
+            if area_id:
+                by_area[area_id].add(entity_id)
+
+            labels = set(getattr(entry, "labels", None) or ())
+            labels.update(getattr(device, "labels", None) or ())
+            for label in labels:
+                by_label[label].add(entity_id)
+
+        return by_device, by_area, by_label
+
+    def _walk_config(
+        self, config: Any
+    ) -> tuple[set[str], list[str], list[tuple[str, str]]]:
+        """Walk one automation/script config and collect every reference it holds.
+
+        Returns ``(entity_ids, template_strings, target_ids)``, where ``target_ids``
+        is a list of ``(field, value)`` pairs for device_id / area_id / label_id.
+        """
+        entity_ids: set[str] = set()
+        templates: list[str] = []
+        targets: list[tuple[str, str]] = []
+
+        def _add_entity(value: Any) -> None:
+            if isinstance(value, str):
+                if _ENTITY_ID_RE.match(value):
+                    entity_ids.add(value)
+            elif isinstance(value, list):
+                for item in value:
+                    _add_entity(item)
+
+        def _add_target(field: str, value: Any) -> None:
+            if isinstance(value, str):
+                targets.append((field, value))
+            elif isinstance(value, list):
+                for item in value:
+                    _add_target(field, item)
+
+        def _walk(node: Any, depth: int) -> None:
+            if depth > _MAX_CONFIG_DEPTH:
+                return
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "entity_id":
+                        _add_entity(value)
+                    elif key in _TARGET_ID_FIELDS:
+                        _add_target(key, value)
+                    _walk(value, depth + 1)
+            elif isinstance(node, list):
+                for item in node:
+                    _walk(item, depth + 1)
+            elif isinstance(node, str):
+                if "{{" in node or "{%" in node:
+                    templates.append(node)
+
+        _walk(config, 0)
+        return entity_ids, templates, targets
 
     async def _analyze_entity_states(self) -> None:
         """Analyze entity states."""
@@ -309,12 +409,18 @@ class EntityAnalyzer:
         return await async_get_haca_ignored_entity_ids(self.hass)
 
     async def _analyze_zombie_entities(self) -> None:
-        """Detect zombie entities - referenced but don't exist."""
+        """Detect zombie entities - referenced but don't exist.
+
+        Reads the *strong* reference map only: an entity has to be named in an
+        explicit `entity_id:` field to be called a zombie. Template hits and
+        device/area/label targets can never point at an entity that does not
+        exist, so counting them here would only manufacture false positives.
+        """
         all_entities = self.hass.states.async_all()
         existing_entities = {entity.entity_id for entity in all_entities}
         t = self._translator.t
 
-        for idx, (entity_id, automations) in enumerate(self._entity_references.items()):
+        for idx, (entity_id, automations) in enumerate(self._strong_entity_references.items()):
             if entity_id in self._ignored_entity_ids:
                 continue
             # Scenes, automations, scripts etc. are managed by their own analyzers
@@ -470,8 +576,11 @@ class EntityAnalyzer:
                 if idx % 20 == 0: await asyncio.sleep(0)
                 continue
 
-            # Check if this input_boolean is referenced anywhere
-            if entity_id not in self._entity_references or len(self._entity_references[entity_id]) == 0:
+            # Check if this input_boolean is referenced anywhere.
+            # Same safety net as _analyze_input_helpers: a bare substring hit in
+            # the raw configs is enough to consider the helper used.
+            refs = self._entity_references.get(entity_id) or []
+            if not refs and entity_id not in self._all_config_text:
                 self.issues.append({
                     "entity_id": entity_id,
                     "type": "unused_input_boolean",
@@ -497,14 +606,18 @@ class EntityAnalyzer:
             "input_select", "input_datetime",
         )
 
-        # Build a flat text dump of all configs for fast template scanning
-        all_config_text = ""
-        for cfg in list(automation_configs.values()) + list(script_configs.values()):
-            try:
-                import json as _json
-                all_config_text += _json.dumps(cfg) + " "
-            except Exception:
-                pass
+        # Flat text dump of all configs, for fast template scanning. Built once
+        # by _build_entity_references; rebuilt here only when this analyzer is
+        # driven directly (tests, ad-hoc calls) without a reference pass.
+        all_config_text = self._all_config_text
+        if not all_config_text and (automation_configs or script_configs):
+            dumps = []
+            for cfg in list(automation_configs.values()) + list(script_configs.values()):
+                try:
+                    dumps.append(json.dumps(cfg, default=str))
+                except Exception:  # noqa: BLE001 — an unserialisable config just skips the net
+                    pass
+            all_config_text = " ".join(dumps)
 
         all_states = self.hass.states.async_all()
         helpers = [s for s in all_states if s.entity_id.split(".")[0] in INPUT_DOMAINS]

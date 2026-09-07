@@ -447,11 +447,11 @@
       "mark_replaced_done": "Batterie als ersetzt markiert",
       "edit_library_link": "✏️ HACA-Bibliothek bearbeiten",
       "bn_edit_modal_title": "HACA-Batterie-Bibliothek erweitern",
-      "bn_edit_modal_body": "HACA enthält eine eingebaute Batterie-Bibliotheksdatei. Öffnen Sie diese in einem Texteditor (per File Editor-Add-on, SSH oder Studio Code Server) und fügen Sie einen neuen Eintrag im \"devices\"-Array hinzu.",
-      "bn_step1_title": "Bibliotheksdatei öffnen",
-      "bn_step1_detail": "Öffnen Sie diese vorhandene Datei in Ihrem bevorzugten Editor — sie enthält bereits alle Seed-Einträge:",
+      "bn_edit_modal_body": "HACA bringt eine eingebaute Batteriebibliothek mit. Bearbeiten Sie diese nicht, sondern tragen Sie Ihre Geräte in Ihre eigene Bibliotheksdatei ein: HACA liest sie zusätzlich zur eingebauten, und ein HACA-Update rührt sie nie an.",
+      "bn_step1_title": "Eigene Bibliotheksdatei anlegen",
+      "bn_step1_detail": "Legen Sie diese Datei mit einem Texteditor an (File-Editor-Add-on, SSH oder Studio Code Server). Sie liegt in Ihrem Konfigurationsordner, außerhalb der Integration:",
       "bn_step2_title": "Neues Gerät im \"devices\"-Array hinzufügen",
-      "bn_step2_detail": "Fügen Sie ein neues JSON-Objekt im \"devices\"-Array ein (vergessen Sie das Komma zwischen den Einträgen nicht). Den genauen Hersteller und das Modell Ihres Geräts finden Sie in HA: Einstellungen → Geräte & Dienste → Klick auf das Gerät. Beispieleintrag zum Kopieren:",
+      "bn_step2_detail": "Kopieren Sie dies als Inhalt der Datei und fügen Sie dann je Gerät ein Objekt in das Array \"devices\" ein. Hersteller und Modell finden Sie exakt in HA: Einstellungen → Geräte & Dienste → Gerät anklicken.",
       "bn_step3_title": "Home Assistant neu starten",
       "bn_step3_detail": "Nach dem Neustart lädt HACA die aktualisierte Bibliothek neu und nutzt sie zur Erkennung der Batterietypen. Neue Einträge erscheinen sofort beim nächsten Batterie-Scan.",
       "bn_fields_label": "Feld-Referenz:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "z.B. \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "Ganzzahl, Anzahl der Batterien (1, 2, 3, ...) — weglassen bei 1",
       "bn_field_match_help": "optional: \"exact\" (Standard), \"startswith\", \"endswith\" oder \"contains\" — nützlich für Modellvarianten",
-      "bn_warning_overwrite": "Wichtig: Diese Datei wird beim HACA-Update überschrieben. Bewahren Sie vor dem Update eine Sicherungskopie Ihrer Zusätze auf."
+      "bn_warning_overwrite": "Diese Datei liegt außerhalb des Integrationsordners, ein HACA-Update überschreibt sie also nie. Ein Eintrag hier hat außerdem Vorrang vor der eingebauten Bibliothek."
     },
     "issues": {
+      "truncated": "{shown} von {total} Problemen angezeigt — die Liste wird vom Server begrenzt.",
       "open_dashboard": "Dashboard öffnen",
       "optimize": "Optimieren",
       "complexity_score_title": "Komplexitätswert {score}/100 — optimierbar",

@@ -447,11 +447,11 @@
       "mark_replaced_done": "Battery marked as replaced",
       "edit_library_link": "✏️ Edit HACA library",
       "bn_edit_modal_title": "Extend the HACA battery library",
-      "bn_edit_modal_body": "HACA includes a built-in battery library file. Open it in a text editor (via File Editor add-on, SSH, or Studio Code Server), then add a new entry inside the \"devices\" array.",
-      "bn_step1_title": "Open the library file",
-      "bn_step1_detail": "Open this existing file in your editor of choice — it already contains all the seed entries:",
+      "bn_edit_modal_body": "HACA ships with a built-in battery library. Rather than editing it, add your devices to your own library file: HACA reads it on top of the built-in one, and a HACA update never touches it.",
+      "bn_step1_title": "Create your own library file",
+      "bn_step1_detail": "Create this file with a text editor (File Editor add-on, SSH, or Studio Code Server). It lives in your config folder, outside the integration:",
       "bn_step2_title": "Add a new device to the \"devices\" array",
-      "bn_step2_detail": "Insert a new JSON object inside the \"devices\" array (don't forget the comma between entries). Find your device's exact manufacturer and model in HA: Settings → Devices & Services → click your device. Example entry to copy:",
+      "bn_step2_detail": "Copy this as the content of the file, then add one object per device inside the \"devices\" array. Find your device's exact manufacturer and model in HA: Settings → Devices & Services → click your device.",
       "bn_step3_title": "Restart Home Assistant",
       "bn_step3_detail": "After restart, HACA will reload the updated library and use it for battery type detection. New entries appear immediately in the next battery scan.",
       "bn_fields_label": "Field reference:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "e.g. \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "integer, number of batteries (1, 2, 3, ...) — omit if 1",
       "bn_field_match_help": "optional: \"exact\" (default), \"startswith\", \"endswith\", or \"contains\" — useful for model variants",
-      "bn_warning_overwrite": "Important: this file is overwritten when HACA is updated. Keep a backup of your additions before upgrading."
+      "bn_warning_overwrite": "This file sits outside the integration folder, so a HACA update never overwrites it. An entry here also takes priority over the built-in library."
     },
     "issues": {
+      "truncated": "Showing {shown} of {total} issues — the list is capped by the server.",
       "open_dashboard": "Open dashboard",
       "optimize": "Optimize",
       "complexity_score_title": "Complexity score {score}/100 — optimizable",

@@ -455,6 +455,82 @@ def load_list_domain(config_dir: str, key: str, default_filename: str) -> Domain
     return DomainLoad(loaded, files, skipped)
 
 
+def skipped_note(skipped: list[str]) -> str:
+    """One sentence naming the files a scan had to pass over, or '' when none.
+
+    Shared by the MCP write tools and the panel's field-fix handler so a miss
+    always reads the same way, wherever it was reported from.
+    """
+    if not skipped:
+        return ""
+    names = ", ".join(os.path.basename(p) for p in skipped)
+    return (
+        f" {len(skipped)} file(s) could not be parsed for editing and were not "
+        f"searched: {names}. Usually a Home Assistant tag (!secret, !include) "
+        f"that cannot be safely rewritten, sometimes a syntax error — an entry "
+        f"defined in one of those is edited by hand."
+    )
+
+
+def contains_ha_tag(node) -> bool:
+    """True when a ruamel round-trip tree still carries a Home Assistant tag.
+
+    ruamel keeps unknown tags (``!secret``, ``!include``, ``!input``) as nodes
+    with a ``tag`` attribute. It can dump them back faithfully, but the entry we
+    are about to edit may well *be* the include — so the write paths treat a
+    tagged file the same way :func:`read_plain_yaml` does: they skip it and let
+    the caller say the entry has to be edited by hand.
+    """
+    tag = getattr(node, "tag", None)
+    if tag is not None:
+        value = getattr(tag, "value", tag)
+        if isinstance(value, str) and value.startswith("!"):
+            return True
+    if isinstance(node, dict):
+        return any(contains_ha_tag(v) for v in node.values())
+    if isinstance(node, (list, tuple)):
+        return any(contains_ha_tag(v) for v in node)
+    return False
+
+
+def read_roundtrip_yaml(path: str):
+    """Parse a config file in ruamel round-trip mode.
+
+    Round-trip is what keeps the user's comments, key order, quoting style and
+    anchors alive across an edit. Returns ``(yaml, data)`` — the same ``yaml``
+    object must be handed to :func:`write_roundtrip_yaml`, because the settings
+    below are what produce a minimal diff.
+    """
+    from ruamel.yaml import YAML
+
+    yaml = YAML()  # default = round-trip
+    yaml.preserve_quotes = True
+    # Match HA's own 2-space indent so an edited file still looks hand-written.
+    yaml.indent(mapping=2, sequence=4, offset=2)
+
+    with open(path, encoding="utf-8") as fh:
+        return yaml, yaml.load(fh)
+
+
+def write_roundtrip_yaml(path: str, yaml, data) -> None:
+    """Write a round-trip tree back, atomically.
+
+    The dump goes to a sibling temp file and is then renamed over the target, so
+    a crash mid-write cannot leave Home Assistant with a half-written config.
+    """
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            yaml.dump(data, fh)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def write_yaml_documents(path: str, documents, sort_keys: bool = False) -> None:
     """Dump a parsed domain file back to disk, preserving key order by default."""
     import yaml

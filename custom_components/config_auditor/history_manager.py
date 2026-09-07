@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,14 +33,50 @@ _LOGGER = logging.getLogger(__name__)
 # Regression alert config
 REGRESSION_THRESHOLD = 10      # points
 REGRESSION_WINDOW_DAYS = 7     # jours
-MAX_HISTORY_ENTRIES = 365      # default; overridden by entry options
+DEFAULT_RETENTION_DAYS = 365   # default; overridden by entry options
+# Hard ceiling on the number of stored snapshots, whatever the retention window
+# says. `.storage` is read and rewritten whole, so an install that scans every
+# five minutes must not be allowed to grow it without bound.
+MAX_HISTORY_SNAPSHOTS = 5000
 SAVE_DELAY = 10                # secondes — Store flush aussi à l'arrêt de HA
+
+
+def _snapshot_time(entry: dict[str, Any]) -> datetime | None:
+    """The instant a snapshot was taken, or None when it cannot be read."""
+    raw = entry.get("ts")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def prune_snapshots(
+    entries: list[dict[str, Any]], retention_days: int
+) -> list[dict[str, Any]]:
+    """Keep the snapshots inside the retention window, oldest first.
+
+    The option is a number of *days*, and used to be compared against
+    ``len(self._history)``, a number of *scans*: with the default 60-minute
+    interval, "365 days of history" really kept about 15 days. Snapshots are
+    now dropped on their own timestamp, with a hard cap on the count as a
+    second line of defence. A snapshot whose ``ts`` cannot be parsed is kept —
+    it is not evidence of age — and the cap alone bounds it.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    kept = [
+        entry for entry in entries
+        if (taken := _snapshot_time(entry)) is None or taken >= cutoff
+    ]
+    return kept[-MAX_HISTORY_SNAPSHOTS:]
 
 
 class HistoryManager:
     """Gère l'historique des audits HACA."""
 
-    def __init__(self, hass: HomeAssistant, retention_days: int = MAX_HISTORY_ENTRIES) -> None:
+    def __init__(self, hass: HomeAssistant, retention_days: int = DEFAULT_RETENTION_DAYS) -> None:
         self.hass = hass
         self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY_HISTORY)
         self._history: list[dict[str, Any]] = []
@@ -48,7 +84,7 @@ class HistoryManager:
         self._load_lock = asyncio.Lock()
         # Guard against a bogus option value (the panel enforces 30..730, the
         # websocket handler does not) — 0 would otherwise wipe the history.
-        self._retention_days = max(1, int(retention_days or MAX_HISTORY_ENTRIES))
+        self._retention_days = max(1, int(retention_days or DEFAULT_RETENTION_DAYS))
         self._translator = TranslationHelper(hass)
 
     # ── Public API ────────────────────────────────────────────────────────
@@ -59,8 +95,7 @@ class HistoryManager:
 
         snapshot = self._build_snapshot(scan_data)
         self._history.append(snapshot)
-        if len(self._history) > self._retention_days:
-            del self._history[: len(self._history) - self._retention_days]
+        self._history = prune_snapshots(self._history, self._retention_days)
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
 
         # Check for regression after update
@@ -124,7 +159,11 @@ class HistoryManager:
             if data is None:
                 self._history = await self._async_migrate_legacy()
             else:
-                self._history = list(data.get("snapshots") or [])
+                # Prune on load too, so shortening the retention window takes
+                # effect at the next restart instead of at the next scan.
+                self._history = prune_snapshots(
+                    list(data.get("snapshots") or []), self._retention_days
+                )
             self._loaded = True
 
     async def _async_migrate_legacy(self) -> list[dict[str, Any]]:
@@ -134,7 +173,7 @@ class HistoryManager:
         if entries is None:
             return []       # pas d'ancien dossier — rien à migrer
 
-        entries = entries[-self._retention_days:]
+        entries = prune_snapshots(entries, self._retention_days)
         try:
             await self._store.async_save({"snapshots": entries})
         except Exception as exc:
@@ -220,7 +259,6 @@ class HistoryManager:
         current_score = latest["score"]
 
         # Find the oldest snapshot within the regression window
-        from datetime import timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(days=REGRESSION_WINDOW_DAYS)
         window_entries = [
             e for e in history[:-1]   # exclude latest itself

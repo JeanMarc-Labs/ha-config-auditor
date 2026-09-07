@@ -3052,9 +3052,13 @@
     }
 
     _showBatteryLibraryModal(info) {
-      const seedPath = (info && info.seed_path) || '<config>/custom_components/config_auditor/data/battery_library_seed.json';
+      // The user's own file, NOT the bundled seed: HACS replaces the whole
+      // integration folder on update, so anything added to the seed is lost.
+      const seedPath = (info && info.user_path) || '<config>/haca_battery_library_user.json';
       const newEntryExample = JSON.stringify(
-        { manufacturer: "Aqara", model: "Door and Window Sensor", battery_type: "CR1632", battery_quantity: 1 },
+        { devices: [
+          { manufacturer: "Aqara", model: "Door and Window Sensor", battery_type: "CR1632", battery_quantity: 1 },
+        ] },
         null, 2
       );
 
@@ -3221,7 +3225,9 @@
         // Charger seulement si pas encore en cache
         if (!this._complianceAll) {
           el.innerHTML = `<div style="padding:40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px;"><div class="loader"></div><div>${this.t('compliance.scanning')}</div></div>`;
-          const data = await this._hass.callWS({ type: 'haca/get_data', category: 'compliance', limit: 500 });
+          // No explicit limit: the server's default is higher than 500 and the
+          // category filter now really does narrow the answer to this one list.
+          const data = await this._hass.callWS({ type: 'haca/get_data', category: 'compliance' });
           this._complianceAll = data.compliance_issue_list || [];
         }
         this._renderCompliancePage(el, PAG_ID);
@@ -3724,6 +3730,27 @@
         ['issues-dashboards', dashboardIssues],
       ];
 
+      // The server caps each list. Say so out loud rather than let the tile
+      // claim 247 issues while the list quietly shows 200.
+      const pag = data.pagination || {};
+      const totalFor = (cat) => {
+        const n = pag[`total_${cat}`];
+        return Number.isFinite(n) ? n : null;
+      };
+      const CAT_BY_CONTAINER = {
+        'issues-automations': 'automation',
+        'issues-scripts':     'script',
+        'issues-scenes':      'scene',
+        'issues-entities':    'entity',
+        'issues-helpers':     'helper',
+        'issues-performance': 'performance',
+        'issues-security':    'security',
+        'issues-blueprints':  'blueprint',
+        'issues-dashboards':  'dashboard',
+      };
+      const allTotal = Object.values(CAT_BY_CONTAINER)
+        .reduce((sum, cat) => sum + (totalFor(cat) ?? 0), 0);
+
       for (const [cid, issues] of containers) {
         const activeFilter = getActiveFilter(cid);
         // Always store the full list (needed for future filter changes)
@@ -3733,7 +3760,35 @@
         this.renderIssues(issues, cid, activeFilter === 'all' ? undefined : activeFilter);
         // Restore chip active state (renderIssues doesn't touch chips)
         this._restoreFilterChip(cid, activeFilter);
+        const cat = CAT_BY_CONTAINER[cid];
+        const total = cid === 'issues-all' ? allTotal : totalFor(cat);
+        this._renderTruncationNotice(cid, issues.length, total);
       }
+    }
+
+    /**
+     * Show "X of Y shown" above a list the server had to truncate.
+     * Removes itself as soon as the list is complete again.
+     */
+    _renderTruncationNotice(containerId, shown, total) {
+      const container = this.shadowRoot.querySelector(`#${containerId}`);
+      if (!container) return;
+      const noticeId = `trunc-${containerId}`;
+      let notice = this.shadowRoot.querySelector(`#${noticeId}`);
+
+      if (total === null || total === undefined || shown >= total) {
+        if (notice) notice.remove();
+        return;
+      }
+      if (!notice) {
+        notice = document.createElement('div');
+        notice.id = noticeId;
+        notice.style.cssText =
+          'margin:8px 0;padding:10px 12px;border-radius:8px;font-size:13px;' +
+          'background:var(--warning-color,#ffa726);color:#000;opacity:0.92;';
+        container.parentNode.insertBefore(notice, container);
+      }
+      notice.textContent = this.t('issues.truncated', { shown, total });
     }
 
 

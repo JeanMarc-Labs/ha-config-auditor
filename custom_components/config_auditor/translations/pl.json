@@ -447,11 +447,11 @@
       "mark_replaced_done": "Bateria oznaczona jako wymieniona",
       "edit_library_link": "✏️ Edytuj bibliotekę HACA",
       "bn_edit_modal_title": "Rozszerz bibliotekę baterii HACA",
-      "bn_edit_modal_body": "HACA zawiera wbudowany plik biblioteki baterii. Otwórz go w edytorze tekstu (przez dodatek File Editor, SSH lub Studio Code Server) i dodaj nowy wpis w tablicy \"devices\".",
-      "bn_step1_title": "Otwórz plik biblioteki",
-      "bn_step1_detail": "Otwórz ten istniejący plik w wybranym edytorze — zawiera już wszystkie wpisy seed:",
+      "bn_edit_modal_body": "HACA zawiera wbudowaną bibliotekę baterii. Zamiast ją edytować, dodaj swoje urządzenia do własnego pliku: HACA czyta go ponad biblioteką wbudowaną, a aktualizacja HACA nigdy go nie narusza.",
+      "bn_step1_title": "Utwórz własny plik biblioteki",
+      "bn_step1_detail": "Utwórz ten plik w edytorze tekstu (dodatek File Editor, SSH lub Studio Code Server). Znajduje się w folderze konfiguracji, poza integracją:",
       "bn_step2_title": "Dodaj nowe urządzenie do tablicy \"devices\"",
-      "bn_step2_detail": "Wstaw nowy obiekt JSON do tablicy \"devices\" (nie zapomnij o przecinku między wpisami). Znajdź dokładnego producenta i model swojego urządzenia w HA: Ustawienia → Urządzenia i usługi → kliknij swoje urządzenie. Przykładowy wpis do skopiowania:",
+      "bn_step2_detail": "Skopiuj to jako zawartość pliku, a następnie dodaj po jednym obiekcie na urządzenie w tablicy \"devices\". Dokładnego producenta i model znajdziesz w HA: Ustawienia → Urządzenia i usługi → kliknij urządzenie.",
       "bn_step3_title": "Zrestartuj Home Assistant",
       "bn_step3_detail": "Po ponownym uruchomieniu HACA ponownie załaduje zaktualizowaną bibliotekę i użyje jej do wykrywania typów baterii. Nowe wpisy pojawią się od razu przy następnym skanowaniu.",
       "bn_fields_label": "Opis pól:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "np. \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "liczba całkowita, liczba baterii (1, 2, 3, ...) — pomiń jeśli 1",
       "bn_field_match_help": "opcjonalne: \"exact\" (domyślne), \"startswith\", \"endswith\" lub \"contains\" — przydatne dla wariantów modelu",
-      "bn_warning_overwrite": "Ważne: ten plik zostanie nadpisany przy aktualizacji HACA. Zachowaj kopię zapasową swoich dodatków przed aktualizacją."
+      "bn_warning_overwrite": "Ten plik leży poza folderem integracji, więc aktualizacja HACA nigdy go nie nadpisuje. Wpis dodany tutaj ma też pierwszeństwo przed biblioteką wbudowaną."
     },
     "issues": {
+      "truncated": "Wyświetlono {shown} z {total} problemów — lista jest ograniczana przez serwer.",
       "open_dashboard": "Otwórz dashboard",
       "optimize": "Optymalizuj",
       "complexity_score_title": "Wynik złożoności {score}/100 — do optymalizacji",

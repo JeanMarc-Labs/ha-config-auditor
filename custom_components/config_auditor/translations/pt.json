@@ -447,11 +447,11 @@
       "mark_replaced_done": "Pilha marcada como substituída",
       "edit_library_link": "✏️ Editar biblioteca HACA",
       "bn_edit_modal_title": "Ampliar a biblioteca de pilhas HACA",
-      "bn_edit_modal_body": "HACA inclui um arquivo de biblioteca de pilhas integrado. Abra-o em um editor de texto (via complemento File Editor, SSH ou Studio Code Server) e adicione uma nova entrada no array \"devices\".",
-      "bn_step1_title": "Abrir o arquivo de biblioteca",
-      "bn_step1_detail": "Abra este arquivo existente em seu editor preferido — ele já contém todas as entradas seed:",
+      "bn_edit_modal_body": "O HACA inclui uma biblioteca de baterias integrada. Em vez de a editar, adicione os seus dispositivos ao seu próprio ficheiro: o HACA lê-o por cima da biblioteca integrada e uma atualização do HACA nunca lhe toca.",
+      "bn_step1_title": "Crie o seu próprio ficheiro de biblioteca",
+      "bn_step1_detail": "Crie este ficheiro num editor de texto (add-on File Editor, SSH ou Studio Code Server). Fica na sua pasta de configuração, fora da integração:",
       "bn_step2_title": "Adicionar um novo dispositivo ao array \"devices\"",
-      "bn_step2_detail": "Insira um novo objeto JSON no array \"devices\" (não esqueça a vírgula entre as entradas). Encontre o fabricante e modelo exatos do seu dispositivo no HA: Configurações → Dispositivos e serviços → clique no seu dispositivo. Entrada de exemplo para copiar:",
+      "bn_step2_detail": "Copie isto como conteúdo do ficheiro e depois acrescente um objeto por dispositivo dentro da matriz \"devices\". Encontre o fabricante e o modelo exatos no HA: Definições → Dispositivos e serviços → clique no seu dispositivo.",
       "bn_step3_title": "Reiniciar Home Assistant",
       "bn_step3_detail": "Após reiniciar, o HACA recarregará a biblioteca atualizada e a usará para detectar tipos de pilhas. As novas entradas aparecem imediatamente no próximo scan.",
       "bn_fields_label": "Referência dos campos:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "ex: \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "inteiro, número de pilhas (1, 2, 3, ...) — omitir se 1",
       "bn_field_match_help": "opcional: \"exact\" (padrão), \"startswith\", \"endswith\" ou \"contains\" — útil para variantes de modelo",
-      "bn_warning_overwrite": "Importante: este arquivo é sobrescrito quando o HACA é atualizado. Guarde uma cópia das suas adições antes da atualização."
+      "bn_warning_overwrite": "Este ficheiro está fora da pasta da integração, pelo que uma atualização do HACA nunca o substitui. Uma entrada aqui tem também prioridade sobre a biblioteca integrada."
     },
     "issues": {
+      "truncated": "A mostrar {shown} de {total} problemas — a lista é limitada pelo servidor.",
       "open_dashboard": "Abrir dashboard",
       "optimize": "Otimizar",
       "complexity_score_title": "Pontuação de complexidade {score}/100 — otimizável",

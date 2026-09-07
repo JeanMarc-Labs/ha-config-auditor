@@ -447,11 +447,11 @@
       "mark_replaced_done": "电池已标记为已更换",
       "edit_library_link": "✏️ 编辑 HACA 库",
       "bn_edit_modal_title": "扩展 HACA 电池库",
-      "bn_edit_modal_body": "HACA 包含内置的电池库文件。在文本编辑器中打开它（通过 File Editor 加载项、SSH 或 Studio Code Server），然后在 \"devices\" 数组中添加新条目。",
-      "bn_step1_title": "打开库文件",
-      "bn_step1_detail": "在您选择的编辑器中打开此现有文件 — 它已包含所有 seed 条目：",
+      "bn_edit_modal_body": "HACA 自带一个内置电池库。请不要修改它，而是把你的设备写入自己的库文件：HACA 会在内置库之上读取它，并且 HACA 更新永远不会改动它。",
+      "bn_step1_title": "创建你自己的库文件",
+      "bn_step1_detail": "用文本编辑器创建该文件（File Editor 加载项、SSH 或 Studio Code Server）。它位于你的配置目录中，在集成目录之外：",
       "bn_step2_title": "将新设备添加到 \"devices\" 数组",
-      "bn_step2_detail": "在 \"devices\" 数组中插入新的 JSON 对象（不要忘记条目之间的逗号）。在 HA 中查找您设备的准确制造商和型号：设置 → 设备与服务 → 点击您的设备。复制示例条目：",
+      "bn_step2_detail": "把下面的内容复制为该文件的内容，然后在 \"devices\" 数组中为每个设备添加一个对象。设备的确切制造商和型号可在 HA 中查看：设置 → 设备与服务 → 点击你的设备。",
       "bn_step3_title": "重启 Home Assistant",
       "bn_step3_detail": "重启后，HACA 将重新加载更新后的库并用于电池类型检测。新条目会在下次电池扫描时立即出现。",
       "bn_fields_label": "字段参考：",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "例如 \"AA\"、\"AAA\"、\"CR2032\"、\"CR2450\"、\"Rechargeable\"、\"Mains\"、\"Irreplaceable\"",
       "bn_field_qty_help": "整数，电池数量（1、2、3...）— 为 1 时可省略",
       "bn_field_match_help": "可选：\"exact\"（默认）、\"startswith\"、\"endswith\" 或 \"contains\" — 适用于型号变体",
-      "bn_warning_overwrite": "重要：HACA 更新时此文件将被覆盖。请在更新前保留您添加内容的备份。"
+      "bn_warning_overwrite": "该文件位于集成目录之外，因此 HACA 更新永远不会覆盖它。此处的条目也优先于内置库。"
     },
     "issues": {
+      "truncated": "已显示 {total} 个问题中的 {shown} 个 — 列表受服务器数量上限限制。",
       "open_dashboard": "打开仪表板",
       "optimize": "优化",
       "complexity_score_title": "复杂度评分 {score}/100 — 可优化",

@@ -447,11 +447,11 @@
       "mark_replaced_done": "電池を交換済みとマークしました",
       "edit_library_link": "✏️ HACAライブラリを編集",
       "bn_edit_modal_title": "HACA電池ライブラリを拡張",
-      "bn_edit_modal_body": "HACA には内蔵の電池ライブラリファイルが含まれています。テキストエディタ (File Editor アドオン、SSH、Studio Code Server) で開き、\"devices\" 配列に新しいエントリを追加します。",
-      "bn_step1_title": "ライブラリファイルを開く",
-      "bn_step1_detail": "この既存のファイルをお好みのエディタで開きます — すべての seed エントリが既に含まれています:",
+      "bn_edit_modal_body": "HACA には電池ライブラリが内蔵されています。それを編集するのではなく、ご自身のライブラリファイルに機器を追加してください。HACA は内蔵ライブラリの上にそれを読み込み、HACA の更新がそのファイルに触れることはありません。",
+      "bn_step1_title": "自分専用のライブラリファイルを作成する",
+      "bn_step1_detail": "テキストエディタ（File Editor アドオン、SSH、Studio Code Server など）でこのファイルを作成します。統合フォルダーの外、設定フォルダーに置かれます:",
       "bn_step2_title": "\"devices\" 配列に新しいデバイスを追加",
-      "bn_step2_detail": "\"devices\" 配列に新しい JSON オブジェクトを挿入します (エントリ間のカンマを忘れずに)。HA でデバイスの正確なメーカーとモデルを見つけます: 設定 → デバイスとサービス → デバイスをクリック。コピー用のエントリ例:",
+      "bn_step2_detail": "以下をファイルの内容としてコピーし、\"devices\" 配列に機器ごとに 1 つのオブジェクトを追加してください。正確なメーカーと型番は HA で確認できます: 設定 → デバイスとサービス → 対象のデバイスをクリック。",
       "bn_step3_title": "Home Assistant を再起動",
       "bn_step3_detail": "再起動後、HACA は更新されたライブラリを再読み込みし、電池タイプの検出に使用します。新しいエントリは次回の電池スキャンですぐに表示されます。",
       "bn_fields_label": "フィールドリファレンス:",
@@ -459,9 +459,10 @@
       "bn_field_type_help": "例: \"AA\", \"AAA\", \"CR2032\", \"CR2450\", \"Rechargeable\", \"Mains\", \"Irreplaceable\"",
       "bn_field_qty_help": "整数、電池の数 (1, 2, 3, ...) — 1 の場合は省略",
       "bn_field_match_help": "オプション: \"exact\" (デフォルト)、\"startswith\"、\"endswith\" または \"contains\" — モデルのバリエーションに便利",
-      "bn_warning_overwrite": "重要: このファイルは HACA の更新時に上書きされます。更新前に追加分のバックアップを保管してください。"
+      "bn_warning_overwrite": "このファイルは統合フォルダーの外にあるため、HACA の更新で上書きされることはありません。ここに書いた項目は内蔵ライブラリより優先されます。"
     },
     "issues": {
+      "truncated": "{total} 件中 {shown} 件の問題を表示しています — 一覧はサーバー側で上限が設けられています。",
       "open_dashboard": "ダッシュボードを開く",
       "optimize": "最適化",
       "complexity_score_title": "複雑度スコア {score}/100 — 最適化可能",
