@@ -35,11 +35,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **The copy buttons answered with a raw translation key** — `notifications.copied` and `notifications.copy_failed` were called by the panel but written in no language file, so pressing Copy popped a toast reading `notifications.copied`. Both are translated in all 13 languages now.
 - **The battery library told you to edit a file that Home Assistant overwrites** — the promised `battery_library_user.json` was never implemented, and the panel pointed at the bundled seed inside the integration folder, which HACS replaces wholesale on every update. Your own devices now go in `<config>/haca_battery_library_user.json`, read on top of the bundled library and never touched by an update. **⚠️ Devices you added to the seed file are lost at the next update — copy them into the new file.**
 - **Three websocket errors answered in French whatever your language** — "L'IA n'a pas retourné de suggestion", "Champ '…' non supporté" and the unsupported-issue-type message reached English readers untranslated. All three now go through the translation cache, in the 13 languages.
+- **The Danish and Swedish battery notifications named no entity** — all six messages stopped after the level line, dropping the `{entity_id}` line, the advice paragraph and the footer the other 11 languages carry. `str.format()` ignores a keyword it was not asked for, so nothing ever raised and the notification simply came out short.
 
 ### Changed
 
 - **The panel bundle is no longer shipped twice** — `haca-panel.js` and `haca-panel.<hash>.js` were byte-identical and only the hashed one was ever loaded: 656 KB of dead weight in the repository and in every HACS download. The build emits the hashed bundle alone.
 - **84 dead translation keys removed** — around 1 100 strings across the 13 language files, left behind by features that were dropped, an abandoned MCP-token screen among them. A test now fails the build if a new one accumulates.
+- **The 12 non-English language files are fully translated** — 1 989 strings still carried the English text, and not scattered ones: whole tabs (Complexity by Area, Redundancy, Recorder DB Impact), every analyzer message about helpers, template sensors and timers, and the prompts sent to the AI were English for 11 of the 12 languages. All translated by hand. Two tests now guard it: one fails the build if a key is left untranslated, the other if a translation drops a `{placeholder}`.
 - **The tree is clean against `ruff --select=F`** — 121 findings, all of them dead imports and unused variables, are gone.
 
 ### Performance
