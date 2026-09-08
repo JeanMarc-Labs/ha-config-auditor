@@ -969,6 +969,7 @@
       "cat_discovery": "Поиск и обнаружение",
       "cat_helpers": "Помощники и зоны",
       "cat_monitoring": "Мониторинг и история",
+      "cat_other": "Прочие",
       "cat_safety": "Безопасность и проверка",
       "cat_scenes": "Сцены",
       "copy": "Копировать",
@@ -1019,7 +1020,7 @@
       "title": "MCP-сервер HACA",
       "token_hint": "Создайте токен в профиле HA →",
       "token_link": "Профиль → Безопасность",
-      "tools_count_label": "67 инструментов",
+      "tools_count_label": "{declared} объявлено, {callable} вызываемых",
       "tools_exposed": "Доступные инструменты"
     },
     "agent": {

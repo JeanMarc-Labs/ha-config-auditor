@@ -306,3 +306,65 @@ class TestHtmlEscaping:
             "escapeHtml no longer coerces its argument; a numeric issue field "
             "would throw and blank the modal it was rendering."
         )
+
+
+# ── MCP tool list ─────────────────────────────────────────────────────────────
+
+class TestMcpToolCategories:
+    """The panel's tool grouping must cover exactly what the server registers.
+
+    `toolCategories` in mcp_panel.js is hand-kept, for reading order and icons.
+    It silently drifted to 67 of the 69 registered tools — the two missing ones,
+    ha_list_issue_catalog and ha_fix_batch, were exactly the aliases nobody
+    thought to add — while a hardcoded "67 tools" label in all 13 languages said
+    the count was right. The count comes from the server now; this pins the list.
+    """
+
+    @staticmethod
+    def _panel_tools() -> set[str]:
+        js = (SRC / "mcp_panel.js").read_text(encoding="utf-8")
+        block = js.split("var toolCategories = [", 1)[1].split("\n  ];", 1)[0]
+        return set(re.findall(r"'((?:ha|haca)_\w+)'", block))
+
+    def test_no_duplicate_badges(self):
+        js = (SRC / "mcp_panel.js").read_text(encoding="utf-8")
+        block = js.split("var toolCategories = [", 1)[1].split("\n  ];", 1)[0]
+        names = re.findall(r"'((?:ha|haca)_\w+)'", block)
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        assert not dupes, f"tool listed in two categories: {dupes}"
+
+    def test_categories_match_the_registry(self):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        registered = set(mcp.TOOL_HANDLERS)
+        listed = self._panel_tools()
+        missing = registered - listed
+        unknown = listed - registered
+        assert not missing, (
+            f"{len(missing)} tool(s) the server registers are absent from the panel's "
+            f"categories, so the MCP tab under-reports what an agent can call: "
+            f"{sorted(missing)}"
+        )
+        assert not unknown, (
+            f"the panel advertises tool(s) the server does not register: {sorted(unknown)}"
+        )
+
+    def test_count_is_not_hardcoded(self):
+        """The label used to read "67 tools" in all 13 languages."""
+        label = json.loads(FR_JSON.read_text(encoding="utf-8"))["panel"]["mcp"]["tools_count_label"]
+        assert "{declared}" in label and "{callable}" in label, (
+            "tools_count_label must be filled from the server's own counts, not "
+            "written out as a number that nothing keeps true"
+        )
+        js = (SRC / "mcp_panel.js").read_text(encoding="utf-8")
+        assert "mcpStatus.tools" in js and "mcpStatus.callable_tools" in js, (
+            "the panel must read both counts from haca/mcp_status"
+        )
+
+    def test_status_sends_the_real_lists(self):
+        """haca/mcp_status used to send seven hardcoded names nothing read."""
+        ws = (BASE / "websocket.py").read_text(encoding="utf-8")
+        block = ws.split("async def handle_mcp_status(", 1)[1].split("\nasync def ", 1)[0]
+        assert '"tools": [tool["name"] for tool in MCP_TOOLS]' in block, \
+            "the advertised list must come from MCP_TOOLS"
+        assert '"callable_tools": sorted(TOOL_HANDLERS)' in block, \
+            "the callable list must come from TOOL_HANDLERS"

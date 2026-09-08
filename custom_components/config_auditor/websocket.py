@@ -1821,17 +1821,21 @@ async def handle_mcp_status(
                 }
             }
         }
+        # Both lists come from the server itself. `tools` is what tools/list
+        # advertises; the ha_* aliases are callable but never advertised, so the
+        # panel is handed both and counts nothing of its own. This field used to
+        # be seven hardcoded names, and the panel a hardcoded list of 67 — two
+        # tools short and drifting, with no way to notice.
+        from .mcp_server import MCP_TOOLS, TOOL_HANDLERS  # noqa: PLC0415
+
         connection.send_result(msg["id"], {
             "active": active,
             "url": "/api/haca_mcp",
             "full_url": mcp_url,
             "info_url": f"{mcp_url}/info",
             "auth": "Bearer <HA Long-Lived Access Token>",
-            "tools": [
-                "haca_get_score", "haca_get_issues", "haca_get_automation",
-                "haca_fix_suggestion", "haca_apply_fix",
-                "haca_get_batteries", "haca_explain_issue",
-            ],
+            "tools": [tool["name"] for tool in MCP_TOOLS],
+            "callable_tools": sorted(TOOL_HANDLERS),
             "claude_code_snippet": _json.dumps(claude_code_config, indent=2, ensure_ascii=False),
         })
     except Exception as exc:

@@ -969,6 +969,7 @@
       "cat_discovery": "搜索与发现",
       "cat_helpers": "辅助实体与区域",
       "cat_monitoring": "监控与历史",
+      "cat_other": "其他",
       "cat_safety": "安全与验证",
       "cat_scenes": "场景",
       "copy": "复制",
@@ -1019,7 +1020,7 @@
       "title": "HACA MCP 服务器",
       "token_hint": "在 HA 配置文件中创建令牌 →",
       "token_link": "配置文件 → 安全",
-      "tools_count_label": "67 个工具",
+      "tools_count_label": "公开 {declared} 个，可调用 {callable} 个",
       "tools_exposed": "公开的工具"
     },
     "agent": {

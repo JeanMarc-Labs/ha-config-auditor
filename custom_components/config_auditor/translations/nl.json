@@ -969,6 +969,7 @@
       "cat_discovery": "Zoeken en ontdekken",
       "cat_helpers": "Helpers en zones",
       "cat_monitoring": "Bewaking en geschiedenis",
+      "cat_other": "Overige",
       "cat_safety": "Veiligheid en validatie",
       "cat_scenes": "Scènes",
       "copy": "Kopiëren",
@@ -1019,7 +1020,7 @@
       "title": "HACA MCP-server",
       "token_hint": "Maak een token aan in uw HA-profiel →",
       "token_link": "Profiel → Beveiliging",
-      "tools_count_label": "67 tools",
+      "tools_count_label": "{declared} aangekondigd, {callable} aanroepbaar",
       "tools_exposed": "Beschikbare tools"
     },
     "agent": {

@@ -969,6 +969,7 @@
       "cat_discovery": "Sökning och upptäckt",
       "cat_helpers": "Hjälpare och zoner",
       "cat_monitoring": "Övervakning och historik",
+      "cat_other": "Övriga",
       "cat_safety": "Säkerhet och validering",
       "cat_scenes": "Scener",
       "copy": "Kopiera",
@@ -1019,7 +1020,7 @@
       "title": "HACA MCP-server",
       "token_hint": "Skapa en token i din HA-profil →",
       "token_link": "Profil → Säkerhet",
-      "tools_count_label": "67 verktyg",
+      "tools_count_label": "{declared} annonserade, {callable} anropbara",
       "tools_exposed": "Tillgängliga verktyg"
     },
     "agent": {

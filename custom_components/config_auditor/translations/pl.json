@@ -969,6 +969,7 @@
       "cat_discovery": "Wyszukiwanie i odkrywanie",
       "cat_helpers": "Pomocniki i strefy",
       "cat_monitoring": "Monitorowanie i historia",
+      "cat_other": "Inne",
       "cat_safety": "Bezpieczeństwo i walidacja",
       "cat_scenes": "Sceny",
       "copy": "Kopiuj",
@@ -1019,7 +1020,7 @@
       "title": "Serwer MCP HACA",
       "token_hint": "Utwórz token w profilu HA →",
       "token_link": "Profil → Bezpieczeństwo",
-      "tools_count_label": "67 narzędzi",
+      "tools_count_label": "{declared} ogłoszonych, {callable} wywoływalnych",
       "tools_exposed": "Dostępne narzędzia"
     },
     "agent": {
