@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +17,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .const import BACKUP_DIR
+from .yaml_writer import EditTarget, roundtrip_yaml, write_back
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -164,6 +164,12 @@ def _has_yaml_include_tag(node: Any) -> bool:
     ``CommentedMap``/``CommentedSeq`` instances with a ``tag`` attribute.
     We refuse to touch a recorder section loaded from an included file so
     we never silently corrupt the user's split layout.
+
+    Deliberately narrower than :func:`yaml_writer.contains_ha_tag`, which
+    refuses a file carrying a tag *anywhere*: configuration.yaml is exactly the
+    file where ``!secret`` and ``!include`` are expected, and applying the
+    whole-tree rule here would refuse every real installation. Only the three
+    nodes this function is about to touch have to be tag-free.
     """
     if node is None:
         return False
@@ -187,14 +193,11 @@ def _backup_and_modify_sync(
     shutil.copy2(config_file, backup_path)
 
     try:
-        from ruamel.yaml import YAML
+        # The shared round-trip settings: same instance, same indent, same
+        # minimal diff as every other YAML edit HACA makes.
+        yaml = roundtrip_yaml()
     except ImportError:
         return False, False, "ruamel.yaml is not available"
-
-    yaml = YAML()  # default = round-trip preserves comments/order
-    yaml.preserve_quotes = True
-    # Match HA's default 2-space indent so the diff stays minimal
-    yaml.indent(mapping=2, sequence=4, offset=2)
 
     # Read the current file. If it is empty or missing keys we'd expect a
     # real HA configuration to have, refuse to write — an empty load is a
@@ -265,22 +268,12 @@ def _backup_and_modify_sync(
 
     entities.append(entity_id)
 
-    # Atomic write: dump to a sibling tmp file, then os.replace onto the
-    # target. This way a concurrent reader sees either the old file or
-    # the new file fully — never a truncated/partial state. os.replace
-    # is atomic on POSIX and on Windows.
-    tmp_file = config_file.with_suffix(config_file.suffix + ".haca-tmp")
-    try:
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            yaml.dump(data, f)
-        os.replace(tmp_file, config_file)
-    except Exception:
-        if tmp_file.exists():
-            try:
-                tmp_file.unlink()
-            except OSError:
-                pass
-        raise
+    # Atomic round-trip write, through the one writer in the package. The
+    # snapshot above is this path's own: it is named `.bak` and restored by
+    # `_restore_sync` when `check_config` rejects the result, which is a
+    # different lifecycle from the `.haca_backups` automation snapshots the
+    # panel lists — hence `write_back` without a config_dir.
+    write_back(EditTarget(str(config_file), yaml, data))
 
     return True, False, ""
 

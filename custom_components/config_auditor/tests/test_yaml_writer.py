@@ -1,0 +1,477 @@
+"""Tests for yaml_writer — the one way HACA rewrites a config file (audit 5-1).
+
+Two halves. The first pins the module's own contract: round-trip reads, refusal
+of what must not be rewritten, atomic writes, and the shared backup naming and
+pruning. The second is the point of the whole card — every caller that edits an
+existing YAML file must come out the other side with the user's comments still
+in it. Before 1.8.0 the refactoring assistant, the optimizer and the MCP write
+tools all did `yaml.safe_load` + `yaml.dump`, which deleted every comment and
+blank line in the file, not just around the entry being edited.
+
+    pytest custom_components/config_auditor/tests/test_yaml_writer.py -v
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from custom_components.config_auditor import yaml_writer as yw
+from custom_components.config_auditor.tests.conftest import MockHass
+
+pytest.importorskip("ruamel.yaml", reason="yaml_writer round-trips through ruamel")
+
+
+# A file that carries everything a dump would quietly destroy: a header
+# comment, an inline comment, a blank line, single quotes and key order.
+COMMENTED = """\
+# Climate automations — keep this comment!
+- id: 'a1'
+  alias: Clima
+  mode: single          # deliberate
+  triggers: []
+  actions: []
+
+- id: 'a2'
+  alias: General
+  triggers: []
+  actions: []
+"""
+
+
+def _write(tmp_path, files: dict) -> None:
+    for rel, content in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def _assert_untouched_parts_survive(text: str) -> None:
+    assert "# Climate automations — keep this comment!" in text
+    assert "# deliberate" in text
+    assert "id: 'a1'" in text, "preserve_quotes must keep the user's quoting"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# read_for_edit — what it accepts, and what it refuses to touch
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestReadForEdit:
+    def test_round_trip_keeps_comments_through_a_rewrite(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+
+        target = yw.read_for_edit(str(path), list)
+        target.document[0]["description"] = "Added by HACA"
+        yw.write_back(target)
+
+        written = path.read_text(encoding="utf-8")
+        _assert_untouched_parts_survive(written)
+        assert "description: Added by HACA" in written
+
+    def test_ha_tag_anywhere_is_refused(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        path.write_text(
+            "- id: a9\n  alias: Tagged\n  actions:\n"
+            "    - service: notify.notify\n      data:\n"
+            "        message: !secret my_message\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(yw.UnsafeToEdit):
+            yw.read_for_edit(str(path), list)
+
+    def test_wrong_root_shape_is_refused(self, tmp_path):
+        path = tmp_path / "scripts.yaml"
+        path.write_text("- not: a mapping\n", encoding="utf-8")
+        with pytest.raises(yw.UnsafeToEdit):
+            yw.read_for_edit(str(path), dict)
+
+    def test_duplicate_key_is_refused_rather_than_silently_dropped(self, tmp_path):
+        """safe_load kept the last one; a rewrite would have deleted the other."""
+        path = tmp_path / "scripts.yaml"
+        path.write_text(
+            "one:\n  alias: First\n  sequence: []\n"
+            "one:\n  alias: Second\n  sequence: []\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(yw.UnsafeToEdit):
+            yw.read_for_edit(str(path), dict)
+
+    def test_missing_file_is_refused(self, tmp_path):
+        with pytest.raises(yw.UnsafeToEdit):
+            yw.read_for_edit(str(tmp_path / "nope.yaml"), list)
+
+    def test_empty_file_is_refused(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        path.write_text("\n", encoding="utf-8")
+        with pytest.raises(yw.UnsafeToEdit):
+            yw.read_for_edit(str(path), list)
+
+
+class TestOpenOrCreate:
+    def test_absent_file_starts_a_new_document(self, tmp_path):
+        target = yw.open_or_create(str(tmp_path / "scenes.yaml"), list)
+        assert target.document == []
+
+    def test_blank_file_starts_a_new_document(self, tmp_path):
+        path = tmp_path / "scenes.yaml"
+        path.write_text("\n\n", encoding="utf-8")
+        assert yw.open_or_create(str(path), list).document == []
+
+    def test_a_file_it_cannot_read_is_still_refused(self, tmp_path):
+        """A create must never replace a file it was unable to parse."""
+        path = tmp_path / "scenes.yaml"
+        path.write_text("- id: s1\n  name: !secret hidden\n", encoding="utf-8")
+        with pytest.raises(yw.UnsafeToEdit):
+            yw.open_or_create(str(path), list)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# write_back — atomic, and it snapshots when asked
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestWriteBack:
+    def test_leaves_no_temp_file_behind(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+        yw.write_back(yw.read_for_edit(str(path), list))
+
+        assert not (tmp_path / "automations.yaml.haca-tmp").exists()
+        siblings = [p.name for p in tmp_path.iterdir()]
+        assert siblings == ["automations.yaml"]
+
+    def test_a_failed_dump_leaves_the_original_intact(self, tmp_path):
+        """os.replace is the last step, so a dump that raises changes nothing."""
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+        target = yw.read_for_edit(str(path), list)
+        broken = MagicMock()
+        broken.dump.side_effect = RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            yw.write_back(target._replace(yaml=broken))
+
+        assert path.read_text(encoding="utf-8") == COMMENTED
+        assert not (tmp_path / "automations.yaml.haca-tmp").exists()
+
+    def test_no_config_dir_means_no_backup(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+        assert yw.write_back(yw.read_for_edit(str(path), list)) is None
+        assert not (tmp_path / ".haca_backups").exists()
+
+    def test_config_dir_means_a_backup_of_the_previous_content(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+
+        target = yw.read_for_edit(str(path), list)
+        target.document[0]["alias"] = "Changed"
+        backup = yw.write_back(target, str(tmp_path))
+
+        assert Path(backup).read_text(encoding="utf-8") == COMMENTED, \
+            "the snapshot must hold the file as it was before the write"
+        assert "alias: Changed" in path.read_text(encoding="utf-8")
+
+    def test_a_file_being_created_has_nothing_to_snapshot(self, tmp_path):
+        target = yw.open_or_create(str(tmp_path / "scenes.yaml"), list)
+        target.document.append({"id": "s1", "name": "New"})
+        assert yw.write_back(target, str(tmp_path)) is None
+        assert (tmp_path / "scenes.yaml").exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Backups — one naming, one pruning policy, shared by every write path
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestBackups:
+    def test_named_after_the_file_it_copies(self, tmp_path):
+        source = tmp_path / "automations" / "clima.yaml"
+        _write(tmp_path, {"automations/clima.yaml": COMMENTED})
+
+        backup = Path(yw.create_backup(str(tmp_path), str(source)))
+        assert backup.parent.name == ".haca_backups"
+        assert backup.name.startswith("clima_")
+        assert yw.backup_stem(backup.name) == "clima"
+
+    def test_same_second_does_not_overwrite_the_previous_backup(self, tmp_path):
+        _write(tmp_path, {"automations.yaml": COMMENTED})
+        first = yw.create_backup(str(tmp_path), str(tmp_path / "automations.yaml"))
+        second = yw.create_backup(str(tmp_path), str(tmp_path / "automations.yaml"))
+        assert first != second
+        assert Path(first).exists() and Path(second).exists()
+
+    def test_pruning_is_per_source_file(self, tmp_path):
+        """One busy file must not evict another file's restore points."""
+        backups = tmp_path / ".haca_backups"
+        backups.mkdir()
+        for i in range(yw.BACKUP_KEEP + 5):
+            (backups / f"clima_2026090{i // 10}_00000{i % 10}.yaml").write_text("x", encoding="utf-8")
+        (backups / "bedroom_20260901_000000.yaml").write_text("x", encoding="utf-8")
+
+        yw.prune_backups(str(tmp_path))
+
+        names = sorted(p.name for p in backups.iterdir())
+        assert (backups / "bedroom_20260901_000000.yaml").exists(), \
+            "another file's only backup must survive a busy file's pruning"
+        assert len([n for n in names if n.startswith("clima_")]) == yw.BACKUP_KEEP
+
+    def test_pruning_ignores_files_that_are_not_haca_backups(self, tmp_path):
+        backups = tmp_path / ".haca_backups"
+        backups.mkdir()
+        (backups / "my_own_notes.txt").write_text("x", encoding="utf-8")
+        yw.prune_backups(str(tmp_path))
+        assert (backups / "my_own_notes.txt").exists()
+
+    def test_missing_source_is_an_error_not_an_empty_backup(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            yw.create_backup(str(tmp_path), str(tmp_path / "gone.yaml"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Domain scanners — split configs, and what they refuse to open
+# ═══════════════════════════════════════════════════════════════════════════
+
+SPLIT = {
+    "configuration.yaml": (
+        "automation: !include_dir_merge_list automations/\n"
+        "script: !include_dir_merge_named ha_scripts/\n"
+    ),
+    "automations/clima.yaml": COMMENTED,
+    "automations/tagged.yaml": "- id: a3\n  alias: Tagged\n  message: !secret m\n",
+    "ha_scripts/morning.yaml": "# morning block\nmorning:\n  alias: Morning\n  sequence: []\n",
+}
+
+
+class TestScanners:
+    def test_finds_an_entry_in_a_merged_subfolder(self, tmp_path):
+        _write(tmp_path, SPLIT)
+        scan = yw.scan_list_domain_for_edit(
+            str(tmp_path), "automation", "automations.yaml",
+            lambda a: a.get("id") == "a2",
+        )
+        assert scan.found
+        assert Path(scan.path).name == "clima.yaml"
+        assert scan.index == 1
+        assert scan.entry["alias"] == "General"
+
+    def test_reports_the_files_it_would_not_rewrite(self, tmp_path):
+        _write(tmp_path, SPLIT)
+        scan = yw.scan_list_domain_for_edit(
+            str(tmp_path), "automation", "automations.yaml",
+            lambda a: a.get("id") == "a3",
+        )
+        assert not scan.found, "an entry in a tagged file must not be matched"
+        assert any("tagged.yaml" in p for p in scan.skipped)
+
+    def test_named_domain(self, tmp_path):
+        _write(tmp_path, SPLIT)
+        scan = yw.scan_named_domain_for_edit(
+            str(tmp_path), "script", "scripts.yaml", lambda k, e: k == "morning",
+        )
+        assert scan.found and scan.key == "morning"
+
+    def test_passes_run_across_every_file_before_the_next_pass(self, tmp_path):
+        """An alias colliding in file B must not beat an exact id in file A."""
+        _write(tmp_path, {
+            "configuration.yaml": "automation: !include_dir_merge_list automations/\n",
+            "automations/one.yaml": "- id: other\n  alias: a1\n  actions: []\n",
+            "automations/two.yaml": "- id: a1\n  alias: Something\n  actions: []\n",
+        })
+        domain = yw.open_domain_for_edit(
+            str(tmp_path), "automation", "automations.yaml", list
+        )
+        scan = yw.scan_in_passes(domain, yw.list_entries, [
+            lambda k, e: str(e.get("id", "")) == "a1",
+            lambda k, e: str(e.get("alias", "")) == "a1",
+        ])
+        assert scan.entry["id"] == "a1"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The point of card 5-1: every write path keeps the user's comments
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _hass(tmp_path, files: dict) -> MockHass:
+    _write(tmp_path, files)
+    hass = MockHass(config_dir=str(tmp_path))
+    hass.config.path = lambda *parts: os.path.join(str(tmp_path), *parts)
+    return hass
+
+
+FLAT = {
+    "configuration.yaml": "automation: !include automations.yaml\n",
+    "automations.yaml": COMMENTED,
+}
+
+
+class TestEveryWritePathPreservesComments:
+    @pytest.mark.asyncio
+    async def test_refactoring_assistant_mode_fix(self, tmp_path):
+        _write(tmp_path, FLAT)
+        hass = MockHass(config_dir=str(tmp_path))
+        with patch("custom_components.config_auditor.refactoring_assistant.er") as mock_er:
+            mock_er.async_get.return_value = MagicMock()
+            mock_er.async_get.return_value.async_get.return_value = None
+            from custom_components.config_auditor.refactoring_assistant import (
+                RefactoringAssistant,
+            )
+            ra = RefactoringAssistant(hass)
+            result = await ra.apply_mode_fix("Clima", "queued")
+
+        assert result["success"] is True
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "mode: queued" in written
+        _assert_untouched_parts_survive(written)
+
+    @pytest.mark.asyncio
+    async def test_refactoring_assistant_description_fix(self, tmp_path):
+        _write(tmp_path, FLAT)
+        hass = MockHass(config_dir=str(tmp_path))
+        with patch("custom_components.config_auditor.refactoring_assistant.er") as mock_er:
+            mock_er.async_get.return_value = MagicMock()
+            mock_er.async_get.return_value.async_get.return_value = None
+            from custom_components.config_auditor.refactoring_assistant import (
+                RefactoringAssistant,
+            )
+            ra = RefactoringAssistant(hass)
+            result = await ra.apply_description_fix("automation.a1", "Hello")
+
+        assert result["success"] is True
+        _assert_untouched_parts_survive(
+            (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        )
+
+    @pytest.mark.asyncio
+    async def test_mcp_update_automation(self, tmp_path):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        hass = _hass(tmp_path, FLAT)
+
+        result = await mcp._tool_ha_update_automation(
+            hass, {"entity_id": "automation.clima", "mode": "restart"}
+        )
+
+        assert result.get("success") is True, result
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "mode: restart" in written
+        _assert_untouched_parts_survive(written)
+
+    @pytest.mark.asyncio
+    async def test_mcp_remove_automation(self, tmp_path):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        hass = _hass(tmp_path, FLAT)
+
+        result = await mcp._tool_ha_remove_automation(hass, {"entity_id": "a2"})
+
+        assert result.get("success") is True, result
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "alias: General" not in written
+        _assert_untouched_parts_survive(written)
+
+    @pytest.mark.asyncio
+    async def test_mcp_create_automation_appends_without_flattening(self, tmp_path):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        hass = _hass(tmp_path, FLAT)
+
+        result = await mcp._tool_ha_create_automation(hass, {
+            "alias": "Brand new",
+            "triggers": [{"platform": "state", "entity_id": "light.x"}],
+            "actions": [{"service": "light.turn_on"}],
+        })
+
+        assert result.get("success") is True, result
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "alias: Brand new" in written
+        _assert_untouched_parts_survive(written)
+
+    @pytest.mark.asyncio
+    async def test_mcp_update_script(self, tmp_path):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        hass = _hass(tmp_path, {
+            "configuration.yaml": "script: !include scripts.yaml\n",
+            "scripts.yaml": "# my scripts\nmorning:\n  alias: Morning\n  sequence: []\n",
+        })
+
+        result = await mcp._tool_ha_update_script(
+            hass, {"entity_id": "script.morning", "alias": "Wake up"}
+        )
+
+        assert result.get("success") is True, result
+        written = (tmp_path / "scripts.yaml").read_text(encoding="utf-8")
+        assert "alias: Wake up" in written
+        assert "# my scripts" in written
+
+    @pytest.mark.asyncio
+    async def test_mcp_create_script_into_a_commented_file(self, tmp_path):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        hass = _hass(tmp_path, {
+            "configuration.yaml": "script: !include scripts.yaml\n",
+            "scripts.yaml": "# my scripts\nmorning:\n  alias: Morning\n  sequence: []\n",
+        })
+
+        result = await mcp._tool_ha_create_script(hass, {
+            "script_id": "evening",
+            "alias": "Evening",
+            "sequence": [{"service": "light.turn_off"}],
+        })
+
+        assert result.get("success") is True, result
+        written = (tmp_path / "scripts.yaml").read_text(encoding="utf-8")
+        assert "alias: Evening" in written
+        assert "alias: Morning" in written
+        assert "# my scripts" in written
+
+    @pytest.mark.asyncio
+    async def test_mcp_remove_scene(self, tmp_path):
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        hass = _hass(tmp_path, {
+            "configuration.yaml": "scene: !include scenes.yaml\n",
+            "scenes.yaml": (
+                "# evening moods\n"
+                "- id: soir\n  name: Evening\n  entities: {}\n"
+                "- id: nuit\n  name: Night\n  entities: {}\n"
+            ),
+        })
+
+        result = await mcp._tool_ha_remove_scene(hass, {"entity_id": "scene.soir"})
+
+        assert result.get("success") is True, result
+        written = (tmp_path / "scenes.yaml").read_text(encoding="utf-8")
+        assert "name: Evening" not in written
+        assert "name: Night" in written
+        assert "# evening moods" in written
+
+    @pytest.mark.asyncio
+    async def test_optimizer_replaces_one_entry_and_keeps_the_rest(self, tmp_path):
+        from custom_components.config_auditor.automation_optimizer import (
+            AutomationOptimizer,
+        )
+
+        _write(tmp_path, FLAT)
+        optimizer = AutomationOptimizer(MockHass(config_dir=str(tmp_path)))
+        await optimizer.hass.async_add_executor_job(
+            optimizer._write_automations, "automation.a1",
+            [{"id": "a1", "alias": "Clima split", "triggers": [], "actions": []}],
+        )
+
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "alias: Clima split" in written
+        assert "alias: General" in written, "the sibling entry must survive"
+        assert "# Climate automations — keep this comment!" in written
+
+    @pytest.mark.asyncio
+    async def test_optimizer_backup_is_restorable(self, tmp_path):
+        """It used to write `<stem>_optim_<ts>.yaml`, which restore could not resolve."""
+        from custom_components.config_auditor.automation_optimizer import (
+            AutomationOptimizer,
+        )
+
+        _write(tmp_path, FLAT)
+        optimizer = AutomationOptimizer(MockHass(config_dir=str(tmp_path)))
+        backup = await optimizer._create_backup("automation.a1")
+
+        assert yw.backup_stem(backup.name) == "automations"

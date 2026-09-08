@@ -8,6 +8,7 @@ Provides active AI-powered rewriting of automations:
 """
 from __future__ import annotations
 
+import io
 import logging
 import re
 from pathlib import Path
@@ -20,6 +21,12 @@ from homeassistant.core import HomeAssistant
 from .const import BACKUP_DIR
 from .translation_utils import notification_ts as _ts
 from .yaml_sources import iter_domain_files
+from .yaml_writer import (
+    EditScan,
+    create_backup,
+    scan_list_domain_for_edit,
+    write_back,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,41 +57,28 @@ class AutomationOptimizer:
 
     # ── Source resolution ──────────────────────────────────────────────────────
 
-    def _find_owning_file(self, entity_id: str) -> tuple[Path | None, list, int]:
+    def _find_owning_file(self, entity_id: str) -> EditScan:
         """Locate the YAML file that actually holds one automation.
 
-        Returns ``(path, documents, index)`` — the file, its parsed list of
-        automations, and the position of the match — or ``(None, [], -1)``.
         With a split config the entry lives in one of several files, so writes
         must land on that file rather than on <config>/automations.yaml, which
-        HA may not even read.
+        HA may not even read. The file comes back open for editing, so
+        :meth:`_write_automations` can replace the entry without flattening the
+        comments around the automations that share the file.
 
-        Parsed with plain ``yaml.safe_load``: a file carrying HA tags
-        (``!secret``, ``!include``) is skipped rather than rewritten with those
-        tags expanded, which would inline secrets in clear text.
+        A file carrying HA tags (``!secret``, ``!include``) is skipped rather
+        than rewritten with those tags lost — see :mod:`yaml_writer`.
         """
         slug = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
-        fallback: tuple[Path | None, list, int] = (None, [], -1)
 
-        for path in iter_domain_files(self._config_dir, "automation", "automations.yaml"):
-            try:
-                data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
-            except Exception:
-                continue
-            if not isinstance(data, list):
-                data = [data]
-            for index, item in enumerate(data):
-                if not isinstance(item, dict):
-                    continue
-                item_id = str(item.get("id", ""))
-                item_alias = (item.get("alias") or "").lower().replace(" ", "_")
-                if item_id == slug or item_alias == slug or item.get("alias") == slug:
-                    return Path(path), data, index
-                if fallback[0] is None:
-                    candidate = (item.get("alias") or item.get("id") or "").lower().replace(" ", "_")
-                    if candidate == slug:
-                        fallback = (Path(path), data, index)
-        return fallback
+        def _matches(item: dict) -> bool:
+            item_id = str(item.get("id", ""))
+            item_alias = (item.get("alias") or "").lower().replace(" ", "_")
+            return item_id == slug or item_alias == slug or item.get("alias") == slug
+
+        return scan_list_domain_for_edit(
+            self._config_dir, "automation", "automations.yaml", _matches
+        )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -237,10 +231,12 @@ class AutomationOptimizer:
         """Load raw YAML for one automation, wherever its file lives."""
 
         def _read() -> str:
-            _path, data, index = self._find_owning_file(entity_id)
-            if index < 0:
+            scan = self._find_owning_file(entity_id)
+            if not scan.found:
                 return ""
-            return yaml.dump(data[index], allow_unicode=True, default_flow_style=False)
+            buffer = io.StringIO()
+            scan.yaml.dump(scan.entry, buffer)
+            return buffer.getvalue()
 
         try:
             return await self.hass.async_add_executor_job(_read)
@@ -378,31 +374,37 @@ class AutomationOptimizer:
         return result
 
     def _write_automations(self, entity_id: str, new_docs: list[dict]) -> None:
-        """Replace one automation with new docs, in the file that holds it."""
-        target, data, index = self._find_owning_file(entity_id)
-        if target is None or index < 0:
+        """Replace one automation with new docs, in the file that holds it.
+
+        The entry is deleted from the round-trip document and the replacements
+        appended to it, so every other automation in the file keeps its
+        comments and its formatting. The backup was taken by the caller.
+        """
+        scan = self._find_owning_file(entity_id)
+        if not scan.found:
             raise ValueError(
                 f"Automation '{entity_id}' not found in any file the "
                 f"'automation:' key resolves to"
             )
 
-        filtered = [item for i, item in enumerate(data) if i != index]
-        filtered.extend(new_docs)
-
-        with open(target, "w", encoding="utf-8") as f:
-            yaml.dump(filtered, f, allow_unicode=True, default_flow_style=False,
-                      sort_keys=False)
+        del scan.document[scan.index]
+        scan.document.extend(new_docs)
+        write_back(scan.target)
 
     async def _create_backup(self, entity_id: str | None = None) -> Path:
-        """Backup the file about to be written, before any write."""
-        from datetime import datetime
-        import shutil
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """Backup the file about to be written, before any write.
 
+        Through the shared :func:`yaml_writer.create_backup`, so the snapshot is
+        named like every other one HACA takes and the panel can restore it. It
+        used to be written as ``<stem>_optim_<ts>.yaml``, which the restore path
+        could not resolve back to a source file: the listing offered it and the
+        restore then refused it.
+        """
         def _do() -> Path:
             source: Path | None = None
             if entity_id:
-                source = self._find_owning_file(entity_id)[0]
+                scan = self._find_owning_file(entity_id)
+                source = Path(scan.path) if scan.found else None
             if source is None:
                 files = iter_domain_files(
                     self._config_dir, "automation", "automations.yaml"
@@ -410,8 +412,6 @@ class AutomationOptimizer:
                 source = Path(files[0]) if files else None
             if source is None:
                 raise FileNotFoundError("no automation YAML file to back up")
-            backup_file = self._backup_dir / f"{source.stem}_optim_{timestamp}.yaml"
-            shutil.copy2(source, backup_file)
-            return backup_file
+            return Path(create_backup(self._config_dir, str(source)))
 
         return await self.hass.async_add_executor_job(_do)
