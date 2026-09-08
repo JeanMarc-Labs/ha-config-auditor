@@ -31,54 +31,10 @@ class TestRepairsIssueKey:
         assert _issue_key(i1) != _issue_key(i2)
 
 
-class TestRepairsUpdateLogic:
-    """Test the update repairs logic with mocked issue_registry."""
-
-    @pytest.fixture
-    def mock_hass(self):
-        hass = MagicMock()
-        hass.data = {}
-        return hass
-
-    def test_no_data_does_nothing(self, mock_hass):
-        from custom_components.config_auditor.repairs import async_update_repairs
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(async_update_repairs(mock_hass, {}))
-        finally:
-            loop.close()
-        # Should not raise
-
-    def test_no_high_issues_creates_nothing(self, mock_hass):
-        from custom_components.config_auditor.repairs import async_update_repairs
-        import asyncio
-
-        data = {
-            "automation_issue_list": [
-                {"severity": "medium", "entity_id": "automation.x", "type": "test"}
-            ],
-            "entity_issue_list": [],
-            "script_issue_list": [],
-            "scene_issue_list": [],
-            "blueprint_issue_list": [],
-            "helper_issue_list": [],
-            "performance_issue_list": [],
-            "security_issue_list": [],
-            "dashboard_issue_list": [],
-        }
-
-        loop = asyncio.new_event_loop()
-        try:
-            # Will fail if issue_registry is not available, which is expected
-            # in a stub environment — we just verify it doesn't crash
-            try:
-                loop.run_until_complete(async_update_repairs(mock_hass, data))
-            except (ImportError, ModuleNotFoundError):
-                pass
-        finally:
-            loop.close()
+# TestRepairsUpdateLogic lived here: two tests that called
+# async_update_repairs inside a try/except and asserted nothing, so they
+# passed whatever the module did. test_repairs.py covers both cases with a
+# recorder in place of the issue registry (1.8.0).
 
 
 class TestRepairsMaxLimit:

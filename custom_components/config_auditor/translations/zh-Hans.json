@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ 备份已恢复",
     "backup_restored_summary": "恢复成功完成",
     "backup_restored_extra": "⚠️ 如果配置有更改，请重启 Home Assistant。",
-    "backup_deleted_title": "🗑️ 备份已删除"
+    "backup_deleted_title": "🗑️ 备份已删除",
+    "report_deleted_summary": "删除报告",
+    "backup_deleted_summary": "删除备份",
+    "preview_changes_detected": "**检测到的更改：** {count}",
+    "preview_mode_detail": "**新模式：** `{mode}`\n\n**更改：** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "YAML 为空或无效。",
+    "yaml_invalid": "无效的 YAML：{error}",
+    "not_a_mapping": "文档 {index} 不是有效的 YAML 映射（收到：{kind}）。",
+    "not_an_automation": "文档 {index} 看起来不是 Home Assistant 自动化（未找到 triggers/actions 键）。",
+    "written": "已写入 {count} 个自动化。"
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — 周报（得分：{score}/100）",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**完整YAML：**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML不可用)",
     "complexity_prompt": "您是一位Home Assistant专家。请分析此{kind}的复杂度。\n\n** {kind_upper} ：** {alias}\n**实体ID ：** {entity_id}\n**HACA评分 ：** {score}\n**评分详情 ：** {score_line}\n\n{yaml_section}\n\n任务分两部分：\n第一部分 - 说明（3-5句）：\n说明为何此{kind}复杂，哪些部分贡献最大，及相关风险（维护、调试）。\n\n第二部分 - YAML提议：\n提出具体拆分方案：将重复的动作块抽取到独立脚本，简化主文件。并提供完整YAML。\n\n请严格按照以下格式回复：\n```explanation\n[您的说明]\n```\n\n```yaml_proposal\n[提议的yaml]\n```",
-    "complexity_fallback": "复杂度评分：{score}。此{kind}包含{triggers}个触发器，{conditions}个条件，{actions}个递归动作和{templates}个模板。建议将重复动作块抽取为可重用脚本。"
+    "complexity_fallback": "复杂度评分：{score}。此{kind}包含{triggers}个触发器，{conditions}个条件，{actions}个递归动作和{templates}个模板。建议将重复动作块抽取为可重用脚本。",
+    "mcp_explain_issue": "[H.A.C.A Audit] 在 Home Assistant 配置中检测到问题。\n类型：{type}\n严重程度：{severity}\n实体：{entity}\n消息：{message}\n\n请用 2-3 句话清楚地解释该问题，并提出具体的修复方案。",
+    "mcp_no_ai_available": "没有可用的 AI 服务。"
   },
   "actions": {
     "close": "Close",

@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ Back-up hersteld",
     "backup_restored_summary": "Herstel succesvol voltooid",
     "backup_restored_extra": "⚠️ Start Home Assistant opnieuw als configuraties zijn gewijzigd.",
-    "backup_deleted_title": "🗑️ Back-up verwijderd"
+    "backup_deleted_title": "🗑️ Back-up verwijderd",
+    "report_deleted_summary": "Verwijderen van het rapport",
+    "backup_deleted_summary": "Verwijderen van de back-up",
+    "preview_changes_detected": "**Gedetecteerde wijzigingen:** {count}",
+    "preview_mode_detail": "**Nieuwe modus:** `{mode}`\n\n**Wijzigingen:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "Lege of ongeldige YAML.",
+    "yaml_invalid": "Ongeldige YAML: {error}",
+    "not_a_mapping": "Document {index} is geen geldige YAML-mapping (ontvangen: {kind}).",
+    "not_an_automation": "Document {index} lijkt geen Home Assistant-automatisering (geen triggers/actions-sleutel gevonden).",
+    "written": "{count} automatisering(en) weggeschreven."
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — Weekrapport (score: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**Volledige YAML:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML niet beschikbaar)",
     "complexity_prompt": "Je bent een Home Assistant-expert. Analyseer de complexiteit van deze {kind}.\n\n** {kind_upper} :** {alias}\n**Entiteit ID :** {entity_id}\n**HACA Score :** {score}\n**Score detail :** {score_line}\n\n{yaml_section}\n\nMISSIE IN 2 DELEN:\nDEEL 1 - UITLEG (3-5 zinnen):\nLeg uit waarom deze {kind} complex is, welke onderdelen het meest bijdragen aan de score, en de risico's (onderhoud, debugging).\n\nDEEL 2 - YAML VOORSTEL:\nStel een concrete opsplitsing voor: haal repetitieve actieblokken uit in aparte scripts, vereenvoudig het hoofdbestand. Geef de volledige YAML.\n\nREAGEER STRIKT MET DIT FORMAT:\n```explanation\n[jouw uitleg hier]\n```\n\n```yaml_proposal\n[voorgestelde yaml hier]\n```",
-    "complexity_fallback": "Complexiteitsscore: {score}. Deze {kind} bevat {triggers} trigger(s), {conditions} conditie(s), {actions} recursieve actie(s) en {templates} template(s). Overweeg om repetitieve actieblokken in herbruikbare scripts te extraheren."
+    "complexity_fallback": "Complexiteitsscore: {score}. Deze {kind} bevat {triggers} trigger(s), {conditions} conditie(s), {actions} recursieve actie(s) en {templates} template(s). Overweeg om repetitieve actieblokken in herbruikbare scripts te extraheren.",
+    "mcp_explain_issue": "[H.A.C.A Audit] Probleem gedetecteerd in de Home Assistant-configuratie.\nType: {type}\nErnst: {severity}\nEntiteit: {entity}\nBericht: {message}\n\nLeg dit probleem uit in 2-3 duidelijke zinnen en stel een concrete oplossing voor.",
+    "mcp_no_ai_available": "Geen AI-dienst beschikbaar."
   },
   "actions": {
     "close": "Close",

@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ Säkerhetskopia återställd",
     "backup_restored_summary": "Återställning slutförd",
     "backup_restored_extra": "⚠️ Starta om Home Assistant om konfigurationen har ändrats.",
-    "backup_deleted_title": "🗑️ Säkerhetskopia borttagen"
+    "backup_deleted_title": "🗑️ Säkerhetskopia borttagen",
+    "report_deleted_summary": "Radering av rapporten",
+    "backup_deleted_summary": "Radering av säkerhetskopian",
+    "preview_changes_detected": "**Upptäckta ändringar:** {count}",
+    "preview_mode_detail": "**Nytt läge:** `{mode}`\n\n**Ändringar:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "Tom eller ogiltig YAML.",
+    "yaml_invalid": "Ogiltig YAML: {error}",
+    "not_a_mapping": "Dokument {index} är inte en giltig YAML-mappning (fick: {kind}).",
+    "not_an_automation": "Dokument {index} ser inte ut som en Home Assistant-automation (ingen triggers/actions-nyckel hittades).",
+    "written": "{count} automation(er) skrivna."
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — Veckorapport (poäng: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**Fullständig YAML:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML inte tillgänglig)",
     "complexity_prompt": "Du är expert på Home Assistant. Analysera komplexiteten hos den här {kind}.\n\n** {kind_upper} :** {alias}\n**Entitets-id :** {entity_id}\n**HACA-poäng :** {score}\n**Poängdetaljer :** {score_line}\n\n{yaml_section}\n\nUPPDRAGET HAR TVÅ DELAR:\nDEL 1 — FÖRKLARING (3-5 meningar):\nFörklara varför den här {kind} är komplex, vilka delar som bidrar mest till poängen och vilka riskerna är (underhåll, felsökning).\n\nDEL 2 — YAML-FÖRSLAG:\nFöreslå en konkret uppdelning: bryt ut upprepade åtgärdsblock till separata skript och förenkla huvudfilen. Ange den fullständiga YAML-koden.\n\nSVARA EXAKT I DET HÄR FORMATET:\n```explanation\n[din förklaring här]\n```\n\n```yaml_proposal\n[föreslagen yaml här]\n```",
-    "complexity_fallback": "Komplexitetspoäng: {score}. Den här {kind} innehåller {triggers} utlösare, {conditions} villkor, {actions} rekursiva åtgärder och {templates} mallar. Överväg att bryta ut upprepade åtgärdsblock till återanvändbara skript."
+    "complexity_fallback": "Komplexitetspoäng: {score}. Den här {kind} innehåller {triggers} utlösare, {conditions} villkor, {actions} rekursiva åtgärder och {templates} mallar. Överväg att bryta ut upprepade åtgärdsblock till återanvändbara skript.",
+    "mcp_explain_issue": "[H.A.C.A Audit] Problem upptäckt i Home Assistant-konfigurationen.\nTyp: {type}\nAllvarlighetsgrad: {severity}\nEnhet: {entity}\nMeddelande: {message}\n\nFörklara problemet i 2-3 tydliga meningar och föreslå en konkret åtgärd.",
+    "mcp_no_ai_available": "Ingen AI-tjänst tillgänglig."
   },
   "actions": {
     "close": "Close",

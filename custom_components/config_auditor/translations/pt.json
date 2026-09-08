@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ Backup restaurado",
     "backup_restored_summary": "Restauração concluída com sucesso",
     "backup_restored_extra": "⚠️ Reinicie o Home Assistant se as configurações foram alteradas.",
-    "backup_deleted_title": "🗑️ Backup excluído"
+    "backup_deleted_title": "🗑️ Backup excluído",
+    "report_deleted_summary": "Eliminação do relatório",
+    "backup_deleted_summary": "Eliminação da cópia de segurança",
+    "preview_changes_detected": "**Alterações detetadas:** {count}",
+    "preview_mode_detail": "**Novo modo:** `{mode}`\n\n**Alterações:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "YAML vazio ou inválido.",
+    "yaml_invalid": "YAML inválido: {error}",
+    "not_a_mapping": "O documento {index} não é um mapeamento YAML válido (recebido: {kind}).",
+    "not_an_automation": "O documento {index} não parece uma automação do Home Assistant (nenhuma chave triggers/actions encontrada).",
+    "written": "{count} automação(ões) escrita(s)."
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — Relatório semanal (pontuação: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**YAML completo:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML não disponível)",
     "complexity_prompt": "Você é um especialista em Home Assistant. Analise a complexidade deste(a) {kind}.\n\n** {kind_upper} :** {alias}\n**ID da Entidade :** {entity_id}\n**Pontuação HACA :** {score}\n**Detalhe da pontuação :** {score_line}\n\n{yaml_section}\n\nMISSÃO EM 2 PARTES:\nPARTE 1 - EXPLICAÇÃO (3-5 frases):\nExplique por que este(a) {kind} é complexo(a), quais partes contribuem mais para a pontuação e os riscos (manutenção, depuração).\n\nPARTE 2 - PROPOSTA YAML:\nProponha uma divisão concreta: extraia blocos de ação repetitivos em scripts separados, simplifique o arquivo principal. Forneça o YAML completo.\n\nRESPONDA ESTRITAMENTE NESTE FORMATO:\n```explanation\n[sua explicação aqui]\n```\n\n```yaml_proposal\n[yaml proposto aqui]\n```",
-    "complexity_fallback": "Pontuação de complexidade: {score}. Este(a) {kind} contém {triggers} gatilho(s), {conditions} condição(ões), {actions} ação(ões) recursiva(s) e {templates} template(s). Considere extrair blocos de ação repetitivos em scripts reutilizáveis."
+    "complexity_fallback": "Pontuação de complexidade: {score}. Este(a) {kind} contém {triggers} gatilho(s), {conditions} condição(ões), {actions} ação(ões) recursiva(s) e {templates} template(s). Considere extrair blocos de ação repetitivos em scripts reutilizáveis.",
+    "mcp_explain_issue": "[H.A.C.A Audit] Problema detetado na configuração do Home Assistant.\nTipo: {type}\nGravidade: {severity}\nEntidade: {entity}\nMensagem: {message}\n\nExplica este problema em 2-3 frases claras e propõe uma correção concreta.",
+    "mcp_no_ai_available": "Nenhum serviço de IA disponível."
   },
   "actions": {
     "close": "Close",

@@ -156,11 +156,11 @@ MCP_TOOLS: list[dict[str, Any]] = [
                 "severity": {
                     "type": "string",
                     "enum": ["high", "medium", "low"],
-                    "description": "Filtrer par sévérité (optionnel)",
+                    "description": "Filter by severity (optional)",
                 },
                 "type": {
                     "type": "string",
-                    "description": "Filtrer par type d'issue (optionnel), ex: 'zombie_entity'",
+                    "description": "Filter by issue type (optional), e.g. 'zombie_entity'",
                 },
                 "category": {
                     "type": "string",
@@ -172,7 +172,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
                 "limit": {
                     "type": "integer",
                     "default": 50,
-                    "description": "Nombre maximum d'issues à retourner",
+                    "description": "Maximum number of issues to return",
                 },
             },
         },
@@ -191,7 +191,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "entity_id": {
                     "type": "string",
-                    "description": "entity_id ou alias de l'automation, ex: 'automation.lumieres_salon'",
+                    "description": "entity_id or alias of the automation, e.g. 'automation.living_room_lights'",
                 },
             },
         },
@@ -199,8 +199,8 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "haca_fix_suggestion",
         "description": (
-            "Retourne une proposition de correction pour une issue donnée "
-            "(sans l'appliquer). Inclut le diff prévisualisé."
+            "Return a proposed fix for a given issue without applying it. "
+            "Includes the previewed diff."
         ),
         "inputSchema": {
             "type": "object",
@@ -208,7 +208,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "issue_id": {
                     "type": "string",
-                    "description": "Identifiant unique de l'issue (champ 'id' dans haca_get_issues)",
+                    "description": "Unique issue id (the 'id' field returned by haca_get_issues)",
                 },
             },
         },
@@ -216,8 +216,8 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "haca_apply_fix",
         "description": (
-            "Applique une correction à une issue. Supporte le mode dry_run "
-            "pour prévisualiser sans modifier les fichiers."
+            "Apply a fix to an issue. Supports dry_run mode to preview the "
+            "change without touching any file."
         ),
         "inputSchema": {
             "type": "object",
@@ -225,12 +225,12 @@ MCP_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "issue_id": {
                     "type": "string",
-                    "description": "Identifiant unique de l'issue",
+                    "description": "Unique issue id",
                 },
                 "dry_run": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Si true (défaut), simule sans modifier. false pour appliquer.",
+                    "description": "If true (default), simulate without writing. Set false to apply.",
                 },
             },
         },
@@ -238,15 +238,15 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "haca_get_batteries",
         "description": (
-            "Retourne l'état de toutes les batteries détectées dans HA : "
-            "niveau, statut (critical/low/warning/ok), et dernière mise à jour."
+            "Return the state of every battery detected in HA: level, status "
+            "(critical/low/warning/ok) and last update."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "min_level": {
                     "type": "integer",
-                    "description": "Ne retourner que les batteries en dessous de ce niveau (%)",
+                    "description": "Only return batteries below this level (%)",
                 },
             },
         },
@@ -260,7 +260,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "issue_id": {
                     "type": "string",
-                    "description": "Identifiant unique de l'issue à expliquer",
+                    "description": "Unique id of the issue to explain",
                 },
             },
         },
@@ -702,9 +702,9 @@ async def _tool_fix_suggestion(hass: HomeAssistant, params: dict) -> dict:
         "fixable": True,
         "type": issue.get("type", ""),
         "entity_id": issue.get("entity_id", ""),
-        "suggestion": issue.get("recommendation", "Appliquer la correction automatique"),
+        "suggestion": issue.get("recommendation", "Apply the automatic fix"),
         "preview_available": True,
-        "note": "Utilisez haca_apply_fix avec dry_run=true pour voir le diff.",
+        "note": "Call haca_apply_fix with dry_run=true to see the diff.",
     }
 
 
@@ -1062,13 +1062,26 @@ async def _tool_explain_issue(hass: HomeAssistant, params: dict) -> dict:
     if cache_key in cache:
         return {"explanation": cache[cache_key], "cached": True}
 
-    prompt = (
-        f"[H.A.C.A Audit] Issue détectée dans la configuration Home Assistant.\n"
-        f"Type: {issue.get('type', '')}\n"
-        f"Sévérité: {issue.get('severity', '')}\n"
-        f"Entité: {issue.get('entity_id', issue.get('alias', ''))}\n"
-        f"Message: {issue.get('message', '')}\n\n"
-        f"Explique cette issue en 2-3 phrases claires et propose une correction concrète."
+    # The prompt is what the model answers in, so it follows the notification
+    # language like every other AI prompt (see conversation.explain_issue_ai).
+    from .translation_utils import resolve_notification_language
+    _lang = resolve_notification_language(hass)
+    try:
+        from . import _TS_CACHE  # noqa: PLC0415
+        _ap = (_TS_CACHE.get(_lang) or _TS_CACHE.get("en") or {}).get("ai_prompts", {})
+    except Exception:
+        _ap = {}
+    prompt = _ap.get(
+        "mcp_explain_issue",
+        "[H.A.C.A Audit] Issue detected in the Home Assistant configuration.\n"
+        "Type: {type}\nSeverity: {severity}\nEntity: {entity}\n"
+        "Message: {message}\n\n"
+        "Explain this issue in 2-3 clear sentences and propose a concrete fix.",
+    ).format(
+        type=issue.get("type", ""),
+        severity=issue.get("severity", ""),
+        entity=issue.get("entity_id", issue.get("alias", "")),
+        message=issue.get("message", ""),
     )
 
     explanation = await _async_call_ai(hass, prompt, "HACA MCP Explain")
@@ -1086,7 +1099,9 @@ async def _tool_explain_issue(hass: HomeAssistant, params: dict) -> dict:
     return {
         "issue_id": issue_id,
         "entity_id": issue.get("entity_id", ""),
-        "explanation": explanation or "Aucun service IA disponible.",
+        "explanation": explanation or _ap.get(
+            "mcp_no_ai_available", "No AI service available."
+        ),
         "cached": False,
     }
 
@@ -2328,7 +2343,7 @@ _HA_EXTENDED_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": (
                         "entity_id or alias of the automation to convert, "
-                        "e.g. 'automation.entree_vide_duppliquer' or 'Entrée vide duppliquer'."
+                        "e.g. 'automation.evening_lights' or 'Evening lights'."
                     ),
                 },
                 "blueprint_name": {
@@ -4368,7 +4383,7 @@ async def _tool_ha_get_scene(hass: HomeAssistant, params: dict) -> dict:
     import yaml as _yaml
     scene_ref = params.get("entity_id", "").strip()
     if not scene_ref:
-        return {"error": "entity_id required (e.g. 'scene.soiree' or alias 'Soirée')"}
+        return {"error": "entity_id required (e.g. 'scene.movie_night' or alias 'Movie night')"}
 
     slug = scene_ref.replace("scene.", "").strip().lower()
 

@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ Backup wiederhergestellt",
     "backup_restored_summary": "Wiederherstellung erfolgreich abgeschlossen",
     "backup_restored_extra": "⚠️ Starte Home Assistant neu, falls Konfigurationen geändert wurden.",
-    "backup_deleted_title": "🗑️ Backup gelöscht"
+    "backup_deleted_title": "🗑️ Backup gelöscht",
+    "report_deleted_summary": "Löschung des Berichts",
+    "backup_deleted_summary": "Löschung des Backups",
+    "preview_changes_detected": "**Erkannte Änderungen:** {count}",
+    "preview_mode_detail": "**Neuer Modus:** `{mode}`\n\n**Änderungen:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "Leeres oder ungültiges YAML.",
+    "yaml_invalid": "Ungültiges YAML: {error}",
+    "not_a_mapping": "Dokument {index} ist kein gültiges YAML-Mapping (erhalten: {kind}).",
+    "not_an_automation": "Dokument {index} sieht nicht wie eine Home-Assistant-Automatisierung aus (kein triggers/actions-Schlüssel gefunden).",
+    "written": "{count} Automatisierung(en) geschrieben."
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — Wochenbericht (Score: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**Vollständiges YAML:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML nicht verfügbar)",
     "complexity_prompt": "Du bist ein Experte für Home Assistant. Analysiere die Komplexität dieser {kind}.\n\n** {kind_upper} :** {alias}\n**Entitäts-ID :** {entity_id}\n**HACA-Score :** {score}\n**Score-Details :** {score_line}\n\n{yaml_section}\n\nAUFTRAG IN 2 TEILEN:\nTEIL 1 - ERKLÄRUNG (3–5 Sätze):\nErkläre, warum diese {kind} komplex ist, welche Teile am meisten zum Score beitragen und welche Risiken bestehen (Wartung, Debugging).\n\nTEIL 2 - YAML-VORSCHLAG:\nSchlage eine konkrete Aufteilung vor: Extrahiere wiederkehrende Aktionsblöcke in separate Skripte, vereinfache die Hauptdatei. Gib das vollständige YAML an.\n\nANTWORTE STRIKT IN DIESEM FORMAT:\n```explanation\n[deine Erklärung hier]\n```\n\n```yaml_proposal\n[YAML-Vorschlag hier]\n```",
-    "complexity_fallback": "Komplexitätswert: {score}. Diese {kind} enthält {triggers} Trigger, {conditions} Bedingung(en), {actions} rekursive Aktion(en) und {templates} Template(s). Erwäge, wiederkehrende Aktionsblöcke in wiederverwendbare Skripte auszulagern."
+    "complexity_fallback": "Komplexitätswert: {score}. Diese {kind} enthält {triggers} Trigger, {conditions} Bedingung(en), {actions} rekursive Aktion(en) und {templates} Template(s). Erwäge, wiederkehrende Aktionsblöcke in wiederverwendbare Skripte auszulagern.",
+    "mcp_explain_issue": "[H.A.C.A Audit] Problem in der Home-Assistant-Konfiguration erkannt.\nTyp: {type}\nSchweregrad: {severity}\nEntität: {entity}\nMeldung: {message}\n\nErkläre dieses Problem in 2-3 klaren Sätzen und schlage eine konkrete Korrektur vor.",
+    "mcp_no_ai_available": "Kein KI-Dienst verfügbar."
   },
   "actions": {
     "close": "Close",
