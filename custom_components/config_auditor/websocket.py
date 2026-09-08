@@ -6,7 +6,7 @@ import io
 import logging
 from pathlib import Path
 from time import monotonic as _monotonic
-from typing import Any, NamedTuple
+from typing import Any
 
 import voluptuous as vol
 
@@ -19,12 +19,14 @@ from .const import (
     OPT_PROACTIVE_AGENT_ENABLED,
     OPT_LLM_API_ENABLED,
 )
-from .yaml_sources import (
-    contains_ha_tag,
-    iter_domain_files,
-    read_roundtrip_yaml,
-    skipped_note,
-    write_roundtrip_yaml,
+from .yaml_sources import skipped_note
+from .yaml_writer import (
+    EditScan,
+    list_entries,
+    named_entries,
+    open_domain_for_edit,
+    scan_in_passes,
+    write_back,
 )
 
 # Issue categories the panel can ask for, and the coordinator key each one holds.
@@ -1135,25 +1137,15 @@ async def handle_explain_issue(
         connection.send_error(msg["id"], "error", str(e))
 
 
-class _EntryMatch(NamedTuple):
-    """One automation/script entry, found in the file HA actually loads it from."""
-
-    path: str | None
-    yaml: Any           # the ruamel instance that parsed `document`
-    document: Any       # file root: a list for automations, a mapping for scripts
-    entry: Any          # the matched mapping, still attached to `document`
-    files: list[str]    # every file the domain key resolved to
-    skipped: list[str]  # files that could not be parsed for editing
-
-
-def _find_entry_sync(config_dir: str, entity_id: str, alias: str) -> _EntryMatch:
+def _find_entry_sync(config_dir: str, entity_id: str, alias: str) -> EditScan:
     """Locate an automation or script across the config HA actually loads.
 
     A split config (`automation: !include_dir_merge_list automations/`) keeps its
     entries in several files; the flat `<config>/automations.yaml` this used to
-    read may not even exist. Every candidate file is parsed in ruamel round-trip
-    mode, so the caller can edit the entry without flattening the comments and
-    formatting around it.
+    read may not even exist. Every candidate file is opened through
+    `yaml_writer`, so the caller can edit the entry without flattening the
+    comments and formatting around it, and a file that must not be rewritten is
+    reported rather than touched.
 
     Matching runs in priority passes over *all* files, so an exact `id` always
     wins over an alias that happens to collide in another file.
@@ -1163,32 +1155,6 @@ def _find_entry_sync(config_dir: str, entity_id: str, alias: str) -> _EntryMatch
     slug = entity_id.split(".", 1)[-1]
     alias = (alias or "").strip()
     alias_lower = alias.lower()
-
-    files = iter_domain_files(config_dir, key, default_filename)
-    skipped: list[str] = []
-    loaded: list[tuple[str, Any, Any]] = []
-
-    for path in files:
-        try:
-            yaml, data = read_roundtrip_yaml(path)
-        except Exception:  # noqa: BLE001 — syntax error, unreadable file
-            skipped.append(path)
-            continue
-        # An empty parse, the wrong shape, or a Home Assistant tag we would have
-        # to rewrite: skip rather than risk replacing the file with something else.
-        if data is None or contains_ha_tag(data):
-            skipped.append(path)
-            continue
-        if not isinstance(data, dict if is_script else list):
-            skipped.append(path)
-            continue
-        loaded.append((path, yaml, data))
-
-    def _entries(document):
-        """(key, mapping) pairs of one file, whatever shape the domain has."""
-        if is_script:
-            return [(k, v) for k, v in document.items() if isinstance(v, dict)]
-        return [(None, item) for item in document if isinstance(item, dict)]
 
     def _slugified(entry) -> str:
         return str(entry.get("alias", "")).strip().lower().replace(" ", "_")
@@ -1207,16 +1173,15 @@ def _find_entry_sync(config_dir: str, entity_id: str, alias: str) -> _EntryMatch
             lambda k, e: _slugified(e) == slug,
         ]
 
-    for matches in passes:
-        for path, yaml, document in loaded:
-            for entry_key, entry in _entries(document):
-                if matches(entry_key, entry):
-                    return _EntryMatch(path, yaml, document, entry, files, skipped)
+    domain = open_domain_for_edit(
+        config_dir, key, default_filename, dict if is_script else list
+    )
+    return scan_in_passes(
+        domain, named_entries if is_script else list_entries, passes
+    )
 
-    return _EntryMatch(None, None, None, None, files, skipped)
 
-
-def _entry_not_found_message(entity_id: str, alias: str, match: _EntryMatch) -> str:
+def _entry_not_found_message(entity_id: str, alias: str, match: EditScan) -> str:
     """Miss message that says what was searched — same wording as the MCP tools."""
     return (
         f"'{entity_id}' (alias={alias!r}) was not found in any YAML file for its "
@@ -1385,21 +1350,14 @@ async def handle_apply_field_fix(
             )
             return
 
-        # Backup first — this rewrites a file the user maintains by hand.
-        entry_data = _get_entry_data(hass)[1] or {}
-        refactoring = entry_data.get("refactoring_assistant")
-        if refactoring is None:
-            # Refactoring module disabled: build one just for its backup logic,
-            # so the naming stays compatible with the panel's restore list.
-            from .refactoring_assistant import RefactoringAssistant
-            refactoring = RefactoringAssistant(hass)
-        backup_path = await refactoring._create_backup(Path(match.path))
-
-        def _write() -> None:
+        # `write_back` snapshots the file into .haca_backups before it writes —
+        # this rewrites a file the user maintains by hand — under the same
+        # naming the panel's restore list reads.
+        def _write() -> str:
             match.entry[field] = value
-            write_roundtrip_yaml(match.path, match.yaml, match.document)
+            return write_back(match.target, hass.config.config_dir)
 
-        await hass.async_add_executor_job(_write)
+        backup_path = await hass.async_add_executor_job(_write)
 
         # Recharger pour que HA prenne en compte
         await hass.services.async_call(domain, "reload", {}, blocking=True)

@@ -131,9 +131,9 @@ class TestSplitConfig:
     @pytest.mark.asyncio
     async def test_locates_the_holding_file_in_a_subfolder(self, tmp_path):
         ra = _make_split_ra(tmp_path)
-        path, _docs, index = await ra._async_locate_automation("1700000000002")
-        assert index >= 0
-        assert path.name == "night.yaml"
+        scan = await ra._async_locate_automation("1700000000002")
+        assert scan.found
+        assert Path(scan.path).name == "night.yaml"
 
     @pytest.mark.asyncio
     async def test_mode_fix_writes_only_the_holding_file(self, tmp_path):
@@ -162,8 +162,8 @@ class TestSplitConfig:
     @pytest.mark.asyncio
     async def test_backup_is_named_after_the_file_it_copies(self, tmp_path):
         ra = _make_split_ra(tmp_path)
-        path, _docs, _index = await ra._async_locate_automation("Clima salon")
-        backup = await ra._create_backup(path)
+        scan = await ra._async_locate_automation("Clima salon")
+        backup = await ra._create_backup(Path(scan.path))
         assert backup.exists()
         assert backup.name.startswith("clima_")
 

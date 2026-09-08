@@ -12,6 +12,8 @@ MCP_FILE  = Path(__file__).parent.parent / "mcp_server.py"
 MCP_CONTENT = MCP_FILE.read_text(encoding="utf-8")
 YAML_SOURCES_FILE = Path(__file__).parent.parent / "yaml_sources.py"
 YAML_SOURCES_CONTENT = YAML_SOURCES_FILE.read_text(encoding="utf-8")
+YAML_WRITER_FILE = Path(__file__).parent.parent / "yaml_writer.py"
+YAML_WRITER_CONTENT = YAML_WRITER_FILE.read_text(encoding="utf-8")
 
 
 # ── Handler registration ──────────────────────────────────────────────────────
@@ -181,17 +183,17 @@ class TestApplyFieldFix:
     def test_atomic_write(self):
         """YAML must be written atomically (tmp file + os.replace).
 
-        The write itself lives in yaml_sources.write_roundtrip_yaml, which is
-        what apply_field_fix calls.
+        The write itself lives in yaml_writer.write_back, which is what
+        apply_field_fix calls.
         """
-        assert "write_roundtrip_yaml(" in CONTENT, \
-            "apply_field_fix must write through yaml_sources.write_roundtrip_yaml"
-        assert "os.replace(tmp, path)" in YAML_SOURCES_CONTENT, \
-            "write_roundtrip_yaml must use atomic write (os.replace)"
+        assert "write_back(" in CONTENT, \
+            "apply_field_fix must write through yaml_writer.write_back"
+        assert "os.replace(tmp, target.path)" in YAML_WRITER_CONTENT, \
+            "write_back must use atomic write (os.replace)"
 
     def test_roundtrip_write_preserves_comments(self):
         """The field fix must not flatten the user's file (ruamel round-trip)."""
-        assert "yaml.preserve_quotes = True" in YAML_SOURCES_CONTENT, \
+        assert "yaml.preserve_quotes = True" in YAML_WRITER_CONTENT, \
             "write path must use ruamel round-trip, not yaml.safe_load/dump"
         assert "_yaml.dump(data" not in CONTENT, \
             "apply_field_fix must no longer re-dump the whole file with PyYAML"
@@ -200,8 +202,12 @@ class TestApplyFieldFix:
         """A backup must be taken before the YAML is rewritten."""
         fn_start = CONTENT.find("async def handle_apply_field_fix(")
         body = CONTENT[fn_start:fn_start + 3000]
-        assert "_create_backup(" in body, \
-            "apply_field_fix must back the file up before writing"
+        assert "write_back(match.target, hass.config.config_dir)" in body, \
+            "apply_field_fix must write through the backup-taking form of write_back"
+        # …and that form must be the one that snapshots. What it actually does
+        # with the snapshot is pinned by test_yaml_writer.py.
+        assert "create_backup(config_dir, target.path)" in YAML_WRITER_CONTENT, \
+            "write_back must back the file up when given a config_dir"
 
     def test_uses_shared_domain_resolver(self):
         """Split configs: the entry may not live in <config>/automations.yaml."""

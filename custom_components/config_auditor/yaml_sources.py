@@ -15,6 +15,10 @@ success. This module resolves it once, so the audit engine and the MCP tools
 always agree on which files hold a domain's entries.
 
 Imported by ``automation_analyzer``, ``automation_optimizer`` and ``mcp_server``.
+
+Read side only. Everything that *rewrites* a config file goes through
+:mod:`yaml_writer`, which round-trips it so the user's comments survive; the
+round-trip helpers that used to live here moved there in 1.8.0.
 """
 from __future__ import annotations
 
@@ -369,14 +373,14 @@ class DomainLoad(NamedTuple):
 
 
 def read_plain_yaml(path: str):
-    """Parse one config file with plain PyYAML, for the read-modify-write paths.
+    """Parse one config file with plain PyYAML, tags unresolved.
 
-    Deliberately NOT HA's loader: these paths dump the parsed data back to
-    disk, and HA's loader expands ``!secret`` / ``!include``, which would
-    inline a secret in clear text or flatten an include into the file. A file
-    carrying HA tags fails to parse here and is skipped — the caller reports
-    "not found" instead of rewriting it wrongly. Use :func:`load_yaml_any` for
-    read-only inspection.
+    Deliberately NOT HA's loader, which expands ``!secret`` / ``!include``: a
+    caller that echoed the result back to the user would print a secret in
+    clear text. A file carrying HA tags fails to parse here and is skipped —
+    the caller reports "not found" rather than answering with a half-resolved
+    file. Use :func:`load_yaml_any` for the audit's read-only inspection, and
+    :mod:`yaml_writer` for anything that writes.
     """
     import yaml
 
@@ -470,76 +474,6 @@ def skipped_note(skipped: list[str]) -> str:
         f"that cannot be safely rewritten, sometimes a syntax error — an entry "
         f"defined in one of those is edited by hand."
     )
-
-
-def contains_ha_tag(node) -> bool:
-    """True when a ruamel round-trip tree still carries a Home Assistant tag.
-
-    ruamel keeps unknown tags (``!secret``, ``!include``, ``!input``) as nodes
-    with a ``tag`` attribute. It can dump them back faithfully, but the entry we
-    are about to edit may well *be* the include — so the write paths treat a
-    tagged file the same way :func:`read_plain_yaml` does: they skip it and let
-    the caller say the entry has to be edited by hand.
-    """
-    tag = getattr(node, "tag", None)
-    if tag is not None:
-        value = getattr(tag, "value", tag)
-        if isinstance(value, str) and value.startswith("!"):
-            return True
-    if isinstance(node, dict):
-        return any(contains_ha_tag(v) for v in node.values())
-    if isinstance(node, (list, tuple)):
-        return any(contains_ha_tag(v) for v in node)
-    return False
-
-
-def read_roundtrip_yaml(path: str):
-    """Parse a config file in ruamel round-trip mode.
-
-    Round-trip is what keeps the user's comments, key order, quoting style and
-    anchors alive across an edit. Returns ``(yaml, data)`` — the same ``yaml``
-    object must be handed to :func:`write_roundtrip_yaml`, because the settings
-    below are what produce a minimal diff.
-    """
-    from ruamel.yaml import YAML
-
-    yaml = YAML()  # default = round-trip
-    yaml.preserve_quotes = True
-    # Match HA's own 2-space indent so an edited file still looks hand-written.
-    yaml.indent(mapping=2, sequence=4, offset=2)
-
-    with open(path, encoding="utf-8") as fh:
-        return yaml, yaml.load(fh)
-
-
-def write_roundtrip_yaml(path: str, yaml, data) -> None:
-    """Write a round-trip tree back, atomically.
-
-    The dump goes to a sibling temp file and is then renamed over the target, so
-    a crash mid-write cannot leave Home Assistant with a half-written config.
-    """
-    tmp = f"{path}.tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            yaml.dump(data, fh)
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
-def write_yaml_documents(path: str, documents, sort_keys: bool = False) -> None:
-    """Dump a parsed domain file back to disk, preserving key order by default."""
-    import yaml
-
-    with open(path, "w", encoding="utf-8") as fh:
-        yaml.dump(
-            documents, fh, allow_unicode=True,
-            default_flow_style=False, sort_keys=sort_keys,
-        )
 
 
 def is_split_config(config_dir: str, key: str, default_filename: str) -> bool:
