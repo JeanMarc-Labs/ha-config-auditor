@@ -1647,6 +1647,10 @@ class AutomationAnalyzer:
         Strategy B — Jaccard similarity ≥ 0.80 on token sets extracted from
         triggers + actions.  Severity: MEDIUM.  Only pairs not already flagged
         by Strategy A are considered.
+
+        Both strategies report one issue per automation naming the others it
+        matches, never one per pair: similar automations come in groups, and a
+        group of ten is forty-five pairs.
         """
         t = self._translator.t
 
@@ -1703,25 +1707,45 @@ class AutomationAnalyzer:
         # Only compare pairs where neither is already an exact duplicate
         candidates = [e for e in token_sets if e not in exact_flagged]
 
+        # One issue per automation, listing what it resembles — the shape
+        # strategy A above already uses. Reporting each pair from both ends
+        # instead made the output quadratic, and similar automations come in
+        # groups where every member resembles every other: ten "motion turns
+        # this light on" automations, one per room, produced ninety findings
+        # that said the same thing nine times over, and a hundred of them
+        # produced 9 900. Grouping is also what lets the scan stay fast on
+        # exactly the configuration that used to be slowest, where building
+        # the issues cost more than finding them.
+        resembles: dict[str, list[str]] = {}
+        closest:   dict[str, int] = {}
         for a, b, similarity in self._probable_duplicate_pairs(candidates, token_sets):
             pct = round(similarity * 100)
             for entity_id, other_id in ((a, b), (b, a)):
-                alias       = self._automation_configs[entity_id].get("alias", entity_id)
-                other_alias = self._automation_configs[other_id].get("alias", other_id)
-                self.issues.append({
-                    "entity_id":        entity_id,
-                    "alias":            alias,
-                    "type":             "probable_duplicate_automation",
-                    "severity":         "medium",
-                    "message":          t("probable_duplicate_automation",
-                                          pct=pct, other=other_alias),
-                    "location":         "root",
-                    "recommendation":   t("review_probable_duplicate",
-                                          other=other_alias),
-                    "fix_available":    False,
-                    "similarity_pct":   pct,
-                    "similar_to":       other_id,
-                })
+                resembles.setdefault(entity_id, []).append(other_id)
+                closest[entity_id] = max(closest.get(entity_id, 0), pct)
+
+        for entity_id in candidates:
+            others = resembles.get(entity_id)
+            if not others:
+                continue
+            alias = self._automation_configs[entity_id].get("alias", entity_id)
+            other_aliases = [
+                self._automation_configs[o].get("alias", o) for o in others[:3]
+            ]
+            self.issues.append({
+                "entity_id":        entity_id,
+                "alias":            alias,
+                "type":             "probable_duplicate_automation",
+                "severity":         "medium",
+                "message":          t("probable_duplicate_automation",
+                                      count=len(others), pct=closest[entity_id]),
+                "location":         "root",
+                "recommendation":   t("review_probable_duplicate",
+                                      others=", ".join(other_aliases)),
+                "fix_available":    False,
+                "similarity_pct":   closest[entity_id],
+                "duplicate_ids":    others,
+            })
 
     def _probable_duplicate_pairs(
         self,

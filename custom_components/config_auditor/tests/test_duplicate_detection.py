@@ -33,10 +33,14 @@ _SOURCE = Path(__file__).parent.parent / "automation_analyzer.py"
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 class _Translator:
-    """Issue text is not what these tests are about; the key stands in for it."""
+    """The wording is not what these tests are about, but the values handed to
+    it are: a message naming the wrong count, or a recommendation listing the
+    wrong automations, has to fail here rather than in the panel."""
 
     def t(self, key, **kwargs):
-        return key
+        if not kwargs:
+            return key
+        return f"{key} " + " ".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
 
 
 def analyzer(configs: dict, ignored=()) -> AutomationAnalyzer:
@@ -144,15 +148,16 @@ class TestAgainstThePairwiseScan:
         )
 
     @pytest.mark.parametrize("seed", range(10))
-    def test_the_issues_are_identical_down_to_their_order(self, seed):
-        """The panel renders these in list order, so order is part of the output."""
+    def test_the_issues_carry_what_the_pairwise_scan_found(self, seed):
+        """The pairs are the same; what changed is that they are reported one
+        automation at a time. The panel renders the list in order, so the order
+        of the automations is part of the output too."""
         configs = random_configs(30, seed)
         ignored = {e for i, e in enumerate(configs) if i % 7 == 0}
 
         produced = analyzer(configs, ignored)
         produced._check_duplicate_automations()
 
-        # Rebuild what the pairwise scan would have emitted for Strategy B.
         oracle = analyzer(configs, ignored)
         token_sets = {}
         for entity_id, config in configs.items():
@@ -165,19 +170,27 @@ class TestAgainstThePairwiseScan:
             issue["entity_id"] for issue in produced.issues
             if issue["type"] == "duplicate_automation"
         }
-        expected = reference_probable_pairs(
-            [e for e in token_sets if e not in exact_flagged], token_sets
-        )
+        candidates = [e for e in token_sets if e not in exact_flagged]
 
+        resembles: dict[str, list[str]] = {}
+        closest: dict[str, int] = {}
+        for a, b, similarity in reference_probable_pairs(candidates, token_sets):
+            for one, other in ((a, b), (b, a)):
+                resembles.setdefault(one, []).append(other)
+                closest[one] = max(closest.get(one, 0), round(similarity * 100))
+
+        expected = [
+            (entity_id,
+             sorted(resembles[entity_id], key=candidates.index),
+             closest[entity_id])
+            for entity_id in candidates if entity_id in resembles
+        ]
         reported = [
-            (issue["entity_id"], issue["similar_to"], issue["similarity_pct"])
+            (issue["entity_id"], issue["duplicate_ids"], issue["similarity_pct"])
             for issue in produced.issues
             if issue["type"] == "probable_duplicate_automation"
         ]
-        assert reported == [
-            entry for a, b, sim in expected
-            for entry in ((a, b, round(sim * 100)), (b, a, round(sim * 100)))
-        ]
+        assert reported == expected
 
 
 # ── The threshold, and the arithmetic the shortcuts rest on ───────────────────
@@ -308,23 +321,25 @@ class TestWhatIsLeftOut:
     def _probable(self, a):
         return [i for i in a.issues if i["type"] == "probable_duplicate_automation"]
 
+    @staticmethod
+    def _mentions(issues, entity_id):
+        return any(issue["entity_id"] == entity_id
+                   or entity_id in issue.get("duplicate_ids", [])
+                   for issue in issues)
+
     def test_an_ignored_automation_is_never_paired(self):
         a = analyzer(self._configs(), ignored={"automation.ignored"})
         a._check_duplicate_automations()
-        assert not any(
-            "automation.ignored" in (i["entity_id"], i.get("similar_to", ""))
-            for i in a.issues
-        )
+        assert not self._mentions(a.issues, "automation.ignored")
 
     def test_a_blueprint_automation_is_never_paired(self):
         configs = self._configs()
         configs["automation.two"]["use_blueprint"] = {"path": "x/y.yaml"}
         a = analyzer(configs)
         a._check_duplicate_automations()
-        assert not any(
-            "automation.two" in (i["entity_id"], i.get("similar_to", ""))
-            for i in a.issues
-        ), "blueprint automations share a structure by design and are excluded"
+        assert not self._mentions(a.issues, "automation.two"), (
+            "blueprint automations share a structure by design and are excluded"
+        )
 
     def test_an_automation_with_no_tokens_is_never_paired(self):
         configs = {
@@ -348,6 +363,110 @@ class TestWhatIsLeftOut:
             "trigger": [{"platform": "sun"}], "action": [{"service": "light.turn_on"}]}})
         a._check_duplicate_automations()
         assert a.issues == []
+
+
+# ── One finding per automation, not one per pair ──────────────────────────────
+
+class TestOneIssuePerAutomation:
+    """Similar automations come in groups, and inside a group every member
+    matches every other one. Reporting each pair from both ends made that
+    quadratic: ten automations alike produced ninety findings that said the
+    same thing nine times over, and a hundred produced 9 900. Strategy A never
+    did this — it always reported one issue naming the others."""
+
+    def _house(self, rooms):
+        """One "motion turns this light on" automation per room: same shape
+        everywhere, different entities, so nothing is an *exact* duplicate."""
+        return {f"automation.light_{room}": {
+            "id": f"l_{room}",
+            "alias": f"Light {room}",
+            "trigger": [{"platform": "state",
+                         "entity_id": f"binary_sensor.motion_{room}", "to": "on"}],
+            "action": [{"service": "light.turn_on",
+                        "target": {"entity_id": f"light.{room}"}}],
+        } for room in rooms}
+
+    def _run(self, rooms):
+        a = analyzer(self._house(rooms))
+        a._check_duplicate_automations()
+        return a.issues
+
+    def test_ten_alike_automations_produce_ten_findings(self):
+        issues = self._run([f"room{i}" for i in range(10)])
+        assert len(issues) == 10, (
+            f"one finding per automation, not one per pair — got {len(issues)}"
+        )
+
+    @pytest.mark.parametrize("count", [2, 5, 10, 25])
+    def test_the_finding_count_follows_the_automation_count(self, count):
+        """The point of the change: linear, not quadratic."""
+        assert len(self._run([f"room{i}" for i in range(count)])) == count
+
+    def test_each_finding_names_every_other_automation_once(self):
+        issues = self._run([f"room{i}" for i in range(6)])
+        for issue in issues:
+            assert issue["entity_id"] not in issue["duplicate_ids"]
+            assert len(issue["duplicate_ids"]) == 5
+            assert len(set(issue["duplicate_ids"])) == 5, "no automation twice"
+
+    def test_the_recommendation_names_at_most_three(self):
+        """Same cap strategy A uses; the full list stays in duplicate_ids."""
+        first = self._run([f"room{i}" for i in range(8)])[0]
+        named = [alias for alias in (f"Light room{i}" for i in range(8))
+                 if alias in first["recommendation"]]
+        assert len(named) == 3, f"recommendation names {len(named)} automations"
+        assert len(first["duplicate_ids"]) == 7, "the full list is not truncated"
+
+    def test_the_message_counts_every_match(self):
+        """Seven others, not six and not the pair count."""
+        first = self._run([f"room{i}" for i in range(8)])[0]
+        assert "count=7" in first["message"], first["message"]
+
+    def test_the_percentage_reported_is_the_closest_match(self):
+        """One number has to stand for several partners, and the closest is
+        what decides whether the automation is worth opening. Kitchen and hall
+        are the same automation on different entities (100%); the porch adds a
+        `for:` to its trigger, which is one token out of seven (86%)."""
+        configs = self._house(["kitchen", "hall"])
+        configs["automation.light_porch"] = {
+            "alias": "Light porch",
+            "trigger": [{"platform": "state", "entity_id": "binary_sensor.motion_porch",
+                         "to": "on", "for": "00:01:00"}],
+            "action": [{"service": "light.turn_on",
+                        "target": {"entity_id": "light.porch"}}],
+        }
+        a = analyzer(configs)
+        a._check_duplicate_automations()
+        reported = {i["entity_id"]: i for i in a.issues}
+
+        assert reported["automation.light_kitchen"]["similarity_pct"] == 100, (
+            "the identical one is the closest match, not the average of the two"
+        )
+        assert reported["automation.light_porch"]["similarity_pct"] == 86
+        assert set(reported["automation.light_kitchen"]["duplicate_ids"]) == {
+            "automation.light_hall", "automation.light_porch",
+        }
+
+    def test_an_automation_matching_nothing_is_not_reported(self):
+        configs = self._house(["kitchen"])
+        configs["automation.other"] = {
+            "alias": "Other",
+            "trigger": [{"platform": "time", "at": "07:00:00"}],
+            "action": [{"service": "notify.mobile_app"}],
+        }
+        a = analyzer(configs)
+        a._check_duplicate_automations()
+        assert a.issues == []
+
+    def test_a_pair_still_reports_both_ends(self):
+        """Grouping must not turn a two-automation match into one finding: the
+        user has to see it from whichever of the two they are looking at."""
+        issues = self._run(["kitchen", "hall"])
+        assert [i["entity_id"] for i in issues] == [
+            "automation.light_kitchen", "automation.light_hall",
+        ]
+        assert issues[0]["duplicate_ids"] == ["automation.light_hall"]
+        assert issues[1]["duplicate_ids"] == ["automation.light_kitchen"]
 
 
 # ── The step timings 5-3 step 1 was measured with ─────────────────────────────
