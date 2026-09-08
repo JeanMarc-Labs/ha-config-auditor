@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,16 @@ _LOGGER = logging.getLogger(__name__)
 
 class AutomationAnalyzer:
     """Analyze automations for best practice violations."""
+
+    # Two automations are called probable duplicates at or above this Jaccard
+    # similarity. It is also what lets most pairs be skipped without being
+    # compared at all — see _probable_duplicate_pairs.
+    SIMILARITY_THRESHOLD = 0.80
+
+    # Under this, the per-step breakdown of one analysis is DEBUG detail. At or
+    # above it the analysis held the event loop long enough to be felt in the
+    # interface, and the line saying where the time went belongs on INFO.
+    SLOW_ANALYSIS_SECONDS = 2.0
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the analyzer."""
@@ -78,148 +89,172 @@ class AutomationAnalyzer:
 
     async def analyze_all(self) -> list[dict[str, Any]]:
         """Analyze all automations."""
+        # Audit 5-3 measured this analyzer at 7.5s of a 22.7s scan, all of it
+        # holding the event loop — but as one block: nothing said which of its
+        # dozen steps the time went to. These stages answer that, and they are
+        # what the duplicate-detection rewrite below is verified against. The
+        # breakdown reaches INFO only when the analysis was slow enough to be
+        # felt; under that it stays DEBUG detail.
+        from . import ScanTimer
+        steps = ScanTimer("automation analysis", quiet_below=self.SLOW_ANALYSIS_SECONDS)
+
         self.issues = []
         self.complexity_scores = []
         self.script_complexity_scores = []
         self.scene_stats = []
         self.blueprint_stats = []
-        
+
         # Load language for translations.
         # Issue messages tagged here surface in coordinator.data and are
         # surfaced via persistent_notification + Repairs as well as the panel,
         # so we use the same resolver as the notification pipeline.
-        from .translation_utils import resolve_notification_language
-        language = resolve_notification_language(self.hass)
-        await self._translator.async_load_language(language)
-        
+        with steps.stage("translations"):
+            from .translation_utils import resolve_notification_language
+            language = resolve_notification_language(self.hass)
+            await self._translator.async_load_language(language)
+
         # P0: pre-load registries for service / area / floor / label checks
-        await self._load_registered_services()
-        await self._load_registered_areas_floors_labels()
-        await self._load_ignored_entities()
-        
+        with steps.stage("registries"):
+            await self._load_registered_services()
+            await self._load_registered_areas_floors_labels()
+            await self._load_ignored_entities()
+
         # Load configurations
-        await self._load_automation_configs()
-        await self._load_script_configs()
-        await self._load_scene_configs()
-        
-        _LOGGER.debug("Analyzing %d automations, %d scripts, %d scenes", 
+        with steps.stage("read config"):
+            await self._load_automation_configs()
+            await self._load_script_configs()
+            await self._load_scene_configs()
+
+        _LOGGER.debug("Analyzing %d automations, %d scripts, %d scenes",
                      len(self._automation_configs), len(self._script_configs), len(self._scene_configs))
-        
+
         # Analyze each automation
-        for idx, (entity_id, config) in enumerate(self._automation_configs.items()):
-            if self._is_ignored(entity_id): continue
-            self._analyze_automation(entity_id, config)
-            if idx % 10 == 0: await asyncio.sleep(0)
-            
+        with steps.stage("automations"):
+            for idx, (entity_id, config) in enumerate(self._automation_configs.items()):
+                if self._is_ignored(entity_id): continue
+                self._analyze_automation(entity_id, config)
+                if idx % 10 == 0: await asyncio.sleep(0)
+
         # Analyze each script
-        for idx, (entity_id, config) in enumerate(self._script_configs.items()):
-            if self._is_ignored(entity_id): continue
-            self._analyze_script(entity_id, config)
-            if idx % 10 == 0: await asyncio.sleep(0)
-            
+        with steps.stage("scripts"):
+            for idx, (entity_id, config) in enumerate(self._script_configs.items()):
+                if self._is_ignored(entity_id): continue
+                self._analyze_script(entity_id, config)
+                if idx % 10 == 0: await asyncio.sleep(0)
+
         # Analyze each scene
-        for idx, (entity_id, config) in enumerate(self._scene_configs.items()):
-            if self._is_ignored(entity_id): continue
-            self._analyze_scene(entity_id, config)
-            if idx % 10 == 0: await asyncio.sleep(0)
-        
-        # Collect scene stats (entity count per scene)
-        for entity_id, config in self._scene_configs.items():
-            entities = config.get("entities", {})
-            n = len(entities) if isinstance(entities, dict) else 0
-            self.scene_stats.append({
-                "entity_id": entity_id,
-                "alias":     config.get("name", entity_id),
-                "entities":  n,
-            })
-        self.scene_stats.sort(key=lambda x: x["entities"], reverse=True)
+        with steps.stage("scenes"):
+            for idx, (entity_id, config) in enumerate(self._scene_configs.items()):
+                if self._is_ignored(entity_id): continue
+                self._analyze_scene(entity_id, config)
+                if idx % 10 == 0: await asyncio.sleep(0)
 
-        # Collect blueprint stats (usage count)
-        bp_usage: dict[str, dict] = {}
-        for entity_id, config in self._automation_configs.items():
-            bp = config.get("use_blueprint", {})
-            if isinstance(bp, dict) and bp.get("path"):
-                path = bp["path"]
-                if path not in bp_usage:
-                    bp_usage[path] = {"path": path, "count": 0, "automations": []}
-                bp_usage[path]["count"] += 1
-                bp_usage[path]["automations"].append(config.get("alias") or entity_id)
-        self.blueprint_stats = sorted(bp_usage.values(), key=lambda x: x["count"], reverse=True)
+        with steps.stage("stats"):
+            # Collect scene stats (entity count per scene)
+            for entity_id, config in self._scene_configs.items():
+                entities = config.get("entities", {})
+                n = len(entities) if isinstance(entities, dict) else 0
+                self.scene_stats.append({
+                    "entity_id": entity_id,
+                    "alias":     config.get("name", entity_id),
+                    "entities":  n,
+                })
+            self.scene_stats.sort(key=lambda x: x["entities"], reverse=True)
 
-        # Collect script complexity scores
-        for entity_id, config in self._script_configs.items():
-            alias = config.get("alias", entity_id)
-            sequence = config.get("sequence", [])
-            if not isinstance(sequence, list):
-                sequence = [sequence] if sequence else []
-            n_actions = self._count_actions_recursive(sequence)
-            template_score = self._count_templates(config)
-            score = round(n_actions * 1.5 + template_score * 3.0)
-            self.script_complexity_scores.append({
-                "entity_id": entity_id,
-                "alias":     alias or entity_id,
-                "score":     score,
-                "actions":   n_actions,
-                "templates": template_score,
-            })
-        self.script_complexity_scores.sort(key=lambda x: x["score"], reverse=True)
+            # Collect blueprint stats (usage count)
+            bp_usage: dict[str, dict] = {}
+            for entity_id, config in self._automation_configs.items():
+                bp = config.get("use_blueprint", {})
+                if isinstance(bp, dict) and bp.get("path"):
+                    path = bp["path"]
+                    if path not in bp_usage:
+                        bp_usage[path] = {"path": path, "count": 0, "automations": []}
+                    bp_usage[path]["count"] += 1
+                    bp_usage[path]["automations"].append(config.get("alias") or entity_id)
+            self.blueprint_stats = sorted(bp_usage.values(), key=lambda x: x["count"], reverse=True)
+
+            # Collect script complexity scores
+            for entity_id, config in self._script_configs.items():
+                alias = config.get("alias", entity_id)
+                sequence = config.get("sequence", [])
+                if not isinstance(sequence, list):
+                    sequence = [sequence] if sequence else []
+                n_actions = self._count_actions_recursive(sequence)
+                template_score = self._count_templates(config)
+                score = round(n_actions * 1.5 + template_score * 3.0)
+                self.script_complexity_scores.append({
+                    "entity_id": entity_id,
+                    "alias":     alias or entity_id,
+                    "score":     score,
+                    "actions":   n_actions,
+                    "templates": template_score,
+                })
+            self.script_complexity_scores.sort(key=lambda x: x["score"], reverse=True)
 
         # Check for never-triggered automations
-        await self._check_never_triggered()
-        
+        with steps.stage("never triggered"):
+            await self._check_never_triggered()
+
         # Check for duplicate automations
-        self._check_duplicate_automations()
-        
+        with steps.stage("duplicates"):
+            self._check_duplicate_automations()
+
         # Check for excessive delays
-        self._check_excessive_delays()
-        
+        with steps.stage("delays"):
+            self._check_excessive_delays()
+
         # Check for malformed blueprints
-        await self._check_blueprint_issues()
+        with steps.stage("blueprints"):
+            await self._check_blueprint_issues()
 
         # v1.3.0 — Script graph analysis (cycles, depth, single-mode-loop, orphans)
-        await self._analyze_script_graph()
+        with steps.stage("script graph"):
+            await self._analyze_script_graph()
 
         # v1.3.0 — Blueprint refactoring candidates
-        self._detect_blueprint_candidates()
+        with steps.stage("blueprint candidates"):
+            self._detect_blueprint_candidates()
 
         # v1.3.0 — Advanced scene analysis (unavailable refs, 90-day ghost, duplicates)
-        await self._analyze_advanced_scenes()
-        
+        with steps.stage("scene analysis"):
+            await self._analyze_advanced_scenes()
+
         # Separate issues by entity_id prefix and issue type
-        self.automation_issues = []
-        self.script_issues = []
-        self.scene_issues = []
-        self.blueprint_issues = []
+        with steps.stage("sorting"):
+            self.automation_issues = []
+            self.script_issues = []
+            self.scene_issues = []
+            self.blueprint_issues = []
 
-        BLUEPRINT_ISSUE_TYPES = {
-            "blueprint_missing_path",
-            "blueprint_file_not_found",
-            "blueprint_no_inputs",
-            "blueprint_empty_input",
-            "blueprint_input_entity_unknown",
-            "blueprint_input_entity_unavailable",
-        }
+            BLUEPRINT_ISSUE_TYPES = {
+                "blueprint_missing_path",
+                "blueprint_file_not_found",
+                "blueprint_no_inputs",
+                "blueprint_empty_input",
+                "blueprint_input_entity_unknown",
+                "blueprint_input_entity_unavailable",
+            }
 
-        for issue in self.issues:
-            entity_id = issue.get("entity_id", "")
-            issue_type = issue.get("type", "")
-            # Propagate source_file from automation config to issue (v1.2.0)
-            if "source_file" not in issue:
-                cfg = self._automation_configs.get(entity_id) or self._script_configs.get(entity_id)
-                if cfg:
-                    sf = cfg.get("_source_file", "")
-                    if sf:
-                        issue["source_file"] = sf
-            if issue_type in BLUEPRINT_ISSUE_TYPES:
-                # Blueprint issues go to their own list regardless of entity_id
-                self.blueprint_issues.append(issue)
-            elif entity_id.startswith("script."):
-                self.script_issues.append(issue)
-            elif entity_id.startswith("scene."):
-                self.scene_issues.append(issue)
-            else:
-                self.automation_issues.append(issue)
-        
+            for issue in self.issues:
+                entity_id = issue.get("entity_id", "")
+                issue_type = issue.get("type", "")
+                # Propagate source_file from automation config to issue (v1.2.0)
+                if "source_file" not in issue:
+                    cfg = self._automation_configs.get(entity_id) or self._script_configs.get(entity_id)
+                    if cfg:
+                        sf = cfg.get("_source_file", "")
+                        if sf:
+                            issue["source_file"] = sf
+                if issue_type in BLUEPRINT_ISSUE_TYPES:
+                    # Blueprint issues go to their own list regardless of entity_id
+                    self.blueprint_issues.append(issue)
+                elif entity_id.startswith("script."):
+                    self.script_issues.append(issue)
+                elif entity_id.startswith("scene."):
+                    self.scene_issues.append(issue)
+                else:
+                    self.automation_issues.append(issue)
+
         _LOGGER.info(
             "Automation analysis complete: %d automations, %d automation issues, %d script issues, %d scene issues",
             len(self._automation_configs),
@@ -227,7 +262,8 @@ class AutomationAnalyzer:
             len(self.script_issues),
             len(self.scene_issues)
         )
-        
+        steps.log()
+
         return self.issues
 
     async def _load_registered_services(self) -> None:
@@ -1617,7 +1653,6 @@ class AutomationAnalyzer:
         # ── Build fingerprints and token-sets ────────────────────────────────
         exact_sig:    dict[str, list[str]] = {}  # sha1 → [entity_ids]
         token_sets:   dict[str, frozenset] = {}  # entity_id → frozenset of tokens
-        entity_ids_list = list(self._automation_configs.keys())
 
         for entity_id, config in self._automation_configs.items():
             # Exact signature (normalised JSON hash)
@@ -1632,8 +1667,12 @@ class AutomationAnalyzer:
             sig = self._exact_fingerprint(triggers, actions)
             exact_sig.setdefault(sig, []).append(entity_id)
 
-            # Jaccard token set
-            token_sets[entity_id] = self._jaccard_tokens(config)
+            # Jaccard token set. An automation with no tokens can never reach
+            # the threshold, so it is left out here instead of being compared
+            # against every other one and discarded a pair at a time.
+            tokens = self._jaccard_tokens(config)
+            if tokens:
+                token_sets[entity_id] = tokens
 
         # ── Strategy A: exact duplicates ─────────────────────────────────────
         exact_flagged: set[str] = set()
@@ -1660,50 +1699,151 @@ class AutomationAnalyzer:
                 })
                 exact_flagged.add(entity_id)
 
-        # ── Strategy B: probable duplicates via Jaccard ──────────────────────
+        # ── Strategy B: probable duplicates via Jaccard ──────────────────
         # Only compare pairs where neither is already an exact duplicate
-        candidates = [e for e in entity_ids_list if e not in exact_flagged]
-        probable_flagged: set[frozenset] = set()
+        candidates = [e for e in token_sets if e not in exact_flagged]
 
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                a, b = candidates[i], candidates[j]
-                pair = frozenset({a, b})
-                if pair in probable_flagged:
-                    continue
+        for a, b, similarity in self._probable_duplicate_pairs(candidates, token_sets):
+            pct = round(similarity * 100)
+            for entity_id, other_id in ((a, b), (b, a)):
+                alias       = self._automation_configs[entity_id].get("alias", entity_id)
+                other_alias = self._automation_configs[other_id].get("alias", other_id)
+                self.issues.append({
+                    "entity_id":        entity_id,
+                    "alias":            alias,
+                    "type":             "probable_duplicate_automation",
+                    "severity":         "medium",
+                    "message":          t("probable_duplicate_automation",
+                                          pct=pct, other=other_alias),
+                    "location":         "root",
+                    "recommendation":   t("review_probable_duplicate",
+                                          other=other_alias),
+                    "fix_available":    False,
+                    "similarity_pct":   pct,
+                    "similar_to":       other_id,
+                })
 
-                set_a = token_sets.get(a, frozenset())
-                set_b = token_sets.get(b, frozenset())
-                if not set_a or not set_b:
-                    continue
+    def _probable_duplicate_pairs(
+        self,
+        candidates: list[str],
+        token_sets: dict[str, frozenset],
+    ) -> list[tuple[str, str, float]]:
+        """Every pair of candidates whose Jaccard similarity clears the threshold.
 
-                # Jaccard = |A ∩ B| / |A ∪ B|
-                intersection = len(set_a & set_b)
-                union        = len(set_a | set_b)
-                if union == 0:
-                    continue
-                similarity = intersection / union
+        Written out, this is a Jaccard over all n(n−1)/2 pairs — the shape audit
+        5-3 found at the tail of this analyzer, inside a synchronous method that
+        cannot hand the event loop back while it runs. Four exact shortcuts
+        replace it, and none of them can drop a pair the naive scan would have
+        found:
 
-                if similarity >= 0.80:
-                    probable_flagged.add(pair)
-                    pct = round(similarity * 100)
-                    for entity_id, other_id in ((a, b), (b, a)):
-                        alias       = self._automation_configs[entity_id].get("alias", entity_id)
-                        other_alias = self._automation_configs[other_id].get("alias", other_id)
-                        self.issues.append({
-                            "entity_id":        entity_id,
-                            "alias":            alias,
-                            "type":             "probable_duplicate_automation",
-                            "severity":         "medium",
-                            "message":          t("probable_duplicate_automation",
-                                                  pct=pct, other=other_alias),
-                            "location":         "root",
-                            "recommendation":   t("review_probable_duplicate",
-                                                  other=other_alias),
-                            "fix_available":    False,
-                            "similarity_pct":   pct,
-                            "similar_to":       other_id,
-                        })
+        * **Identical token sets are compared once.** The tokens are structure
+          only — no entity ids, no values — so a house full of "turn this light
+          on at sunset" automations collapses to one signature, and every member
+          of a signature scores the same against every member of another.
+        * **The union is derived, not built:** |A ∪ B| = |A| + |B| − |A ∩ B|,
+          one set allocation per comparison instead of two.
+        * **Size bounds similarity.** |A ∩ B| ≤ min(|A|,|B|) and
+          |A ∪ B| ≥ max(|A|,|B|), so no pair can score above min/max: a
+          signature is never compared to one smaller than threshold × its size.
+        * **Rare tokens decide first.** At 0.80, two sets of fifteen tokens have
+          to share fourteen, so their ``len − ceil(threshold × len) + 1`` rarest
+          tokens — their prefix — cannot be disjoint. Each signature's prefix is
+          indexed, so a signature only ever compares itself to those sharing one
+          of its rare tokens. This is the shortcut that carries a real config,
+          where the automations are all about the same size and the size bound
+          alone prunes nothing.
+
+        Pairs come back in the order the naive scan emitted them, so the issue
+        list keeps the order the panel and its tests have always seen.
+        """
+        threshold = self.SIMILARITY_THRESHOLD
+        rank = {entity_id: i for i, entity_id in enumerate(candidates)}
+
+        # One entry per distinct token set, members in candidate order.
+        by_signature: dict[frozenset, list[str]] = {}
+        for entity_id in candidates:
+            by_signature.setdefault(token_sets[entity_id], []).append(entity_id)
+
+        pairs: list[tuple[str, str, float]] = []
+
+        # Same signature: the similarity is 1.0 by definition, nothing to compute.
+        for members in by_signature.values():
+            for i, a in enumerate(members):
+                for b in members[i + 1:]:
+                    pairs.append((a, b, 1.0))
+
+        # Rarest token first, so a signature's prefix holds what distinguishes
+        # it. Ties are broken on the token itself: the order only has to be
+        # total, and the same for every signature.
+        signature_count: dict[str, int] = {}
+        for signature in by_signature:
+            for token in signature:
+                signature_count[token] = signature_count.get(token, 0) + 1
+        order = {
+            token: i for i, token in enumerate(
+                sorted(signature_count, key=lambda tk: (signature_count[tk], tk))
+            )
+        }
+
+        # Smallest first. The prefix filter is correct either way — the two
+        # prefixes intersect whichever set does the probing — but this makes
+        # the size bound below one-sided: a signature already in the index is
+        # never larger than the one probing, so a single comparison settles it.
+        # Worth 10-20% on a real config, for the cost of one sort.
+        signatures = sorted(by_signature, key=len)
+        prefix_index: dict[str, list[int]] = {}
+
+        for i, signature in enumerate(signatures):
+            size = len(signature)
+            prefix = sorted(signature, key=order.__getitem__)[
+                :self._prefix_length(size)
+            ]
+            # Nudged the same way and for the same reason as the prefix: a
+            # bound a hair too high skips a partner sitting exactly on it.
+            smallest_useful = threshold * size - 1e-9
+
+            examined: set[int] = set()
+            for token in prefix:
+                for j in prefix_index.get(token, ()):
+                    if j in examined:
+                        continue
+                    examined.add(j)
+                    other = signatures[j]
+                    if len(other) < smallest_useful:
+                        continue
+                    overlap    = len(signature & other)
+                    similarity = overlap / (size + len(other) - overlap)
+                    if similarity < threshold:
+                        continue
+                    for a in by_signature[signature]:
+                        for b in by_signature[other]:
+                            pairs.append((a, b, similarity) if rank[a] < rank[b]
+                                         else (b, a, similarity))
+
+            for token in prefix:
+                prefix_index.setdefault(token, []).append(i)
+
+        pairs.sort(key=lambda pair: (rank[pair[0]], rank[pair[1]]))
+        return pairs
+
+    def _prefix_length(self, size: int) -> int:
+        """How many of a signature's rarest tokens have to be indexed.
+
+        Two sets clearing the threshold share at least ceil(threshold × size)
+        tokens, so they cannot differ anywhere in the first
+        size − ceil(threshold × size) + 1 — index that many and no pair can
+        hide from the scan.
+
+        What is wanted is the ceiling of the *arithmetic* product, and
+        ``threshold × size`` is a binary float that does not always land on it.
+        The nudge keeps a product a hair above an integer from rounding up to
+        the next one, which would shorten the prefix by a token and lose the
+        pairs sitting exactly on the threshold; erring long only ever costs a
+        comparison. At 0.80 the raw product happens to be right at every size
+        the test covers — the nudge is what keeps that true of a threshold
+        someone changes later.
+        """
+        return size - ceil(self.SIMILARITY_THRESHOLD * size - 1e-9) + 1
 
     # ── Fingerprint helpers ──────────────────────────────────────────────────
 
