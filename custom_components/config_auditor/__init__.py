@@ -321,7 +321,17 @@ class ScanTimer:
     # guard, the task ends by itself instead of waking forever.
     MAX_PROBE_SECONDS = 600.0
 
-    def __init__(self) -> None:
+    def __init__(self, subject: str = "scan", *, quiet_below: float = 0.0) -> None:
+        """Time one run of ``subject``.
+
+        ``quiet_below`` sends the summary to DEBUG when the whole run came in
+        under that many seconds. A scan always reports it (0.0): that line is
+        the measurement 5-3 is decided on. A breakdown *inside* one stage only
+        earns an INFO line when that stage was slow enough to be felt —
+        otherwise it is detail, and detail on every scan is noise.
+        """
+        self._subject = subject
+        self._quiet_below = quiet_below
         self._started = monotonic()
         self._stages: dict[str, float] = {}
         self._overlapping: dict[str, float] = {}
@@ -421,8 +431,10 @@ class ScanTimer:
         total = monotonic() - self._started
         reported = dict(self._stages)
         reported["other"] = max(0.0, total - sum(self._stages.values()))
-        _LOGGER.info(
-            "HACA: scan finished in %.1fs — %s",
+        _LOGGER.log(
+            logging.DEBUG if total < self._quiet_below else logging.INFO,
+            "HACA: %s finished in %.1fs — %s",
+            self._subject,
             total,
             self._ranked(reported) or "every stage under 0.1s",
         )

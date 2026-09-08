@@ -183,6 +183,61 @@ class TestLogLine:
         assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
 
 
+# ── Timing something other than a whole scan ──────────────────────────
+
+class TestSubjectAndQuietRuns:
+    """5-3 step 1 needed the same breakdown one level down, inside the
+    automation analyzer, where a line on every scan of every installation
+    would be noise rather than a measurement."""
+
+    @staticmethod
+    def _timed(monkeypatch, stages: dict, total: float, **kwargs):
+        monkeypatch.setattr("custom_components.config_auditor.monotonic", lambda: 0.0)
+        timer = ScanTimer(**kwargs)
+        timer._stages = dict(stages)
+        monkeypatch.setattr("custom_components.config_auditor.monotonic", lambda: total)
+        return timer
+
+    def test_the_subject_names_what_was_timed(self, monkeypatch, caplog):
+        timer = self._timed(monkeypatch, {"duplicates": 4.0}, 5.0,
+                            subject="automation analysis")
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        assert "automation analysis finished in 5.0s" in caplog.records[0].getMessage()
+
+    def test_a_scan_is_still_called_a_scan(self, monkeypatch, caplog):
+        timer = self._timed(monkeypatch, {"entities": 4.0}, 5.0)
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        assert "scan finished in 5.0s" in caplog.records[0].getMessage()
+
+    def test_a_run_below_the_quiet_threshold_does_not_reach_info(
+        self, monkeypatch, caplog
+    ):
+        timer = self._timed(monkeypatch, {"duplicates": 0.5}, 1.0,
+                            subject="automation analysis", quiet_below=2.0)
+        with caplog.at_level(logging.DEBUG, logger="custom_components.config_auditor"):
+            timer.log()
+        assert not [r for r in caplog.records if r.levelno == logging.INFO]
+        assert [r for r in caplog.records if r.levelno == logging.DEBUG], (
+            "the breakdown is still recorded, just not shouted"
+        )
+
+    def test_a_run_above_the_quiet_threshold_reaches_info(self, monkeypatch, caplog):
+        timer = self._timed(monkeypatch, {"duplicates": 4.0}, 5.0,
+                            subject="automation analysis", quiet_below=2.0)
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
+
+    def test_a_scan_reports_however_quick_it_was(self, monkeypatch, caplog):
+        """The scan line is the 5-3 measurement itself: it is never demoted."""
+        timer = self._timed(monkeypatch, {"entities": 0.2}, 0.3)
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
+
+
 # ── The loop probe: is the scan holding the loop, or waiting for it? ─────────
 
 class TestLoopProbe:
