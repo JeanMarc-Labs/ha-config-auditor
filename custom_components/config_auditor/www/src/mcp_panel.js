@@ -303,8 +303,8 @@ function _hacaAgentSwitch(id) {
 function renderMcpSection(mcpStatus, agentStatus, t) {
   var _i = window._icon || function(n,s){return '';};
 
-  function _t(key, fallback) {
-    var result = (typeof t === 'function') ? t(key) : key;
+  function _t(key, fallback, params) {
+    var result = (typeof t === 'function') ? t(key, params || {}) : key;
     return (result === key && fallback) ? fallback : result;
   }
   function escM(str) {
@@ -322,7 +322,11 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
   var correlations   = (agentStatus && agentStatus.correlations) || [];
   var lastReport     = (agentStatus && agentStatus.last_weekly_report) || null;
 
-  // ── Tool categories — toutes les 67 fonctions _tool_* ─────────────────
+  // ── Tool categories ───────────────────────────────────────────────────
+  // A hand-kept grouping, for reading order and icons only — never for the
+  // count, which comes from the server below. test_js_integrity fails the
+  // build if this list and TOOL_HANDLERS ever disagree; it silently carried
+  // 67 of the 69 tools until 1.8.0.
   var toolCategories = [
     {
       icon: '📊', key: 'mcp.cat_audit', fallback: 'Audit HACA',
@@ -335,7 +339,8 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
       icon: '🔍', key: 'mcp.cat_discovery', fallback: 'Recherche & Découverte',
       color: 'rgba(var(--rgb-primary-color),0.07)',
       tools: ['ha_get_entities','ha_deep_search','ha_get_entity_detail',
-              'ha_list_services','ha_get_score','ha_get_issues','ha_get_batteries']
+              'ha_list_services','ha_get_score','ha_get_issues','ha_get_batteries',
+              'ha_list_issue_catalog']
     },
     {
       icon: '⚡', key: 'mcp.cat_control', fallback: 'Contrôle',
@@ -390,9 +395,34 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
       icon: '🛡️', key: 'mcp.cat_safety', fallback: 'Sécurité & Validation',
       color: 'rgba(33,150,243,0.08)',
       tools: ['ha_backup_create','ha_check_config','ha_eval_template',
-              'ha_fix_suggestion','ha_apply_fix','ha_explain_issue']
+              'ha_fix_suggestion','ha_apply_fix','ha_fix_batch','ha_explain_issue']
     },
   ];
+
+  // What the server actually serves. `tools` is the advertised list, so it is
+  // what an agent discovers; the ha_* aliases answer too but never show up in
+  // the handshake, hence the two figures.
+  var declaredTools = (mcpStatus && mcpStatus.tools) || [];
+  var callableTools = (mcpStatus && mcpStatus.callable_tools) || [];
+  var countLabel = declaredTools.length
+    ? _t('mcp.tools_count_label', null,
+         { declared: declaredTools.length, callable: callableTools.length })
+    : '';
+
+  // Anything the server exposes that the grouping above has not caught: shown
+  // rather than dropped, so a drift is visible in the panel and not only in CI.
+  var grouped = {};
+  toolCategories.forEach(function(cat) {
+    cat.tools.forEach(function(n) { grouped[n] = true; });
+  });
+  var uncategorised = callableTools.filter(function(n) { return !grouped[n]; });
+  if (uncategorised.length) {
+    toolCategories = toolCategories.concat([{
+      icon: '❓', key: 'mcp.cat_other', fallback: 'Other',
+      color: 'rgba(var(--rgb-primary-color),0.07)',
+      tools: uncategorised,
+    }]);
+  }
 
   var toolBadge = function(name, color) {
     return '<span style="display:inline-block;font-size:10px;font-family:monospace;background:' +
@@ -548,7 +578,9 @@ function renderMcpSection(mcpStatus, agentStatus, t) {
       // Tool categories
       '<div style="font-size:12px;color:var(--secondary-text-color);margin-bottom:8px;font-weight:600;">' +
         _t('mcp.tools_exposed') +
-        ' <span style="font-weight:400;opacity:0.7;">(' + _t('mcp.tools_count_label') + ')</span>' +
+        (countLabel
+          ? ' <span style="font-weight:400;opacity:0.7;">(' + escM(countLabel) + ')</span>'
+          : '') +
       '</div>' +
       categoriesHtml +
 

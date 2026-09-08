@@ -969,6 +969,7 @@
       "cat_discovery": "Search & Discovery",
       "cat_helpers": "Helpers & Zones",
       "cat_monitoring": "Monitoring & History",
+      "cat_other": "Other",
       "cat_safety": "Safety & Validation",
       "cat_scenes": "Scenes",
       "copy": "Copy",
@@ -1019,7 +1020,7 @@
       "title": "HACA MCP Server",
       "token_hint": "Create a token in your HA profile →",
       "token_link": "Profile → Security",
-      "tools_count_label": "67 tools",
+      "tools_count_label": "{declared} advertised, {callable} callable",
       "tools_exposed": "Exposed tools"
     },
     "agent": {

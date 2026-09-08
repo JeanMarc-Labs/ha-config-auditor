@@ -969,6 +969,7 @@
       "cat_discovery": "検索と探索",
       "cat_helpers": "ヘルパーとゾーン",
       "cat_monitoring": "監視と履歴",
+      "cat_other": "その他",
       "cat_safety": "安全性と検証",
       "cat_scenes": "シーン",
       "copy": "コピー",
@@ -1019,7 +1020,7 @@
       "title": "HACA MCPサーバー",
       "token_hint": "HAプロファイルでトークンを作成 →",
       "token_link": "プロファイル → セキュリティ",
-      "tools_count_label": "67ツール",
+      "tools_count_label": "公開 {declared} 件、呼び出し可能 {callable} 件",
       "tools_exposed": "公開ツール"
     },
     "agent": {
