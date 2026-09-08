@@ -15,8 +15,10 @@ analyzer added later cannot go unmeasured and quietly skew the answer.
 from __future__ import annotations
 
 import ast
+import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -172,6 +174,136 @@ class TestLogLine:
             timer.log()
         assert not [r for r in caplog.records if r.levelno == logging.DEBUG]
 
+    def test_nothing_is_said_about_the_loop_when_the_probe_never_ran(
+        self, monkeypatch, caplog
+    ):
+        timer = self._timed(monkeypatch, {"entities": 1.0}, {}, 1.5)
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
+
+
+# ── The loop probe: is the scan holding the loop, or waiting for it? ─────────
+
+class TestLoopProbe:
+    """Wall-clock stage timings cannot tell a freeze from waiting one's turn.
+    The probe is what separates them, and that distinction decides 5-3."""
+
+    @pytest.mark.asyncio
+    async def test_a_free_loop_produces_no_stalls(self):
+        timer = ScanTimer()
+        timer.start_loop_probe()
+        await asyncio.sleep(0.3)          # the loop is ours alone here
+        await timer.stop_loop_probe()
+        assert timer._stalls == 0
+        assert timer._worst_stall == 0.0
+
+    @pytest.mark.asyncio
+    async def test_a_blocked_loop_is_caught_and_attributed_to_its_stage(self):
+        """The shape of a real stage: it yields, then holds the loop between
+        two yields. entity_analyzer does exactly this, 17 times, for 12 to 50
+        seconds."""
+        timer = ScanTimer()
+        timer.start_loop_probe()
+        with timer.stage("entities"):
+            await asyncio.sleep(0.15)     # the probe arms inside the stage
+            time.sleep(0.4)               # the loop cannot run: this is a freeze
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.15)
+        await timer.stop_loop_probe()
+
+        assert timer._stalls >= 1, "a 400 ms freeze must be seen"
+        assert timer._worst_stall >= 0.3, (
+            f"the freeze was ~0.4s, the probe reports {timer._worst_stall:.2f}s"
+        )
+        assert timer._stalled_for >= timer._worst_stall, (
+            "the cumulative blocked time is what says how much of the scan HA "
+            "spent unresponsive — it cannot be less than the worst single stall"
+        )
+        assert timer._worst_stall_stage == "entities", (
+            "a freeze must name the stage that caused it, or the user cannot "
+            "tell which analyzer to move off the loop"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_stage_is_read_when_the_probe_sleeps_not_when_it_wakes(self):
+        """Reading it on waking blames the wrong stage. The loop resumes the
+        task that yielded before it resumes the probe, so a freeze at the end
+        of a stage would be charged to whatever ran next — or to nothing."""
+        timer = ScanTimer()
+        timer.start_loop_probe()
+        with timer.stage("entities"):
+            await asyncio.sleep(0.15)
+            time.sleep(0.4)
+            await asyncio.sleep(0)
+        # The stage is over and `_current` is back to None before the probe is
+        # given a chance to run. It must still name "entities".
+        assert timer._current is None
+        await asyncio.sleep(0.15)
+        await timer.stop_loop_probe()
+        assert timer._worst_stall_stage == "entities"
+
+    @pytest.mark.asyncio
+    async def test_the_probe_stops_when_the_scan_does(self):
+        timer = ScanTimer()
+        timer.start_loop_probe()
+        task = timer._probe
+        await timer.stop_loop_probe()
+        assert task.cancelled() or task.done(), "a probe left running wakes forever"
+        assert timer._probe is None
+
+    @pytest.mark.asyncio
+    async def test_stopping_a_probe_that_never_started_is_harmless(self):
+        await ScanTimer().stop_loop_probe()
+
+    @pytest.mark.asyncio
+    async def test_a_freeze_is_reported_with_its_stage(self, caplog):
+        timer = ScanTimer()
+        timer.start_loop_probe()
+        with timer.stage("entities"):
+            await asyncio.sleep(0.15)
+            time.sleep(0.3)
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.15)
+        await timer.stop_loop_probe()
+
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        loop_lines = [
+            r.getMessage() for r in caplog.records if "event loop" in r.getMessage()
+        ]
+        assert len(loop_lines) == 1
+        assert "blocked" in loop_lines[0] and "entities" in loop_lines[0]
+
+    @pytest.mark.asyncio
+    async def test_a_scan_that_never_froze_says_so_in_as_many_words(self, caplog):
+        """The answer "21 seconds, and none of it blocked anything" is a real
+        answer to 5-3 — silence would read as a missing measurement."""
+        timer = ScanTimer()
+        timer.start_loop_probe()
+        await asyncio.sleep(0.2)
+        await timer.stop_loop_probe()
+
+        with caplog.at_level(logging.INFO, logger="custom_components.config_auditor"):
+            timer.log()
+        loop_lines = [
+            r.getMessage() for r in caplog.records if "event loop" in r.getMessage()
+        ]
+        assert len(loop_lines) == 1
+        assert "never blocked" in loop_lines[0]
+        assert "waiting, not holding it" in loop_lines[0]
+
+    def test_jitter_below_the_floor_is_not_a_freeze(self):
+        """Ordinary scheduler lateness is milliseconds, and a 50 ms stall is
+        invisible in the interface. Counting those would drown the real ones."""
+        assert ScanTimer.LOOP_STALL_FLOOR >= 0.05
+        assert ScanTimer.LOOP_PROBE_INTERVAL <= ScanTimer.LOOP_STALL_FLOOR
+
+    def test_the_probe_gives_up_on_its_own(self):
+        """The scan cancels it, but a scan that raises somewhere unguarded must
+        not leave a task waking every 50 ms for the life of the process."""
+        assert 0 < ScanTimer.MAX_PROBE_SECONDS <= 3600
+
 
 # ── Half two: the scan is fully instrumented ─────────────────────────────────
 
@@ -201,11 +333,28 @@ def _is_timer_with(node: ast.AST) -> bool:
     return False
 
 
+def _awaits_the_timer(node: ast.AST) -> bool:
+    """An `await timer.<something>()` — the timer's own teardown.
+
+    `stop_loop_probe()` cancels the loop probe and is by construction outside
+    every stage: it is what ends the measurement. It is the only await allowed
+    to sit bare in the scan, and naming the exemption this narrowly is what
+    keeps it from covering an analyzer.
+    """
+    return (
+        isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and isinstance(node.value.func.value, ast.Name)
+        and node.value.func.value.id == "timer"
+    )
+
+
 def _untimed_awaits(node: ast.AST, inside_timer: bool = False) -> list[int]:
     """Line numbers of every `await` not enclosed in a timer block."""
     found: list[int] = []
     timed = inside_timer or _is_timer_with(node)
-    if isinstance(node, ast.Await) and not timed:
+    if isinstance(node, ast.Await) and not timed and not _awaits_the_timer(node):
         found.append(node.lineno)
     for child in ast.iter_child_nodes(node):
         found += _untimed_awaits(child, timed)

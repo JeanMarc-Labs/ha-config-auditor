@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import shutil
 from datetime import timedelta
 from pathlib import Path
@@ -293,6 +293,13 @@ class ScanTimer:
     phase. Each one's clock keeps running while its siblings hold the loop, so
     those numbers must never be summed; the phase as a whole is timed with
     ``stage()``, and the breakdown goes to DEBUG with the caveat attached.
+
+    Neither of those answers the question 5-3 actually asks. A stage takes
+    wall-clock time both while it holds the loop and while it waits its turn
+    on a busy one, and only the first is a freeze. ``start_loop_probe()``
+    separates them: a task that asks to be woken every 50 ms and records how
+    late it actually was. A wake-up three seconds late means the loop ran
+    nothing for three seconds — that is the freeze, measured directly.
     """
 
     # A stage quicker than this is folded into the total and not named: on a
@@ -300,18 +307,41 @@ class ScanTimer:
     # the one entry that matters.
     MIN_REPORTED_SECONDS = 0.1
 
+    # The probe asks to be woken this often. Frequent enough to catch a short
+    # freeze, rare enough to cost nothing: it can only run when the loop is
+    # already free, which is precisely what it is there to measure.
+    LOOP_PROBE_INTERVAL = 0.05
+
+    # Below this, a late wake-up is scheduler jitter, not a freeze — and a
+    # 50 ms stall is not something anyone sees in the interface.
+    LOOP_STALL_FLOOR = 0.05
+
+    # The probe is cancelled when the scan ends. This is the belt to that
+    # braces: should the scan raise somewhere the analyzers do not already
+    # guard, the task ends by itself instead of waking forever.
+    MAX_PROBE_SECONDS = 600.0
+
     def __init__(self) -> None:
         self._started = monotonic()
         self._stages: dict[str, float] = {}
         self._overlapping: dict[str, float] = {}
+        self._current: str | None = None
+        self._probe: asyncio.Task | None = None
+        self._probe_ran = False
+        self._stalls = 0
+        self._stalled_for = 0.0
+        self._worst_stall = 0.0
+        self._worst_stall_stage = ""
 
     @contextmanager
     def stage(self, label: str):
         """Time one sequential stage, whether it returns or raises."""
         start = monotonic()
+        previous, self._current = self._current, label
         try:
             yield
         finally:
+            self._current = previous
             self._stages[label] = self._stages.get(label, 0.0) + (monotonic() - start)
 
     @contextmanager
@@ -324,6 +354,56 @@ class ScanTimer:
             self._overlapping[label] = (
                 self._overlapping.get(label, 0.0) + (monotonic() - start)
             )
+
+    async def _probe_the_loop(self) -> None:
+        """Ask to be woken every 50 ms and record how late each wake-up is.
+
+        Lateness is the whole measurement. The loop can only run this task
+        when nothing else holds it, so a wake-up that is late by N seconds is
+        N seconds during which Home Assistant answered nothing: no automation
+        fired, no state updated, no page rendered.
+
+        A stall is blamed on the stage that was running when the probe asked
+        to be woken — that stage is the one that failed to wake it. Reading
+        the stage on waking instead would blame the wrong one: the loop runs
+        the task that yielded before it runs this one, so by then the stage
+        has often already ended. The attribution is still approximate at a
+        stage boundary, and exact anywhere inside a stage that yields — which
+        is what the two long ones do, every 20 to 50 items.
+
+        The individual analyzers inside the gather phase are deliberately not
+        named: six coroutines interleave there, so blaming one would be a
+        guess. A stall there belongs to the phase.
+        """
+        give_up_at = monotonic() + self.MAX_PROBE_SECONDS
+        while monotonic() < give_up_at:
+            due = monotonic() + self.LOOP_PROBE_INTERVAL
+            running = self._current
+            await asyncio.sleep(self.LOOP_PROBE_INTERVAL)
+            late_by = monotonic() - due
+            if late_by < self.LOOP_STALL_FLOOR:
+                continue
+            self._stalls += 1
+            self._stalled_for += late_by
+            if late_by > self._worst_stall:
+                self._worst_stall = late_by
+                self._worst_stall_stage = (
+                    running or self._current or "between stages"
+                )
+
+    def start_loop_probe(self) -> None:
+        """Begin watching the loop. Call once, at the top of the scan."""
+        self._probe_ran = True
+        self._probe = asyncio.get_running_loop().create_task(self._probe_the_loop())
+
+    async def stop_loop_probe(self) -> None:
+        """Stop watching. Safe to call whether or not the probe was started."""
+        if self._probe is None:
+            return
+        self._probe.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._probe
+        self._probe = None
 
     @classmethod
     def _ranked(cls, durations: dict[str, float]) -> str:
@@ -346,6 +426,21 @@ class ScanTimer:
             total,
             self._ranked(reported) or "every stage under 0.1s",
         )
+        if self._probe_ran:
+            if self._stalls:
+                _LOGGER.info(
+                    "HACA: the event loop was blocked %.1fs of that scan, over "
+                    "%d stalls — worst single freeze %.1fs, during %s",
+                    self._stalled_for, self._stalls, self._worst_stall,
+                    self._worst_stall_stage,
+                )
+            else:
+                _LOGGER.info(
+                    "HACA: the event loop was never blocked for more than %dms "
+                    "during that scan — the time above was spent waiting, not "
+                    "holding it",
+                    int(self.LOOP_STALL_FLOOR * 1000),
+                )
         if self._overlapping:
             _LOGGER.debug(
                 "HACA: parallel phase, per analyzer (wall clock — these overlap "
@@ -506,6 +601,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Update data."""
         _LOGGER.debug("Running scheduled scan")
         timer = ScanTimer()
+        timer.start_loop_probe()
 
         # Seven analyzers ask for the haca_ignore set. Opening the window here
         # means one registry walk per scan instead of one per analyzer; the
@@ -833,6 +929,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as dep_err:
             _LOGGER.error("Dependency mapper error: %s", dep_err)
 
+        await timer.stop_loop_probe()
         timer.log()
 
         return {
