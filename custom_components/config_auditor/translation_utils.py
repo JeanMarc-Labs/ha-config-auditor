@@ -218,8 +218,17 @@ class TranslationHelper:
             _LOGGER.warning("Error loading translations from %s: %s", translation_file, e)
             self._translations = {}
 
-    def t(self, key: str, **kwargs) -> str:
-        """Get translation with parameter substitution."""
+    def t(self, key: str, /, **kwargs) -> str:
+        """Get translation with parameter substitution.
+
+        ``key`` is positional-only on purpose. Several analyzer strings carry a
+        ``{key}`` placeholder — the blueprint input checks among them — and
+        ``t("blueprint_empty_input", key=input_key)`` reads perfectly well while
+        raising *TypeError: got multiple values for argument 'key'* if the
+        parameter can also be named. That crash took the whole automation
+        analysis down with it, since nothing between here and the coordinator
+        catches it.
+        """
         template = self._translations.get(key, key)
         if kwargs:
             try:

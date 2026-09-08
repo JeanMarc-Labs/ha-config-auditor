@@ -141,6 +141,17 @@ class TestTranslationT:
         h._translations = {}
         assert h.t("this_key_is_missing") == "this_key_is_missing"
 
+    def test_a_string_whose_placeholder_is_called_key(self):
+        """`key` is the name of t()'s own first parameter, so a translation
+        carrying a {key} placeholder collides with it unless that parameter is
+        positional-only. The blueprint input checks pass exactly that, and the
+        TypeError took the whole automation analysis down with it."""
+        h = make_helper()
+        h._translations = {"blueprint_empty_input": "Blueprint input '{key}' is empty"}
+        assert h.t("blueprint_empty_input", key="motion_entity") == (
+            "Blueprint input 'motion_entity' is empty"
+        )
+
 
 # ── JSON translation files completeness ────────────────────────────────────────
 
