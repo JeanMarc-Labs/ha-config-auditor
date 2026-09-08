@@ -20,9 +20,7 @@ from homeassistant.core import Context, HomeAssistant
 from ..const import DOMAIN
 from ..yaml_sources import (
     default_write_target,
-    DomainLoad,
     ListScan,
-    load_list_domain,
     NamedScan,
     read_plain_yaml,
     scan_list_domain,
@@ -52,7 +50,7 @@ MCP_SERVER_VERSION = "1.6.1"
 
 
 # Identité de l'appelant MCP, portée jusqu'aux handlers d'outils.
-# Les 71 handlers reçoivent (hass, params) : plutôt que de changer 71 signatures,
+# Les 69 handlers reçoivent (hass, params) : plutôt que de changer 69 signatures,
 # _handle_jsonrpc dépose l'ID utilisateur ici et _caller_context() le relit, ce qui
 # permet d'attribuer chaque appel de service à la bonne personne dans le journal HA.
 _MCP_CALLER_USER_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -154,48 +152,12 @@ def _atomic_write(path, content: str, encoding: str = "utf-8") -> None:
     atomic_write(str(path), content, encoding)
 
 
-# ── Handlers ────────────────────────────────────────────────────────────────
-
-async def _safe_write_and_reload(
-    hass: "HomeAssistant",
-    path,
-    new_yaml: str,
-    reload_domain: str,
-) -> None:
-    """Écriture atomique + reload avec rollback automatique si le reload échoue.
-
-    1. Sauvegarde le contenu original en mémoire
-    2. Écrit new_yaml de façon atomique
-    3. Lance automation/script/scene reload
-    4. Si le reload lève une exception → restaure l'original et relance
-    """
-    original_content = await hass.async_add_executor_job(
-        lambda: open(str(path), encoding="utf-8").read() if __import__("os").path.exists(str(path)) else ""
-    )
-    await hass.async_add_executor_job(_atomic_write, path, new_yaml)
-    try:
-        await hass.services.async_call(reload_domain, "reload", blocking=True, context=_caller_context())
-    except Exception as reload_exc:
-        # Rollback
-        if original_content:
-            await hass.async_add_executor_job(_atomic_write, path, original_content)
-            try:
-                await hass.services.async_call(reload_domain, "reload", blocking=True, context=_caller_context())
-            except Exception:
-                pass  # Best-effort rollback reload
-        raise RuntimeError(
-            f"Reload failed after writing {path.name} — file restored to original. "
-            f"Error: {reload_exc}"
-        ) from reload_exc
-
-
 async def _safe_edit_and_reload(
     hass: "HomeAssistant", target: EditTarget, reload_domain: str
 ) -> str:
     """Round-trip write + reload, rolling the file back if the reload fails.
 
-    The write-tool counterpart of :func:`_safe_write_and_reload`, for the paths
-    that edit a file the user maintains: the tree goes back through
+    For the paths that edit a file the user maintains: the tree goes back through
     ``yaml_writer.write_back``, so the comments and formatting around the entry
     survive, and the snapshot it takes in ``.haca_backups`` is what the rollback
     restores — the same snapshot the panel offers to restore by hand.
@@ -282,15 +244,6 @@ async def _async_scan_named_domain(
     """:func:`yaml_sources.scan_named_domain`, off the event loop."""
     return await hass.async_add_executor_job(
         scan_named_domain, hass.config.config_dir, key, default_filename, match
-    )
-
-
-async def _async_load_list_domain(
-    hass: "HomeAssistant", key: str, default_filename: str
-) -> DomainLoad:
-    """:func:`yaml_sources.load_list_domain`, off the event loop."""
-    return await hass.async_add_executor_job(
-        load_list_domain, hass.config.config_dir, key, default_filename
     )
 
 

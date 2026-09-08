@@ -29,60 +29,6 @@ from .common import (
 )
 
 
-async def _check_auth(request: web.Request, hass: HomeAssistant) -> str | None:
-    """Vérifie le Bearer token HA. Retourne l'user_id ou None si invalide.
-    
-    Logs détaillés pour diagnostiquer les problèmes de connexion :
-    - INFO  : connexion acceptée (user_id + IP)
-    - WARNING : token absent ou invalide
-    """
-    client_ip = request.remote or "?"
-    auth_header = request.headers.get("Authorization", "")
-
-    if not auth_header:
-        _LOGGER.warning(
-            "[HACA MCP] Auth refused — header Authorization absent (IP: %s %s %s)",
-            client_ip, request.method, request.path,
-        )
-        return None
-
-    if not auth_header.startswith("Bearer "):
-        _LOGGER.warning(
-            "[HACA MCP] Auth refused — format invalide (attendu 'Bearer <token>') "
-            "(IP: %s, header: %.20s…)", client_ip, auth_header,
-        )
-        return None
-
-    token = auth_header[7:]
-    if len(token) < 10:
-        _LOGGER.warning(
-            "[HACA MCP] Auth refused — token trop court (%d chars) (IP: %s)",
-            len(token), client_ip,
-        )
-        return None
-
-    try:
-        user = await hass.auth.async_validate_access_token(token)
-        if user:
-            _LOGGER.info(
-                "[HACA MCP] Auth accepted — user=%s IP=%s %s %s",
-                user.id, client_ip, request.method, request.path,
-            )
-            return user.id
-        else:
-            _LOGGER.warning(
-                "[HACA MCP] Auth refused — token valid but user=None (expired?) "
-                "(token: %.4s… IP: %s)", token, client_ip,
-            )
-            return None
-    except Exception as exc:
-        _LOGGER.warning(
-            "[HACA MCP] Auth error — async_validate_access_token raised: %s "
-            "(token: %.4s… IP: %s)", exc, token, client_ip,
-        )
-        return None
-
-
 # ─── JSON-RPC handler ─────────────────────────────────────────────────────
 
 async def _handle_jsonrpc(
@@ -343,7 +289,7 @@ class HacaMcpInfoView(HomeAssistantView):
     """Vue d'information — réservée aux administrateurs.
 
     Cet endpoint annonce le score de santé, le nombre d'issues et la liste
-    nominative des 71 outils. Publié sans authentification, il confirmait à
+    nominative des 60 outils. Publié sans authentification, il confirmait à
     n'importe qui que HACA tourne sur l'instance et fuitait l'état de l'audit.
     Le serveur MCP lui-même étant admin-only, sa fiche de découverte l'est aussi.
     """
