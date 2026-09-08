@@ -31,12 +31,12 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Both of these are default-store requirements that a custom
-          # repository does not have to meet: `brands` wants an entry in
-          # home-assistant/brands, `topics` wants GitHub topics on the repo.
-          # Drop them from this list if H.A.C.A is ever submitted to the
-          # default HACS store.
-          ignore: brands topics
+          # `brands` is a default-store requirement that a custom repository
+          # does not have to meet: it wants an entry in home-assistant/brands,
+          # which is a pull request against a Home Assistant repository. The
+          # `topics` check was un-ignored in 1.8.0 once the repository got its
+          # GitHub topics, so it is a real check now.
+          ignore: brands
 
   tests:
     name: pytest

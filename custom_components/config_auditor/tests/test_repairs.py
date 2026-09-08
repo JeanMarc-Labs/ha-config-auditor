@@ -1,638 +1,393 @@
-"""Regression tests for repairs.py — H.A.C.A Repairs integration.
+"""Tests for repairs.py — the one-way push of HIGH issues into HA Repairs.
 
-These tests guard against the regressions that occurred in v1.9.x:
-  - async_step_init / async_step_confirm missing from HacaFixFlow
-  - automation_id (internal HA id) confused with entity_id in edit links
-  - { } in placeholder values crashing HA's str.format()
-  - card_edit_link empty when automation_id is the internal numeric id
-  - entity-level issues pointing to non-existent /config/entity-registry URL
+Rewritten in 1.8.0. The previous file tested the pre-1.7 ``HacaFixFlow``
+design — init/confirm steps, ``async_create_fix_flow``, ``_sanitize_ph`` — none
+of which survives in ``repairs.py``, so all 30 of its tests failed on import and
+had been skipped ever since. The module they were meant to protect kept running
+for every user on every scan.
+
+What is covered here is what the module actually does now:
+
+  - a HIGH issue becomes exactly one Repairs entry, MEDIUM and LOW never do;
+  - all nine coordinator issue lists are read;
+  - previous HACA entries are cleared first, entries of other domains are not;
+  - the flood cap holds;
+  - user text reaches HA as a *placeholder value*, never as part of the
+    template — the ``{ }``-in-a-message crash the old file was written for;
+  - the placeholder names the code sends are the ones the translation files
+    declare, in all 13 languages.
+
+``homeassistant.helpers.issue_registry`` is replaced by a recorder: the real one
+needs a live hass with loaded storage, and what matters here is the call, not
+HA's own bookkeeping.
 """
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
-
-# ---------------------------------------------------------------------------
-# ARCHIVE — these tests target the pre-1.7 Repairs design: a HacaFixFlow with
-# init/confirm steps, a module-level async_create_fix_flow and _sanitize_ph, and
-# an `issues` section that had been dropped from the translation files.
-# repairs.py is live again (__init__.py wires async_update_repairs into the
-# coordinator, gated by the `repairs_enabled` option) but it only publishes
-# issues now — none of the symbols below exist any more, so all 30 of these
-# fail on import. Kept as a record of the regressions the old flow had; rewrite
-# or delete rather than un-skipping.
-# ---------------------------------------------------------------------------
-pytestmark = pytest.mark.skip(reason="tests the pre-1.7 HacaFixFlow design, removed from repairs.py")
-
+import json
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from custom_components.config_auditor.tests.conftest import MockHass, MockState  # noqa
+import pytest
 
+_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_ROOT))
 
-def _make_hass(states: dict | None = None):
-    """Return a minimal hass mock with pre-populated states."""
-    hass = MockHass()
-    for eid, attrs in (states or {}).items():
-        hass._states[eid] = MockState(eid, "on", attrs)
-    return hass
+TRANSLATIONS = Path(__file__).parent.parent / "translations"
 
-
-# ---------------------------------------------------------------------------
-# Helpers to create a minimal HacaFixFlow without a live HA instance
-# ---------------------------------------------------------------------------
-
-def _make_flow(issue_data: dict, hass=None, domain_data: dict | None = None):
-    """Instantiate HacaFixFlow and wire hass + domain data."""
-    from custom_components.config_auditor.repairs import HacaFixFlow
-    flow = HacaFixFlow(issue_data=issue_data)
-    flow.hass = hass or _make_hass()
-    flow.flow_id = "test-flow-id"
-    flow.handler = "config_auditor"
-    flow.context = {}
-
-    # Patch _get_domain_data to return controllable domain_data
-    flow._get_domain_data = MagicMock(return_value=domain_data or {})
-    return flow
+# The nine lists repairs.py walks. Pinned here on purpose: a tenth category
+# added to the coordinator and forgotten in repairs.py fails this file rather
+# than silently never reaching the Repairs panel.
+ISSUE_LISTS = (
+    "automation_issue_list", "script_issue_list", "scene_issue_list",
+    "blueprint_issue_list", "entity_issue_list", "helper_issue_list",
+    "performance_issue_list", "security_issue_list", "dashboard_issue_list",
+)
 
 
-# ===========================================================================
-# 1. REGRESSION: async_step_init and async_step_confirm MUST exist
-# ===========================================================================
+# ── Test doubles ─────────────────────────────────────────────────────────────
 
-class TestRepairsFlowStepMethods:
-    """Guard against accidental deletion of step methods (caused 'Handler does not
-    support user' in HA Repairs after a bad refactor)."""
+class _FakeRegistry:
+    """Only the ``issues`` mapping is read by repairs.py."""
 
-    def test_async_step_init_exists(self):
-        from custom_components.config_auditor.repairs import HacaFixFlow
-        assert hasattr(HacaFixFlow, "async_step_init"), (
-            "async_step_init missing — HA Repairs will raise UnknownStep / "
-            "'Handler does not support user'"
-        )
-        assert asyncio.iscoroutinefunction(HacaFixFlow.async_step_init)
+    def __init__(self):
+        self.issues: dict[tuple[str, str], dict] = {}
 
-    def test_async_step_confirm_exists(self):
-        from custom_components.config_auditor.repairs import HacaFixFlow
-        assert hasattr(HacaFixFlow, "async_step_confirm"), (
-            "async_step_confirm missing — confirm form will never be shown"
-        )
-        assert asyncio.iscoroutinefunction(HacaFixFlow.async_step_confirm)
 
-    def test_async_create_fix_flow_returns_haca_fix_flow(self):
-        """async_create_fix_flow must return a HacaFixFlow, not a plain RepairsFlow."""
-        import inspect
-        from custom_components.config_auditor.repairs import async_create_fix_flow
-        sig = inspect.signature(async_create_fix_flow)
-        # Must accept (hass, issue_id, data)
-        params = list(sig.parameters)
-        assert "hass" in params
-        assert "issue_id" in params
-        assert "data" in params
+class FakeIssueRegistry:
+    """Stand-in for ``homeassistant.helpers.issue_registry``."""
 
-    @pytest.mark.asyncio
-    async def test_step_init_delegates_to_confirm(self):
-        """async_step_init must call async_step_confirm (not apply the fix)."""
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test Auto",
-                "message": "Uses device_id",
-                "recommendation": "Use entity_id",
-                "location": "trigger[0]",
-            }
-        )
-        # async_step_init called with None → should show form, not abort/create entry
-        result = await flow.async_step_init(user_input=None)
-        assert result.get("type") in ("form", "SHOW_FORM") or result.get("step_id") == "confirm"
+    class IssueSeverity:
+        WARNING = "warning"
+        ERROR = "error"
+        CRITICAL = "critical"
 
-    @pytest.mark.asyncio
-    async def test_step_confirm_no_input_returns_form(self):
-        """First call (no user_input) must return a FORM with step_id='confirm'."""
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test Auto",
-                "message": "Uses device_id",
-                "recommendation": "Use entity_id",
-                "location": "trigger[0]",
-            }
-        )
-        result = await flow.async_step_confirm(user_input=None)
-        assert result.get("step_id") == "confirm", (
-            f"Expected step_id='confirm', got {result}"
-        )
+    def __init__(self):
+        self.registry = _FakeRegistry()
+        self.created: list[dict] = []
+        self.deleted: list[tuple[str, str]] = []
+
+    def async_get(self, hass):
+        return self.registry
+
+    def async_delete_issue(self, hass, domain, issue_id):
+        self.deleted.append((domain, issue_id))
+        self.registry.issues.pop((domain, issue_id), None)
+
+    def async_create_issue(self, hass, **kwargs):
+        self.created.append(kwargs)
+        self.registry.issues[(kwargs["domain"], kwargs["issue_id"])] = kwargs
+
+    # convenience for the assertions below
+    def created_ids(self) -> list[str]:
+        return [c["issue_id"] for c in self.created]
+
+
+@pytest.fixture
+def fake_ir(monkeypatch):
+    """Swap the issue registry module the function imports at call time."""
+    from homeassistant import helpers
+
+    fake = FakeIssueRegistry()
+    monkeypatch.setattr(helpers, "issue_registry", fake, raising=False)
+    return fake
+
+
+def issue(entity_id="automation.test", type_="device_id_in_trigger",
+          severity="high", **extra) -> dict:
+    base = {"entity_id": entity_id, "type": type_, "severity": severity}
+    base.update(extra)
+    return base
+
+
+def coordinator_data(**lists) -> dict:
+    """Coordinator payload with every issue list present, empty by default."""
+    data = {name: [] for name in ISSUE_LISTS}
+    data.update(lists)
+    return data
+
+
+async def run(hass, data):
+    from custom_components.config_auditor.repairs import async_update_repairs
+    await async_update_repairs(hass, data)
+
+
+# ── What gets pushed ─────────────────────────────────────────────────────────
+
+class TestWhatIsPushed:
 
     @pytest.mark.asyncio
-    async def test_step_confirm_fix_failure_aborts(self):
-        """Si le fix échoue, le flow doit aborter avec reason='fix_failed'."""
-        mock_refactoring = MagicMock()
-        mock_refactoring.apply_device_id_fix = AsyncMock(
-            return_value={"success": False, "error": "YAML parse error"}
-        )
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test Auto",
-                "message": "msg",
-                "recommendation": "rec",
-                "location": "trigger[0]",
-            },
-            domain_data={"refactoring_assistant": mock_refactoring},
-        )
-        result = await flow.async_step_confirm(user_input={})
-        assert result.get("type") in ("abort", "ABORT")
-        assert result.get("reason") == "fix_failed"
+    async def test_a_high_issue_becomes_one_repair_entry(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(message="Uses device_id", recommendation="Use entity_id"),
+        ]))
+
+        assert len(fake_ir.created) == 1
+        entry = fake_ir.created[0]
+        assert entry["domain"] == "config_auditor"
+        assert entry["issue_id"] == "haca_automation.test_device_id_in_trigger"
+        assert entry["translation_key"] == "generic_high_issue"
+        assert entry["severity"] == FakeIssueRegistry.IssueSeverity.WARNING
 
     @pytest.mark.asyncio
-    async def test_step_confirm_with_input_applies_fix(self):
-        """Valider doit appeler apply_device_id_fix et retourner create_entry."""
-        mock_refactoring = MagicMock()
-        mock_refactoring.apply_device_id_fix = AsyncMock(return_value={"success": True})
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test Auto",
-                "message": "msg",
-                "recommendation": "rec",
-                "location": "trigger[0]",
-            },
-            domain_data={"refactoring_assistant": mock_refactoring},
-        )
-        result = await flow.async_step_confirm(user_input={})
-        assert result.get("type") in ("create_entry", "CREATE_ENTRY"), (
-            f"Expected create_entry after fix, got {result}"
-        )
-        mock_refactoring.apply_device_id_fix.assert_called_once_with("1699000000001")
+    async def test_only_high_severity_is_pushed(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(entity_id="automation.a", severity="high"),
+            issue(entity_id="automation.b", severity="medium"),
+            issue(entity_id="automation.c", severity="low"),
+            issue(entity_id="automation.d", severity=None),
+        ]))
+
+        assert fake_ir.created_ids() == ["haca_automation.a_device_id_in_trigger"]
 
     @pytest.mark.asyncio
-    async def test_step_confirm_no_refactoring_aborts(self):
-        """Sans refactoring_assistant, Valider doit aborter proprement."""
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test Auto",
-                "message": "msg",
-                "recommendation": "rec",
-                "location": "trigger[0]",
-            },
-            domain_data={},  # no refactoring_assistant
+    async def test_every_coordinator_issue_list_is_read(self, mock_hass, fake_ir):
+        data = coordinator_data(**{
+            name: [issue(entity_id=f"automation.{name}")] for name in ISSUE_LISTS
+        })
+
+        await run(mock_hass, data)
+
+        assert len(fake_ir.created) == len(ISSUE_LISTS)
+
+    @pytest.mark.asyncio
+    async def test_the_same_issue_in_two_lists_is_pushed_once(self, mock_hass, fake_ir):
+        same = issue(entity_id="automation.dup", type_="zombie_entity")
+        await run(mock_hass, coordinator_data(
+            automation_issue_list=[dict(same)],
+            entity_issue_list=[dict(same)],
+        ))
+
+        assert fake_ir.created_ids() == ["haca_automation.dup_zombie_entity"]
+
+    @pytest.mark.asyncio
+    async def test_the_number_of_entries_is_capped(self, mock_hass, fake_ir):
+        from custom_components.config_auditor.repairs import MAX_REPAIR_ISSUES
+
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(entity_id=f"automation.n{i}") for i in range(MAX_REPAIR_ISSUES * 2)
+        ]))
+
+        assert len(fake_ir.created) == MAX_REPAIR_ISSUES
+
+    @pytest.mark.asyncio
+    async def test_entries_are_never_fixable(self, mock_hass, fake_ir):
+        """No fix flow exists, so a Fix button would open nothing.
+
+        The source-level guard lives in test_repairs_diagnostics.py; this is the
+        same contract seen from the call HA actually receives.
+        """
+        await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
+
+        assert fake_ir.created[0]["is_fixable"] is False
+        assert fake_ir.created[0]["is_persistent"] is False
+
+    @pytest.mark.asyncio
+    async def test_empty_coordinator_data_touches_nothing(self, mock_hass, fake_ir):
+        fake_ir.registry.issues[("config_auditor", "haca_stale")] = {}
+
+        await run(mock_hass, {})
+
+        assert fake_ir.created == []
+        assert fake_ir.deleted == [], (
+            "An empty payload means the scan produced nothing, not that the "
+            "panel should be emptied"
         )
-        result = await flow.async_step_confirm(user_input={})
-        assert result.get("type") in ("abort", "ABORT")
-        assert result.get("reason") == "no_fix_available"
 
 
-# ===========================================================================
-# 2. REGRESSION: edit link uses entity_id (not automation_id) for type detection
-# ===========================================================================
+# ── Clean slate ──────────────────────────────────────────────────────────────
 
-class TestBuildEditLinkMd:
-    """Guard against the bug where automation_id was used for startswith('automation.')
-    check — automation_id is the internal HA numeric id, never an entity_id."""
+class TestCleanSlate:
 
-    def _link(self, automation_id, source_name, entity_id="", hass=None):
-        flow = _make_flow({}, hass=hass)
-        return flow._build_edit_link_md(automation_id, source_name, entity_id)
+    @pytest.mark.asyncio
+    async def test_previous_haca_entries_are_cleared_first(self, mock_hass, fake_ir):
+        fake_ir.registry.issues[("config_auditor", "haca_old_one")] = {}
+        fake_ir.registry.issues[("config_auditor", "haca_old_two")] = {}
 
-    def test_automation_with_entity_id_and_internal_id(self):
-        """Standard case: entity_id='automation.xxx', automation_id='1699…'"""
-        link = self._link("1699123456789", "Lumieres Salon", "automation.lumieres_salon")
-        assert "/config/automation/edit/1699123456789" in link
-        assert "Modifier" in link
+        await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
 
-    def test_automation_without_internal_id_falls_back_to_lookup(self):
-        """automation_id empty → lookup via hass.states.get(entity_id).attributes['id']"""
-        hass = _make_hass({"automation.test_auto": {"id": "9999888777"}})
-        link = self._link("", "Test Auto", "automation.test_auto", hass=hass)
-        assert "/config/automation/edit/9999888777" in link
+        assert fake_ir.deleted == [
+            ("config_auditor", "haca_old_one"),
+            ("config_auditor", "haca_old_two"),
+        ]
 
-    def test_automation_no_id_no_state_fallback_to_dashboard(self):
-        """If no id anywhere → link to automation dashboard."""
-        link = self._link("", "Unknown Auto", "automation.unknown")
-        assert "/config/automation/dashboard" in link
+    @pytest.mark.asyncio
+    async def test_other_domains_are_left_alone(self, mock_hass, fake_ir):
+        fake_ir.registry.issues[("homeassistant", "deprecated_yaml")] = {}
+        fake_ir.registry.issues[("hacs", "restart_required")] = {}
 
-    def test_numeric_automation_id_not_treated_as_entity_id(self):
-        """REGRESSION: automation_id='1699…' must NOT be used in startswith('automation.')"""
-        # Before fix: code did automation_id.startswith('automation.') which was always False
-        # for numeric ids, causing empty links
-        link = self._link("1699000000001", "My Auto", "automation.my_auto")
-        assert "1699000000001" in link
-        assert "automation/edit" in link
-        # Must NOT fall back to dashboard
-        assert "dashboard" not in link
+        await run(mock_hass, coordinator_data())
 
-    def test_script_entity_id(self):
-        link = self._link("", "My Script", "script.my_script")
-        assert "/config/script/edit/my_script" in link
+        assert fake_ir.deleted == []
+        assert ("homeassistant", "deprecated_yaml") in fake_ir.registry.issues
+        assert ("hacs", "restart_required") in fake_ir.registry.issues
 
-    def test_no_entity_id_returns_empty(self):
-        """Issues with no entity_id (edge case) return empty string."""
-        link = self._link("", "Unknown", "")
-        assert link == ""
+    @pytest.mark.asyncio
+    async def test_a_resolved_issue_disappears_on_the_next_scan(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(entity_id="automation.gone"),
+        ]))
+        assert ("config_auditor", "haca_automation.gone_device_id_in_trigger") \
+            in fake_ir.registry.issues
+
+        await run(mock_hass, coordinator_data(automation_issue_list=[]))
+
+        assert fake_ir.registry.issues == {}
 
 
-# ===========================================================================
-# 3. REGRESSION: { } in placeholder values must be escaped
-# ===========================================================================
+# ── The text handed to Home Assistant ────────────────────────────────────────
 
-class TestSanitizePlaceholders:
-    """Guard against HA's str.format() crashing on Jinja templates in issue messages.
+class TestPlaceholders:
 
-    HA calls description.format(**placeholders). If any VALUE contains { } (e.g.
-    a Jinja template like '{{ states.light.salon }}') HA raises KeyError and
-    the entire description disappears silently.
+    @pytest.mark.asyncio
+    async def test_alias_is_preferred_over_entity_id(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(alias="Evening lights"),
+        ]))
+
+        assert fake_ir.created[0]["translation_placeholders"]["entity"] == "Evening lights"
+
+    @pytest.mark.asyncio
+    async def test_the_type_is_made_readable(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(type_="device_id_in_trigger"),
+        ]))
+
+        assert fake_ir.created[0]["translation_placeholders"]["type"] == "Device id in trigger"
+
+    @pytest.mark.asyncio
+    async def test_the_recommendation_is_appended_under_a_label(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(message="Trigger uses a device_id.", recommendation="Target the entity."),
+        ]))
+
+        message = fake_ir.created[0]["translation_placeholders"]["message"]
+        assert message.startswith("Trigger uses a device_id.")
+        assert message.endswith("Recommendation: Target the entity.")
+
+    @pytest.mark.asyncio
+    async def test_long_text_is_truncated(self, mock_hass, fake_ir):
+        await run(mock_hass, coordinator_data(automation_issue_list=[
+            issue(message="m" * 500, recommendation="r" * 500),
+        ]))
+
+        message = fake_ir.created[0]["translation_placeholders"]["message"]
+        assert "m" * 200 in message
+        assert "m" * 201 not in message
+        assert "r" * 200 in message
+        assert "r" * 201 not in message
+
+    @pytest.mark.asyncio
+    async def test_braces_in_a_message_reach_ha_untouched(self, mock_hass, fake_ir):
+        """The regression the previous file was written for.
+
+        A user's message can contain ``{`` and ``}`` — a Jinja template quoted
+        back at them, for instance. That text is only safe as a placeholder
+        *value*: built into the template instead, ``str.format`` reads it as a
+        field name and raises KeyError on the user's own config.
+        """
+        raw = "Template {{ states('sensor.x') }} and a bare { } pair"
+        await run(mock_hass, coordinator_data(automation_issue_list=[issue(message=raw)]))
+
+        entry = fake_ir.created[0]
+        assert entry["translation_placeholders"]["message"] == raw
+        assert entry["translation_key"] == "generic_high_issue"
+
+        template = json.loads((TRANSLATIONS / "en.json").read_text(encoding="utf-8"))
+        description = template["issues"]["generic_high_issue"]["description"]
+        rendered = description.format(**entry["translation_placeholders"])
+        assert raw in rendered
+
+    @pytest.mark.asyncio
+    async def test_the_placeholders_sent_are_the_ones_every_language_declares(
+        self, mock_hass, fake_ir
+    ):
+        import re
+
+        await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
+        sent = set(fake_ir.created[0]["translation_placeholders"])
+
+        pattern = re.compile(r"\{([a-z_]+)\}")
+        for path in sorted(TRANSLATIONS.glob("*.json")):
+            strings = json.loads(path.read_text(encoding="utf-8"))
+            entry = strings["issues"]["generic_high_issue"]
+            wanted = set(pattern.findall(entry["title"] + entry["description"]))
+            assert wanted <= sent, (
+                f"{path.stem}.json asks for {sorted(wanted - sent)}, which "
+                f"repairs.py never sends — the placeholder renders empty"
+            )
+
+
+# ── Degraded environments ────────────────────────────────────────────────────
+
+class TestOldHomeAssistant:
+
+    @pytest.mark.asyncio
+    async def test_a_missing_issue_registry_is_not_fatal(
+        self, mock_hass, monkeypatch, caplog
+    ):
+        """Pre-2023.1 has no issue_registry; the scan must still finish.
+
+        The log assertion is what makes this a test: without it, the import
+        could keep succeeding and the case would never be exercised.
+        """
+        import logging
+
+        from homeassistant import helpers
+
+        monkeypatch.delattr(helpers, "issue_registry", raising=False)
+        monkeypatch.setitem(sys.modules, "homeassistant.helpers.issue_registry", None)
+
+        with caplog.at_level(logging.DEBUG, logger="custom_components.config_auditor.repairs"):
+            await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
+
+        assert "issue_registry not available" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_registry_that_raises_does_not_stop_the_scan(self, mock_hass, fake_ir):
+        def boom(hass):
+            raise RuntimeError("registry not loaded")
+
+        fake_ir.async_get = boom
+
+        await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
+
+        # Clearing failed, but the push still happened.
+        assert len(fake_ir.created) == 1
+
+
+# ── Readable type ────────────────────────────────────────────────────────────
+
+class TestReadableType:
+
+    def test_snake_case_becomes_a_sentence(self):
+        from custom_components.config_auditor.repairs import _readable_type
+        assert _readable_type("incorrect_mode_for_pattern") == "Incorrect mode for pattern"
+
+    def test_a_single_word_is_only_capitalised(self):
+        from custom_components.config_auditor.repairs import _readable_type
+        assert _readable_type("zombie") == "Zombie"
+
+    def test_an_empty_type_stays_empty(self):
+        from custom_components.config_auditor.repairs import _readable_type
+        assert _readable_type("") == ""
+
+
+# ── The option that gates the whole thing ────────────────────────────────────
+
+class TestOptionGate:
+    """``repairs_enabled`` is read in __init__.py, not in repairs.py.
+
+    Reaching the listener needs a full ``async_setup_entry``, so this checks the
+    wiring at the source level: the option name and, above all, that its default
+    is True — flipping that default would empty every user's Repairs panel on
+    the next scan without anything else in the suite noticing.
     """
 
-    def test_sanitize_ph_escapes_braces(self):
-        from custom_components.config_auditor.repairs import _sanitize_ph
-        assert _sanitize_ph("{{ states.light.salon }}") == "{{{{ states.light.salon }}}}"
-        assert _sanitize_ph("normal text") == "normal text"
-        assert _sanitize_ph("50%") == "50%"
-        assert _sanitize_ph("") == ""
+    def test_the_push_is_gated_by_repairs_enabled_defaulting_to_true(self):
+        from custom_components.config_auditor import repairs
 
-    def test_sanitize_ph_handles_non_string(self):
-        from custom_components.config_auditor.repairs import _sanitize_ph
-        assert _sanitize_ph(42) == "42"
-        assert _sanitize_ph(None) == "None"
+        init_py = Path(repairs.__file__).parent / "__init__.py"
+        source = init_py.read_text(encoding="utf-8")
 
-    @pytest.mark.asyncio
-    async def test_form_placeholders_with_jinja_message(self):
-        """Form must return successfully even when message contains Jinja { }."""
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.jinja_auto",
-                "source_name": "Jinja Auto",
-                "message": "Template {{ states('light.salon') }} used",
-                "recommendation": "Replace with {entity_id}",
-                "location": "trigger[0]",
-            }
-        )
-        # Must NOT raise KeyError or return abort
-        result = await flow.async_step_confirm(user_input=None)
-        assert result.get("step_id") == "confirm"
-        ph = result.get("description_placeholders", {})
-        # Braces must be doubled so HA doesn't choke
-        assert "{" not in ph.get("message", "").replace("{{", "").replace("}}", "")
-
-    @pytest.mark.asyncio
-    async def test_form_placeholders_with_yaml_recommendation(self):
-        """Recommendation containing YAML with { } must be safely escaped."""
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "mode",
-                "automation_id": "1699000000002",
-                "entity_id": "automation.yaml_auto",
-                "source_name": "YAML Auto",
-                "message": "Wrong mode",
-                "recommendation": "Set mode: {mode: restart}",
-                "location": "root",
-            }
-        )
-        result = await flow.async_step_confirm(user_input=None)
-        assert result.get("step_id") == "confirm"
-        ph = result.get("description_placeholders", {})
-        # { in recommendation must be escaped
-        raw_rec = ph.get("recommendation", "")
-        # After escaping, raw { (single brace) should not appear in values
-        assert raw_rec.count("{") == raw_rec.count("{{") * 2 or "{" not in raw_rec or "{{" in raw_rec
-
-
-# ===========================================================================
-# 4. REGRESSION: card_edit_link in HacaRepairsManager
-# ===========================================================================
-
-class TestCardEditLink:
-    """Guard against card_edit_link pointing to wrong/non-existent URLs."""
-
-    def _make_manager(self, hass):
-        from custom_components.config_auditor.repairs import HacaRepairsManager
-        mgr = HacaRepairsManager(hass)
-        mgr._repairs_available = True
-        return mgr
-
-    def _base_issue(self, overrides: dict | None = None) -> dict:
-        issue = {
-            "entity_id": "automation.lumieres_salon",
-            "automation_id": "1699123456789",
-            "type": "device_id_in_trigger",
-            "severity": "high",
-            "alias": "Lumieres Salon",
-            "source_name": "Lumieres Salon",
-            "message": "Uses device_id in trigger",
-            "recommendation": "Use entity_id",
-            "location": "trigger[0]",
-        }
-        if overrides:
-            issue.update(overrides)
-        return issue
-
-    @pytest.mark.asyncio
-    async def test_automation_card_has_correct_edit_url(self):
-        """Card description must link to /config/automation/edit/{internal_id}."""
-        hass = _make_hass()
-        issue = self._base_issue()
-
-        created_placeholders = {}
-
-        def fake_create_issue(*args, **kwargs):
-            created_placeholders.update(kwargs.get("translation_placeholders", {}))
-
-        with patch(
-            "custom_components.config_auditor.repairs.async_create_issue",
-            new=fake_create_issue,
-        ):
-            mgr = self._make_manager(hass)
-            await mgr._async_create_repair("repair_001", issue)
-
-        link = created_placeholders.get("edit_link", "")
-        assert "1699123456789" in link, f"Internal id missing from edit link: {link!r}"
-        assert "/config/automation/edit/" in link, f"Wrong URL in link: {link!r}"
-        # Must NOT point to dashboard (regression: missing internal_id caused fallback)
-        assert "dashboard" not in link
-
-    @pytest.mark.asyncio
-    async def test_script_card_has_correct_edit_url(self):
-        hass = _make_hass()
-        issue = self._base_issue({
-            "entity_id": "script.my_script",
-            "automation_id": "",
-            "type": "empty_script",
-        })
-
-        created_placeholders = {}
-
-        def fake_create_issue(*args, **kwargs):
-            created_placeholders.update(kwargs.get("translation_placeholders", {}))
-
-        with patch("custom_components.config_auditor.repairs.async_create_issue", new=fake_create_issue):
-            mgr = self._make_manager(hass)
-            await mgr._async_create_repair("repair_002", issue)
-
-        link = created_placeholders.get("edit_link", "")
-        assert "/config/script/edit/my_script" in link
-
-    @pytest.mark.asyncio
-    async def test_entity_issue_card_links_to_entities_page(self):
-        """Entity-level issues must link to /config/entities (not /config/entity-registry)."""
-        hass = _make_hass()
-        issue = self._base_issue({
-            "entity_id": "sensor.orphan_sensor",
-            "automation_id": "",
-            "type": "zombie_entity",
-            "severity": "high",
-        })
-
-        created_placeholders = {}
-
-        def fake_create_issue(*args, **kwargs):
-            created_placeholders.update(kwargs.get("translation_placeholders", {}))
-
-        with patch("custom_components.config_auditor.repairs.async_create_issue", new=fake_create_issue):
-            mgr = self._make_manager(hass)
-            await mgr._async_create_repair("repair_003", issue)
-
-        link = created_placeholders.get("edit_link", "")
-        # Must NOT point to non-existent entity-registry page
-        assert "/config/entity-registry" not in link, (
-            "edit_link must not point to /config/entity-registry (page does not exist)"
-        )
-
-    @pytest.mark.asyncio
-    async def test_automation_without_id_falls_back_to_dashboard_not_entity_registry(self):
-        """Automation with no internal id → dashboard fallback (not entity-registry)."""
-        hass = _make_hass()  # no state for automation.unknown
-        issue = self._base_issue({
-            "entity_id": "automation.unknown_auto",
-            "automation_id": "",  # no internal id
-            "type": "device_id_in_trigger",
-        })
-
-        created_placeholders = {}
-
-        def fake_create_issue(*args, **kwargs):
-            created_placeholders.update(kwargs.get("translation_placeholders", {}))
-
-        with patch("custom_components.config_auditor.repairs.async_create_issue", new=fake_create_issue):
-            mgr = self._make_manager(hass)
-            await mgr._async_create_repair("repair_004", issue)
-
-        link = created_placeholders.get("edit_link", "")
-        assert "/config/entity-registry" not in link
-        assert "/config/entities" not in link or "automation" in link or "dashboard" in link
-
-
-# ===========================================================================
-# 5. REGRESSION: async_create_fix_flow must register in repairs platform
-# ===========================================================================
-
-class TestRepairsPlatformRegistration:
-    """Verify the module exposes async_create_fix_flow so HA can find it."""
-
-    def test_module_has_async_create_fix_flow(self):
-        import custom_components.config_auditor.repairs as repairs_module
-        assert hasattr(repairs_module, "async_create_fix_flow"), (
-            "repairs.py must expose async_create_fix_flow at module level"
-        )
-
-    @pytest.mark.asyncio
-    async def test_async_create_fix_flow_returns_flow_with_steps(self):
-        from custom_components.config_auditor.repairs import async_create_fix_flow, HacaFixFlow
-        hass = _make_hass()
-        data = {
-            "fix_type": "device_id",
-            "automation_id": "1699000000001",
-            "entity_id": "automation.test",
-            "source_name": "Test",
-            "message": "msg",
-            "recommendation": "rec",
-            "location": "trigger[0]",
-        }
-        flow = await async_create_fix_flow(hass, "haca_abc123", data)
-        assert isinstance(flow, HacaFixFlow)
-        assert hasattr(flow, "async_step_init")
-        assert hasattr(flow, "async_step_confirm")
-        # Data must be immediately available (before HA sets flow.data)
-        assert flow._data.get("fix_type") == "device_id"
-        assert flow._data.get("automation_id") == "1699000000001"
-
-
-# ===========================================================================
-# 6. REGRESSION: translations/en.json and fr.json have required placeholders
-# ===========================================================================
-
-class TestTranslationPlaceholders:
-    """Guard against translation files missing placeholders needed by repairs.py."""
-
-    def _load(self, lang: str) -> dict:
-        import json
-        path = Path(__file__).parent.parent / "translations" / f"{lang}.json"
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    def test_en_fixable_issue_no_longer_in_translations(self):
-        """La clé 'issues' a été supprimée des fichiers de traduction (Repairs désactivé)."""
-        data = self._load("en")
-        assert "issues" not in data, "en.json should not contain 'issues' key (Repairs removed)"
-
-    def test_fr_fixable_issue_no_longer_in_translations(self):
-        """La clé 'issues' a été supprimée des fichiers de traduction (Repairs désactivé)."""
-        data = self._load("fr")
-        assert "issues" not in data, "fr.json should not contain 'issues' key (Repairs removed)"
-
-    def test_confirm_step_has_source_name_and_edit_link(self):
-        """Le module Repairs est désactivé — ce test est désormais un no-op."""
-        pass  # Repairs désactivé — clé 'issues' retirée des traductions
-
-    def test_abort_reasons_defined(self):
-        """Le module Repairs est désactivé — ce test est désormais un no-op."""
-        pass  # Repairs désactivé — clé 'issues' retirée des traductions
-
-
-# ===========================================================================
-# 7. Dry-run preview integration
-# ===========================================================================
-
-class TestConfirmFormContent:
-    """Vérifie le contenu du formulaire HA Repairs natif Markdown.
-
-    Architecture : form → diff_block + current_yaml + changes_list → apply on Valider
-    """
-
-    @pytest.mark.asyncio
-    async def test_confirm_form_has_required_placeholders(self):
-        """Le form doit exposer tous les placeholders requis par les traductions."""
-        mock_refactoring = MagicMock()
-        mock_refactoring.preview_device_id_fix = AsyncMock(return_value={
-            "success": True,
-            "current_yaml": "alias: Test\ntrigger:\n  - platform: device\n    device_id: abc\n",
-            "new_yaml":     "alias: Test\ntrigger:\n  - platform: state\n    entity_id: light.test\n",
-            "changes": [{"description": "trigger[0]: device_id → entity_id light.test"}],
-            "changes_count": 1,
-        })
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.lumieres",
-                "source_name": "Lumières Salon",
-                "message": "Uses device_id",
-                "recommendation": "Use entity_id",
-                "location": "trigger[0]",
-            },
-            domain_data={"refactoring_assistant": mock_refactoring},
-        )
-        result = await flow.async_step_confirm(user_input=None)
-        assert result.get("step_id") == "confirm"
-        ph = result.get("description_placeholders", {})
-        for key in ("source_name", "message", "location", "diff_block",
-                    "current_yaml", "changes_list", "changes_count", "edit_link"):
-            assert key in ph, f"Missing placeholder: {key}"
-
-    @pytest.mark.asyncio
-    async def test_confirm_diff_block_contains_diff_markers(self):
-        """diff_block doit contenir des marqueurs + et - du diff unifié."""
-        mock_refactoring = MagicMock()
-        mock_refactoring.preview_device_id_fix = AsyncMock(return_value={
-            "success": True,
-            "current_yaml": "alias: Test\ntrigger:\n  - platform: device\n    device_id: abc\n",
-            "new_yaml":     "alias: Test\ntrigger:\n  - platform: state\n    entity_id: light.test\n",
-            "changes": [{"description": "trigger: device → entity"}],
-            "changes_count": 1,
-        })
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test",
-                "message": "msg",
-                "recommendation": "rec",
-                "location": "trigger[0]",
-            },
-            domain_data={"refactoring_assistant": mock_refactoring},
-        )
-        result = await flow.async_step_confirm(user_input=None)
-        ph = result.get("description_placeholders", {})
-        diff = ph.get("diff_block", "")
-        # current_yaml_block = texte YAML brut (pour fenced block dans strings.json)
-        # diff_block = texte diff unifié brut (pour ```diff dans strings.json)
-        yaml_block = ph.get("current_yaml_block", "")
-        assert yaml_block, f"current_yaml_block should not be empty, got: {yaml_block!r}"
-        assert "<pre>" not in yaml_block, f"current_yaml_block must be plain text (no HTML): {yaml_block!r}"
-        assert "<pre>" not in diff, f"diff_block must be plain text (no HTML): {diff!r}"
-        assert "+" in diff or "-" in diff, f"diff_block should contain +/- markers: {diff!r}"
-        # Vérifier que les lignes du diff finissent bien par \n (pas de concaténation)
-        for line in diff.splitlines():
-            assert not (line.startswith(("-", "+")) and len(line) > 2 and
-                       not line.startswith("---") and not line.startswith("+++") and
-                       line.endswith("+")), f"Ligne diff collée détectée: {line!r}"
-
-    @pytest.mark.asyncio
-    async def test_confirm_yaml_braces_escaped(self):
-        """Les {{ }} du YAML doivent être échappés pour que str.format() de HA ne plante pas."""
-        mock_refactoring = MagicMock()
-        mock_refactoring.preview_device_id_fix = AsyncMock(return_value={
-            "success": True,
-            "current_yaml": "alias: Test\nvalue_template: '{{ states.light.x }}'\n",
-            "new_yaml":     "alias: Test\nvalue_template: '{{ states.light.y }}'\n",
-            "changes": [{"description": "updated template"}],
-            "changes_count": 1,
-        })
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test",
-                "message": "msg",
-                "recommendation": "rec",
-                "location": "trigger[0]",
-            },
-            domain_data={"refactoring_assistant": mock_refactoring},
-        )
-        result = await flow.async_step_confirm(user_input=None)
-        ph = result.get("description_placeholders", {})
-        # All placeholder values must not contain bare single { or }
-        for key, val in ph.items():
-            if isinstance(val, str) and key in ("current_yaml_block", "diff_block"):
-                # Texte YAML/diff brut : peut contenir {} (ex: metadata: {})
-                # C'est acceptable car HA ne re-scanne pas les valeurs avec str.format()
-                pass
-            elif isinstance(val, str):
-                stripped = val.replace("{{", "").replace("}}", "")
-                assert "{" not in stripped and "}" not in stripped, (
-                    f"Placeholder {key!r} has unescaped braces: {val!r}"
-                )
-
-    @pytest.mark.asyncio
-    async def test_confirm_fallback_when_no_preview(self):
-        """Sans refactoring_assistant, le form doit quand même s'afficher."""
-        flow = _make_flow(
-            issue_data={
-                "fix_type": "device_id",
-                "automation_id": "1699000000001",
-                "entity_id": "automation.test",
-                "source_name": "Test Auto",
-                "message": "msg",
-                "recommendation": "rec",
-                "location": "trigger[0]",
-            },
-            domain_data={},  # no refactoring_assistant
-        )
-        result = await flow.async_step_confirm(user_input=None)
-        # Must still show form (not abort)
-        assert result.get("step_id") == "confirm"
+        assert 'entry.options.get("repairs_enabled", True)' in source
+        assert "async_update_repairs(hass, cdata)" in source

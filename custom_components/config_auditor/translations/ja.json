@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ バックアップが復元されました",
     "backup_restored_summary": "復元が正常に完了しました",
     "backup_restored_extra": "⚠️ 設定が変更されている場合は、Home Assistantを再起動してください。",
-    "backup_deleted_title": "🗑️ バックアップが削除されました"
+    "backup_deleted_title": "🗑️ バックアップが削除されました",
+    "report_deleted_summary": "レポートの削除",
+    "backup_deleted_summary": "バックアップの削除",
+    "preview_changes_detected": "**検出された変更:** {count}",
+    "preview_mode_detail": "**新しいモード:** `{mode}`\n\n**変更:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "YAML が空か無効です。",
+    "yaml_invalid": "無効な YAML: {error}",
+    "not_a_mapping": "ドキュメント {index} は有効な YAML マッピングではありません（受け取った型: {kind}）。",
+    "not_an_automation": "ドキュメント {index} は Home Assistant のオートメーションではないようです（triggers/actions キーが見つかりません）。",
+    "written": "{count} 件のオートメーションを書き込みました。"
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — 週次レポート (スコア: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**完全なYAML:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAMLは利用できません)",
     "complexity_prompt": "あなたはHome Assistantの専門家です。この{kind}の複雑さを分析してください。\n\n**{kind_upper} :** {alias}\n**エンティティID :** {entity_id}\n**HACAスコア :** {score}\n**スコア詳細 :** {score_line}\n\n{yaml_section}\n\n任務は2部構成です：\nPART 1 - 説明（3～5文）：\nなぜこの{kind}が複雑なのか、どの部分がスコアに最も寄与しているか、リスク（保守性、デバッグ）を説明してください。\n\nPART 2 - YAML提案：\n具体的な分割案を提案してください。繰り返しのアクションブロックを別スクリプトに抽出し、メインファイルを簡潔にします。完全なYAMLを提供してください。\n\n必ず次の形式で回答してください：\n```explanation\n[ここに説明を書く]\n```\n\n```yaml_proposal\n[提案するyamlを書く]\n```",
-    "complexity_fallback": "複雑さスコア: {score}。この{kind}は {triggers} 件のトリガー、{conditions} 件の条件、{actions} 件の再帰的アクション、{templates} 件のテンプレートを含みます。繰り返しのアクションブロックを再利用可能なスクリプトに抽出することを検討してください。"
+    "complexity_fallback": "複雑さスコア: {score}。この{kind}は {triggers} 件のトリガー、{conditions} 件の条件、{actions} 件の再帰的アクション、{templates} 件のテンプレートを含みます。繰り返しのアクションブロックを再利用可能なスクリプトに抽出することを検討してください。",
+    "mcp_explain_issue": "[H.A.C.A Audit] Home Assistant の設定で問題が検出されました。\n種類: {type}\n重大度: {severity}\nエンティティ: {entity}\nメッセージ: {message}\n\nこの問題を2〜3文で分かりやすく説明し、具体的な修正案を提示してください。",
+    "mcp_no_ai_available": "利用できる AI サービスがありません。"
   },
   "actions": {
     "close": "Close",

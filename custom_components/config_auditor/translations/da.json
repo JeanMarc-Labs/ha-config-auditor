@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ Sikkerhedskopi gendannet",
     "backup_restored_summary": "Gendannelse fuldført korrekt",
     "backup_restored_extra": "⚠️ Genstart Home Assistant, hvis konfigurationen er ændret.",
-    "backup_deleted_title": "🗑️ Sikkerhedskopi slettet"
+    "backup_deleted_title": "🗑️ Sikkerhedskopi slettet",
+    "report_deleted_summary": "Sletning af rapporten",
+    "backup_deleted_summary": "Sletning af sikkerhedskopien",
+    "preview_changes_detected": "**Registrerede ændringer:** {count}",
+    "preview_mode_detail": "**Ny tilstand:** `{mode}`\n\n**Ændringer:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "Tom eller ugyldig YAML.",
+    "yaml_invalid": "Ugyldig YAML: {error}",
+    "not_a_mapping": "Dokument {index} er ikke en gyldig YAML-mapping (modtaget: {kind}).",
+    "not_an_automation": "Dokument {index} ligner ikke en Home Assistant-automatisering (ingen triggers/actions-nøgle fundet).",
+    "written": "{count} automatisering(er) skrevet."
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — Ugentlig rapport (score: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**Fuld YAML:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML ikke tilgængelig)",
     "complexity_prompt": "Du er ekspert i Home Assistant. Analysér kompleksiteten af denne {kind}.\n\n** {kind_upper} :** {alias}\n**Enheds-id :** {entity_id}\n**HACA-score :** {score}\n**Scoredetaljer :** {score_line}\n\n{yaml_section}\n\nOPGAVEN HAR TO DELE:\nDEL 1 — FORKLARING (3-5 sætninger):\nForklar, hvorfor denne {kind} er kompleks, hvilke dele der bidrager mest til scoren, og hvilke risici der er (vedligeholdelse, fejlsøgning).\n\nDEL 2 — YAML-FORSLAG:\nForeslå en konkret opdeling: flyt gentagne handlingsblokke ud i separate scripts, og forenkl hovedfilen. Angiv den fulde YAML.\n\nSVAR PRÆCIS I DETTE FORMAT:\n```explanation\n[din forklaring her]\n```\n\n```yaml_proposal\n[foreslået yaml her]\n```",
-    "complexity_fallback": "Kompleksitetsscore: {score}. Denne {kind} indeholder {triggers} udløser(e), {conditions} betingelse(r), {actions} rekursiv(e) handling(er) og {templates} skabelon(er). Overvej at flytte gentagne handlingsblokke ud i genbrugelige scripts."
+    "complexity_fallback": "Kompleksitetsscore: {score}. Denne {kind} indeholder {triggers} udløser(e), {conditions} betingelse(r), {actions} rekursiv(e) handling(er) og {templates} skabelon(er). Overvej at flytte gentagne handlingsblokke ud i genbrugelige scripts.",
+    "mcp_explain_issue": "[H.A.C.A Audit] Problem fundet i Home Assistant-konfigurationen.\nType: {type}\nAlvorlighed: {severity}\nEnhed: {entity}\nBesked: {message}\n\nForklar dette problem i 2-3 klare sætninger, og foreslå en konkret løsning.",
+    "mcp_no_ai_available": "Ingen AI-tjeneste tilgængelig."
   },
   "actions": {
     "close": "Close",

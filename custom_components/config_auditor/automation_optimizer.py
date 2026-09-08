@@ -18,6 +18,7 @@ import yaml
 from homeassistant.core import HomeAssistant
 
 from .const import BACKUP_DIR
+from .translation_utils import notification_ts as _ts
 from .yaml_sources import iter_domain_files
 
 _LOGGER = logging.getLogger(__name__)
@@ -190,9 +191,9 @@ class AutomationOptimizer:
             docs = list(yaml.safe_load_all(new_yaml))
             docs = [d for d in docs if d]  # strip None (empty doc separators)
             if not docs:
-                return {"success": False, "error": "YAML vide ou invalide"}
+                return {"success": False, "error": _ts(self.hass, "optimizer", "yaml_empty")}
         except yaml.YAMLError as e:
-            return {"success": False, "error": f"YAML invalide : {e}"}
+            return {"success": False, "error": _ts(self.hass, "optimizer", "yaml_invalid", error=e)}
 
         # 2. Structural validation — every document must be a dict that looks
         #    like an automation (has triggers/actions keys).
@@ -201,17 +202,16 @@ class AutomationOptimizer:
             if not isinstance(doc, dict):
                 return {
                     "success": False,
-                    "error": (
-                        f"Document {i + 1} n'est pas un mapping YAML valide "
-                        f"(reçu : {type(doc).__name__})."
+                    "error": _ts(
+                        self.hass, "optimizer", "not_a_mapping",
+                        index=i + 1, kind=type(doc).__name__,
                     ),
                 }
             if not REQUIRED_KEYS.intersection(doc.keys()):
                 return {
                     "success": False,
-                    "error": (
-                        f"Document {i + 1} ne ressemble pas à une automation HA "
-                        f"(aucune clé triggers/actions trouvée)."
+                    "error": _ts(
+                        self.hass, "optimizer", "not_an_automation", index=i + 1,
                     ),
                 }
 
@@ -223,7 +223,7 @@ class AutomationOptimizer:
             )
             return {
                 "success":     True,
-                "message":     f"{len(docs)} automation(s) écrite(s).",
+                "message":     _ts(self.hass, "optimizer", "written", count=len(docs)),
                 "backup_path": str(backup_path),
                 "count":       len(docs),
             }
@@ -294,15 +294,15 @@ class AutomationOptimizer:
         patterns: list[str],
         blueprints: list[dict],
     ) -> str:
-        yaml_block = original_yaml[:4000] if original_yaml else "(YAML non disponible)"
+        yaml_block = original_yaml[:4000] if original_yaml else "(YAML unavailable)"
 
-        issues_block = "\n".join(f"  - {i}" for i in issues) if issues else "  (aucun)"
-        patterns_block = "\n".join(f"  - {p}" for p in patterns) if patterns else "  (aucun)"
+        issues_block = "\n".join(f"  - {i}" for i in issues) if issues else "  (none)"
+        patterns_block = "\n".join(f"  - {p}" for p in patterns) if patterns else "  (none)"
 
         bp_lines = "\n".join(
             f"  - [{bp['path']}] {bp['name']} — {bp['description'][:100]}"
             for bp in blueprints
-        ) if blueprints else "  (aucun blueprint installé)"
+        ) if blueprints else "  (no blueprint installed)"
 
         from .translation_utils import resolve_notification_language
         _lang = resolve_notification_language(self.hass)

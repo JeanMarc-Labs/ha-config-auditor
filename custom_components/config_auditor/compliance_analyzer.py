@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -36,13 +35,6 @@ from .yaml_sources import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Pattern pour friendly_name structuré : "Salon - Lampe principale" ou "salon.lampe.principale"
-_STRUCTURED_NAME_PATTERNS = [
-    re.compile(r"^[A-ZÀ-Ÿa-zà-ÿ0-9]+ [-–] .+$"),      # "Salon - Lampe"
-    re.compile(r"^[a-z][a-z0-9_]+\.[a-z][a-z0-9_]+$"), # "salon.lampe"
-    re.compile(r"^\w+ \w+ \w+"),                          # "Salon Lampe Principale"
-]
 
 # Domaines physiques attendus à avoir une area assignée
 _PHYSICAL_DOMAINS = {

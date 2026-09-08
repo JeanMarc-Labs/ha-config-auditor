@@ -104,18 +104,8 @@ def _ts(hass, section: str, key: str, **kwargs) -> str:
     text — so we resolve the language via ``resolve_notification_language``
     instead of the volatile per-panel ``user_language`` slot.
     """
-    from .translation_utils import resolve_notification_language
-    lang = resolve_notification_language(hass)
-    try:
-        from . import _TS_CACHE  # noqa: PLC0415
-        data = _TS_CACHE.get(lang) or _TS_CACHE.get("en") or {}
-    except Exception:
-        data = {}
-    val = data.get(section, {}).get(key, key)
-    try:
-        return val.format(**kwargs) if kwargs else val
-    except Exception:
-        return val
+    from .translation_utils import notification_ts
+    return notification_ts(hass, section, key, **kwargs)
 
 
 def _admin_only(hass: HomeAssistant, handler):
@@ -397,7 +387,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     hass,
                     notification_id="haca_report_deleted",
                     title=_ts(hass, "services_notif", "report_deleted_title"),
-                    summary="Suppression du rapport",
+                    summary=_ts(hass, "services_notif", "report_deleted_summary"),
                     detail=_ts(hass, "services_notif", "report_deleted_detail").format(count=result.get("deleted_count", 0)),
                     status="success",
                 )
@@ -422,9 +412,13 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 title=_ts(hass, "services_notif", "preview_device_id_title"),
                 summary=_ts(hass, "services_notif", "preview_for").format(alias=result.get("alias", automation_id)),
                 detail=(
-                    f"**Modifications détectées :** {result.get('changes_count', 0)}\n\n"
+                    _ts(hass, "services_notif", "preview_changes_detected",
+                        count=result.get("changes_count", 0))
+                    + "\n\n"
                     + "\n".join(f"- {c.get('description', str(c))}" for c in result.get("changes", [])[:10])
-                    if result.get("changes") else f"**Modifications détectées :** {result.get('changes_count', 0)}"
+                    if result.get("changes")
+                    else _ts(hass, "services_notif", "preview_changes_detected",
+                             count=result.get("changes_count", 0))
                 ),
                 status="info",
             )
@@ -469,8 +463,10 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 hass,
                 notification_id="haca_preview",
                 title=_ts(hass, "services_notif", "preview_mode_title"),
-                summary=f"Aperçu pour : {result.get('alias', automation_id)}",
-                detail=f"**Nouveau mode :** `{new_mode}`\n\n**Modifications :** {result.get('changes_count', 0)}",
+                summary=_ts(hass, "services_notif", "preview_for",
+                            alias=result.get("alias", automation_id)),
+                detail=_ts(hass, "services_notif", "preview_mode_detail",
+                           mode=new_mode, count=result.get("changes_count", 0)),
                 status="info",
             )
             
@@ -583,7 +579,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     hass,
                     notification_id="haca_backup_deleted",
                     title=_ts(hass, "services_notif", "backup_deleted_title"),
-                    summary="Suppression de la sauvegarde",
+                    summary=_ts(hass, "services_notif", "backup_deleted_summary"),
                     detail=result.get("message", ""),
                     status="success",
                 )

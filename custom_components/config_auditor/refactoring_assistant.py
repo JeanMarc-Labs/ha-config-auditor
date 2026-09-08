@@ -40,101 +40,6 @@ def _backup_stem(path: Path) -> str | None:
     return match.group("stem") if match else None
 
 
-def _build_description_fallback(alias: str, config: dict, is_script: bool) -> str:
-    """Generate a rule-based description when AI is unavailable.
-
-    Uses the alias, triggers and actions to produce a meaningful single sentence.
-    """
-    import re as _re
-
-    # Clean alias → readable name
-    name = alias or ""
-    # Remove leading emoji/icon
-    name = _re.sub(r'^[𐀀-􏿿☀-⛿✀-➿\s]+', '', name).strip()
-    # Replace underscores/hyphens with spaces
-    name = name.replace("_", " ").replace("-", " ").strip()
-
-    if is_script:
-        actions = config.get("sequence", [])
-        if not isinstance(actions, list):
-            actions = []
-        n_actions = len(actions)
-        if n_actions == 0:
-            return f"Script : {name}." if name else "Script sans actions configurées."
-        # Describe first action type
-        first = actions[0] if actions else {}
-        service = first.get("service") or first.get("action", "")
-        if service:
-            domain = service.split(".")[0] if "." in service else service
-            return f"Script exécutant {n_actions} action(s) sur {domain} — {name}." if name else f"Script exécutant {n_actions} action(s) sur {domain}."
-        return f"Script avec {n_actions} action(s) : {name}." if name else f"Script avec {n_actions} action(s)."
-
-    # Automation
-    triggers = config.get("trigger", []) or config.get("triggers", [])
-    if not isinstance(triggers, list):
-        triggers = [triggers] if triggers else []
-    actions = config.get("action", []) or config.get("actions", [])
-    if not isinstance(actions, list):
-        actions = [actions] if actions else []
-
-    n_triggers = len(triggers)
-    n_actions = len(actions)
-
-    # Describe trigger type
-    trigger_desc = ""
-    if triggers:
-        first_t = triggers[0] if isinstance(triggers[0], dict) else {}
-        platform = first_t.get("platform") or first_t.get("trigger", "")
-        if platform == "state":
-            entity = first_t.get("entity_id", "")
-            if isinstance(entity, list):
-                entity = entity[0] if entity else ""
-            trigger_desc = f"quand l'état de {entity} change" if entity else "sur changement d'état"
-        elif platform == "time":
-            at = first_t.get("at", "")
-            trigger_desc = f"à {at}" if at else "à heure fixe"
-        elif platform == "time_pattern":
-            trigger_desc = "selon un motif horaire"
-        elif platform == "sun":
-            event = first_t.get("event", "sunrise")
-            trigger_desc = "au lever du soleil" if event == "sunrise" else "au coucher du soleil"
-        elif platform in ("mqtt", "event"):
-            trigger_desc = f"sur événement {platform}"
-        elif platform == "numeric_state":
-            entity = first_t.get("entity_id", "")
-            trigger_desc = f"quand la valeur de {entity} change" if entity else "sur changement numérique"
-        elif platform == "template":
-            trigger_desc = "sur condition de template"
-        else:
-            trigger_desc = f"sur déclencheur {platform}" if platform else "sur déclenchement"
-
-    # Describe action
-    action_desc = ""
-    if actions:
-        first_a = actions[0] if isinstance(actions[0], dict) else {}
-        service = first_a.get("service") or first_a.get("action", "")
-        if service:
-            domain = service.split(".")[0] if "." in service else service
-            action_desc = f"exécute {service}" if n_actions == 1 else f"exécute {n_actions} actions dont {service}"
-        elif "delay" in first_a:
-            action_desc = "attend puis exécute des actions"
-        elif "choose" in first_a:
-            action_desc = "exécute des actions conditionnelles"
-
-    if name and trigger_desc and action_desc:
-        return f"Automation «{name}» : {trigger_desc}, {action_desc}."
-    elif name and trigger_desc:
-        return f"Automation «{name}» déclenchée {trigger_desc}."
-    elif name and action_desc:
-        return f"Automation «{name}» qui {action_desc}."
-    elif name:
-        return f"Automation : {name}."
-    elif trigger_desc and action_desc:
-        return f"Se déclenche {trigger_desc} et {action_desc}."
-    else:
-        return f"Automation avec {n_triggers} déclencheur(s) et {n_actions} action(s)."
-
-
 def _match_automation(
     loaded: list[tuple[str, list]], automation_id: str, unique_id: str | None
 ) -> tuple[Path | None, list, int]:
@@ -1404,7 +1309,7 @@ class RefactoringAssistant:
             actions_yaml = yaml.dump(config.get("action", []) or config.get("actions", []), default_flow_style=False, allow_unicode=True)
 
         # Build the full YAML block from triggers + actions parts
-        yaml_block = (triggers_yaml + "\n" + actions_yaml).strip()[:4000] or "(YAML non disponible)"
+        yaml_block = (triggers_yaml + "\n" + actions_yaml).strip()[:4000] or "(YAML unavailable)"
 
         # Read the AI-prompt section from the in-memory translation cache —
         # never block the event loop with file I/O.

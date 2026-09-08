@@ -98,6 +98,27 @@ def resolve_notification_language(hass) -> str:
     return hass.config.language or "en"
 
 
+def notification_ts(hass, section: str, key: str, **kwargs) -> str:
+    """Get one server-side string from the in-memory translation cache.
+
+    Same contract as the ``_ts`` helpers in ``services.py`` and
+    ``websocket.py``: the language is the notification language, the lookup
+    never touches the filesystem, and a missing key returns the key itself
+    rather than raising. ``kwargs`` are applied with ``str.format``.
+    """
+    lang = resolve_notification_language(hass)
+    try:
+        from . import _TS_CACHE  # noqa: PLC0415
+        data = _TS_CACHE.get(lang) or _TS_CACHE.get("en") or {}
+    except Exception:
+        data = {}
+    val = data.get(section, {}).get(key, key)
+    try:
+        return val.format(**kwargs) if kwargs else val
+    except Exception:
+        return val
+
+
 class TranslationHelper:
     """Translation helper for HACA analyzers.
 

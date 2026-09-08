@@ -1650,7 +1650,18 @@
     "backup_restored_title": "✅ Kopia zapasowa przywrócona",
     "backup_restored_summary": "Przywracanie zakończone pomyślnie",
     "backup_restored_extra": "⚠️ Uruchom ponownie Home Assistant, jeśli konfiguracje uległy zmianie.",
-    "backup_deleted_title": "🗑️ Kopia zapasowa usunięta"
+    "backup_deleted_title": "🗑️ Kopia zapasowa usunięta",
+    "report_deleted_summary": "Usunięcie raportu",
+    "backup_deleted_summary": "Usunięcie kopii zapasowej",
+    "preview_changes_detected": "**Wykryte zmiany:** {count}",
+    "preview_mode_detail": "**Nowy tryb:** `{mode}`\n\n**Zmiany:** {count}"
+  },
+  "optimizer": {
+    "yaml_empty": "Pusty lub nieprawidłowy YAML.",
+    "yaml_invalid": "Nieprawidłowy YAML: {error}",
+    "not_a_mapping": "Dokument {index} nie jest prawidłowym mapowaniem YAML (otrzymano: {kind}).",
+    "not_an_automation": "Dokument {index} nie wygląda na automatyzację Home Assistant (nie znaleziono klucza triggers/actions).",
+    "written": "Zapisano automatyzacje: {count}."
   },
   "proactive_agent": {
     "weekly_report_notification_title": "H.A.C.A — Raport tygodniowy (wynik: {score}/100)",
@@ -1725,7 +1736,9 @@
     "complexity_yaml_section": "**Pełny YAML:**\n{yaml}",
     "complexity_yaml_unavailable": "(YAML niedostępny)",
     "complexity_prompt": "Jesteś ekspertem od Home Assistanta. Przeanalizuj złożoność tego obiektu: {kind}.\n\n** {kind_upper} :** {alias}\n**Identyfikator encji :** {entity_id}\n**Wynik HACA :** {score}\n**Szczegóły wyniku :** {score_line}\n\n{yaml_section}\n\nZADANIE W DWÓCH CZĘŚCIACH:\nCZĘŚĆ 1 — WYJAŚNIENIE (3-5 zdań):\nWyjaśnij, dlaczego ten obiekt ({kind}) jest złożony, które fragmenty najbardziej podnoszą wynik i jakie są zagrożenia (utrzymanie, debugowanie).\n\nCZĘŚĆ 2 — PROPOZYCJA YAML:\nZaproponuj konkretny podział: wynieś powtarzalne bloki akcji do osobnych skryptów, uprość plik główny. Podaj pełny YAML.\n\nODPOWIEDZ ŚCIŚLE W TYM FORMACIE:\n```explanation\n[tutaj twoje wyjaśnienie]\n```\n\n```yaml_proposal\n[tutaj proponowany yaml]\n```",
-    "complexity_fallback": "Wynik złożoności: {score}. Ta {kind} zawiera {triggers} wyzwalacz/e, {conditions} warunek/i, {actions} akcję/e (rekurencyjnie) i {templates} szablon/y. Rozważ wyodrębnienie powtarzających się bloków akcji do skryptów wielokrotnego użytku."
+    "complexity_fallback": "Wynik złożoności: {score}. Ta {kind} zawiera {triggers} wyzwalacz/e, {conditions} warunek/i, {actions} akcję/e (rekurencyjnie) i {templates} szablon/y. Rozważ wyodrębnienie powtarzających się bloków akcji do skryptów wielokrotnego użytku.",
+    "mcp_explain_issue": "[H.A.C.A Audit] Wykryto problem w konfiguracji Home Assistant.\nTyp: {type}\nWaga: {severity}\nEncja: {entity}\nKomunikat: {message}\n\nWyjaśnij ten problem w 2-3 zdaniach i zaproponuj konkretną poprawkę.",
+    "mcp_no_ai_available": "Brak dostępnej usługi AI."
   },
   "actions": {
     "close": "Zamknij",
