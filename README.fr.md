@@ -37,7 +37,7 @@ Au fil du temps, une installation Home Assistant accumule des automatisations ob
 | 🗺️ **Complexité des zones** | Heatmap interactive de la complexité par zone. Suggestions de fusion et de découpage. |
 | 🔄 **Redondances** | Détection des automations en double logique, candidates à la blueprintisation, et remplaçables par des fonctionnalités HA natives. |
 | 🧩 **Helpers** | Onglet dédié à tous les `input_*` et timers avec détection des helpers jamais utilisés. |
-| 🔗 **Serveur MCP (65 outils)** | Serveur Model Context Protocol intégré pour 12 agents IA : Claude Desktop, Cursor, VS Code, Windsurf, Cline, n8n et plus. |
+| 🔗 **Serveur MCP (60 outils)** | Serveur Model Context Protocol intégré pour 12 agents IA : Claude Desktop, Cursor, VS Code, Windsurf, Cline, n8n et plus. |
 | 🗂️ **Graphe de dépendances** | Graphe D3.js avec sidebar de relations (Utilisé par / Utilise), exports CSV et Markdown par nœud ou graphe complet. |
 
 ---
@@ -85,7 +85,7 @@ Le panel H.A.C.A est organisé en **10 onglets principaux** :
 | **Reports** | Rapports PDF/Markdown/JSON |
 | **Carte** | Graphe de dépendances D3.js avec exports de relations |
 | **Batteries** | Moniteur · **Prédictions** (régression linéaire) |
-| **Chat** | Assistant IA conversationnel (LLM API natif, 65 outils MCP) |
+| **Chat** | Assistant IA conversationnel (LLM API natif, 60 outils MCP) |
 | **Compliance** | Audit de qualité des métadonnées |
 | **Config** | Options, seuils, token MCP, fréquence rapport, types d'issues activés |
 
@@ -101,6 +101,10 @@ Le panel H.A.C.A est organisé en **10 onglets principaux** :
 | `battery_alert_threshold` | 20% | Seuil d'alerte batterie (pris en compte sans redémarrage) |
 | `notifications_enabled` | true | Notifications HA lors de nouvelles issues HIGH |
 | `report_frequency` | weekly | Fréquence du rapport automatique : `daily` / `weekly` / `monthly` / `never` |
+| `mcp_server_enabled` | **désactivé** | Serveur MCP en HTTP — voir [Sécurité et vie privée](#sécurité-et-vie-privée) |
+| `llm_api_enabled` | **désactivé** | Propose les outils H.A.C.A aux agents conversationnels HA |
+| `llm_write_enabled` | false | Autorise ces agents à utiliser les outils d'écriture (administrateurs uniquement) |
+| `proactive_agent_enabled` | **désactivé** | Analyse autonome et rapport IA périodique |
 
 ### Ignorer des entités
 
@@ -127,7 +131,7 @@ Un satellite vocal sans utilisateur authentifié n'est jamais administrateur. Qu
 
 ### Chat IA
 
-L'onglet **Chat** est un assistant IA conversationnel avec accès à **65 outils MCP** permettant de lire, créer, modifier et recharger toute configuration HA.
+L'onglet **Chat** est un assistant IA conversationnel avec accès à **60 outils MCP** permettant de lire, créer, modifier et recharger toute configuration HA.
 
 Exemples de requêtes :
 ```
@@ -144,13 +148,13 @@ Chaque issue dispose d'un bouton **IA** qui ouvre le Chat avec un prompt pré-re
 
 Les issues à correction de champ simple (`no_description`, `no_alias`) affichent une modale avec suggestion éditable — pas besoin du Chat complet.
 
-### Serveur MCP (65 outils)
+### Serveur MCP (60 outils)
 
 Le serveur MCP intégré expose tous les outils H.A.C.A et HA aux agents IA externes :
 
 ```
 # URL du serveur
-http://homeassistant.local:8123/api/haca/mcp
+http://homeassistant.local:8123/api/haca_mcp
 
 # Header d'authentification
 Authorization: Bearer <votre-token-haca>
@@ -161,6 +165,66 @@ Authorization: Bearer <votre-token-haca>
 **L'endpoint MCP exige un jeton d'administrateur.** Les outils écrivent des fichiers de configuration et peuvent appeler n'importe quel service, ce que Home Assistant réserve aux admins ; un jeton longue durée émis par un compte non-admin reçoit un `403`. Chaque appel de service passé par MCP est attribué au propriétaire du jeton dans le journal Home Assistant. `/api/haca_mcp/info` est également réservé aux admins.
 
 Agents supportés : Claude Code · Claude Desktop · Cursor · VS Code/Copilot · Windsurf · Cline · Antigravity · Continue.dev · Open WebUI · n8n · HTTP/REST · Gemini CLI
+
+---
+
+## Sécurité et vie privée
+
+H.A.C.A lit toute votre configuration, peut la réécrire, et peut en confier des morceaux à une IA. Cette section dit exactement ce que cela ouvre, ce qui quitte votre machine, et comment refermer chaque porte.
+
+### Ce que H.A.C.A expose
+
+| Surface | Qui peut l'atteindre | Installation neuve |
+|---|---|---|
+| Panneau H.A.C.A dans la barre latérale | Administrateurs uniquement | activé |
+| 32 commandes WebSocket `haca/*` (tout ce qu'appelle le panneau) | Administrateurs uniquement | activé |
+| 16 services HA `config_auditor.*` | Administrateurs uniquement | activé |
+| `/api/config_auditor/report/<fichier>` — rapports générés | Administrateurs authentifiés | activé |
+| `/api/haca_mcp` — serveur MCP, 60 outils en HTTP | Jeton d'administrateur ; tout le reste reçoit `403` | **désactivé** |
+| `/api/haca_mcp/info` — fiche de découverte MCP | Jeton d'administrateur | **désactivé** |
+| API LLM H.A.C.A — les mêmes 60 outils proposés aux agents conversationnels HA | Outils de lecture : quiconque parle à cet agent. Outils d'écriture : administrateurs, et seulement si `llm_write_enabled` est activé | **désactivé** |
+| Agent proactif — rapport périodique enrichi par l'IA | Tourne tout seul ; appelle le fournisseur d'IA configuré dans HA | **désactivé** |
+
+Deux points méritent d'être connus sur ce tableau :
+
+- **Les trois dernières lignes sont éteintes sur une installation neuve.** Ce sont les seules fonctions qui sortent du panneau : on ne les allume qu'en sachant ce qu'elles ouvrent, depuis Configuration → **Fonctions exposées**. Une entrée créée *avant* la v1.8.0 a été migrée avec les trois **activées**, pour que rien ne casse à la mise à jour ; si vous ne vous en êtes jamais servi, éteignez-les.
+- **Les rapports ne sont pas des fichiers statiques.** Ils étaient autrefois servis par un chemin statique, que Home Assistant sert sans authentification, sous des noms prévisibles. Ils passent désormais par une vue authentifiée réservée aux administrateurs.
+
+### Ce qui est envoyé à un LLM, et quand
+
+H.A.C.A ne contacte jamais un fournisseur d'IA lui-même. Il appelle ce que vous avez configuré dans Home Assistant — une entité `ai_task`, ou un agent conversationnel — donc le fournisseur, le compte et la facturation sont ceux que vous y avez déjà réglés.
+
+| Quand | Ce qui quitte votre instance |
+|---|---|
+| Vous appuyez sur le bouton **IA** d'une issue | Le type, la sévérité, le message et la recommandation de l'issue, plus l'ID d'entité ou l'alias |
+| Vous écrivez dans l'onglet **Chat** | Votre message, plus ce que renvoient les outils que vous le laissez appeler |
+| Vous ouvrez une modale de **suggestion de correction** | Le champ corrigé et l'automatisation qui l'entoure |
+| Vous lancez l'**optimiseur d'automatisations** ou demandez une description | Le YAML de l'automatisation |
+| **Agent proactif**, de lui-même | Score de santé, nombre d'issues par sévérité, et les 5 issues principales — ID d'entité plus les 100 premiers caractères de chaque message |
+
+Seule la dernière ligne se produit sans que vous ayez rien demandé. Elle est éteinte sur une installation neuve, et `report_frequency: never` l'arrête sur une installation existante.
+
+**La chaîne de repli mérite d'être comprise.** Un seul appel d'IA essaie *toutes* les entités `ai_task`, puis *tous* les agents conversationnels — votre pipeline Assist préféré d'abord, les autres dans l'ordre de découverte — jusqu'à ce que l'un réponde. Donc si votre agent local est éteint ou à court de quota, le même prompt part chez le fournisseur suivant que vous avez configuré, éventuellement un fournisseur cloud. Il n'existe pas de verrou de fournisseur par appel. Si cela compte pour vous : ne gardez qu'un seul fournisseur d'IA configuré dans Home Assistant, ou laissez l'agent proactif éteint.
+
+### Comment tout désactiver
+
+Tout ce qui précède est un interrupteur dans l'onglet **Configuration** du panneau :
+
+| Option | Effet une fois désactivée |
+|---|---|
+| `mcp_server_enabled` | Les endpoints `/api/haca_mcp` ne sont pas enregistrés du tout |
+| `llm_api_enabled` | L'API LLM HACA disparaît de Paramètres → Assistants vocaux |
+| `llm_write_enabled` | Les agents conversationnels gardent les outils de lecture et perdent les 31 outils d'écriture |
+| `proactive_agent_enabled` | Plus d'analyse autonome, plus de rapport IA |
+| `report_frequency: never` | Garde la surveillance d'événements de l'agent, supprime le rapport périodique |
+
+Modifier l'une des trois premières recharge l'intégration : le changement prend effet immédiatement. Supprimer l'intégration retire avec elle tous les endpoints et services ; `.haca_backups/` et `.haca_reports/` restent sur le disque, à vous de les effacer.
+
+### N'exposez pas Home Assistant directement sur Internet
+
+Chaque endpoint H.A.C.A exige un administrateur, mais un administrateur se prouve par un jeton porteur — et un jeton longue durée qui fuite donne à celui qui le détient vos fichiers de configuration, `lock.unlock` et `alarm_control_panel.disarm` par une seule adresse HTTP. C'est vrai de Home Assistant avec ou sans H.A.C.A ; H.A.C.A augmente ce qu'une seule URL permet d'atteindre.
+
+Atteignez votre instance par Home Assistant Cloud, un VPN, ou un reverse proxy avec MFA devant. Ne redirigez pas le port 8123. Émettez les jetons MCP depuis un compte que vous pouvez révoquer, et révoquez-les dans Paramètres → Sécurité dès qu'un agent n'en a plus besoin.
 
 ---
 

@@ -10,7 +10,7 @@
 
 **Audit, detect and automatically fix issues in your Home Assistant configuration.**
 
-[Full Documentation](https://jeanmarc-labs.github.io/docs-haca/documentation.html) · [README Français](README_fr.md) · [Report a bug](https://github.com/JeanMarc-Labs/ha-config-auditor/issues)
+[Full Documentation](https://jeanmarc-labs.github.io/docs-haca/documentation.html) · [README Français](README.fr.md) · [Report a bug](https://github.com/JeanMarc-Labs/ha-config-auditor/issues)
 
 </div>
 
@@ -37,7 +37,7 @@ Over time, a Home Assistant setup accumulates stale automations, ghost entities,
 | 🗺️ **Area Complexity** | Interactive complexity heatmap per area. Merge and split suggestions. |
 | 🔄 **Redundancies** | Detect logically overlapping automations, blueprint candidates, and automations replaceable by native HA features. |
 | 🧩 **Helpers** | Dedicated tab for all `input_*` and timers with unused-helper detection. |
-| 🔗 **MCP Server (65 tools)** | Built-in Model Context Protocol server for 12 AI agents: Claude Desktop, Cursor, VS Code, Windsurf, Cline, n8n and more. |
+| 🔗 **MCP Server (60 tools)** | Built-in Model Context Protocol server for 12 AI agents: Claude Desktop, Cursor, VS Code, Windsurf, Cline, n8n and more. |
 | 🗂️ **Dependency graph** | D3.js force-directed graph with relationship sidebar (Used by / Uses), CSV and Markdown export per node or full graph. |
 
 ---
@@ -85,7 +85,7 @@ The H.A.C.A panel is organized into **10 main tabs**:
 | **Reports** | PDF/Markdown/JSON reports |
 | **Carte** | D3.js dependency graph with relationship exports |
 | **Batteries** | Monitor · **Predictions** (linear regression) |
-| **Chat** | AI conversational assistant (native LLM API, 65 MCP tools) |
+| **Chat** | AI conversational assistant (native LLM API, 60 MCP tools) |
 | **Compliance** | Metadata quality audit |
 | **Config** | Options, thresholds, MCP token, report frequency, enabled issue types |
 
@@ -101,6 +101,10 @@ The H.A.C.A panel is organized into **10 main tabs**:
 | `battery_alert_threshold` | 20% | Battery alert threshold (applied without HA restart) |
 | `notifications_enabled` | true | HA notifications for new HIGH issues |
 | `report_frequency` | weekly | Automatic report frequency: `daily` / `weekly` / `monthly` / `never` |
+| `mcp_server_enabled` | **off** | MCP server over HTTP — see [Security & privacy](#security--privacy) |
+| `llm_api_enabled` | **off** | Offers the H.A.C.A tools to HA conversation agents |
+| `llm_write_enabled` | false | Lets those agents use the write tools (administrators only) |
+| `proactive_agent_enabled` | **off** | Autonomous analysis and periodic AI report |
 
 ### Ignoring entities
 
@@ -127,7 +131,7 @@ A voice satellite with no authenticated user is never an administrator. When wri
 
 ### AI Chat
 
-The **Chat** tab is a conversational AI assistant with access to **65 MCP tools** enabling reading, creating, modifying and reloading any HA configuration.
+The **Chat** tab is a conversational AI assistant with access to **60 MCP tools** enabling reading, creating, modifying and reloading any HA configuration.
 
 Example requests:
 ```
@@ -144,13 +148,13 @@ Each issue has an **AI** button that opens Chat with a pre-filled prompt tailore
 
 Simple field issues (`no_description`, `no_alias`) show an editable suggestion modal — no full Chat needed.
 
-### MCP Server (65 tools)
+### MCP Server (60 tools)
 
 The built-in MCP server exposes all H.A.C.A and HA tools to external AI agents:
 
 ```
 # Server URL
-http://homeassistant.local:8123/api/haca/mcp
+http://homeassistant.local:8123/api/haca_mcp
 
 # Authentication header
 Authorization: Bearer <your-haca-token>
@@ -161,6 +165,66 @@ Authorization: Bearer <your-haca-token>
 **The MCP endpoint requires an administrator token.** The tools write configuration files and can call any service, which Home Assistant reserves for admins; a long-lived token issued by a non-admin account gets `403`. Every service call made through MCP is attributed to the token's owner in the Home Assistant logbook. `/api/haca_mcp/info` is admin-only too.
 
 Supported agents: Claude Code · Claude Desktop · Cursor · VS Code/Copilot · Windsurf · Cline · Antigravity · Continue.dev · Open WebUI · n8n · HTTP/REST · Gemini CLI
+
+---
+
+## Security & privacy
+
+H.A.C.A reads your entire configuration, can rewrite it, and can hand parts of it to an AI. This section states exactly what that opens, what leaves your machine, and how to close each of it.
+
+### What H.A.C.A exposes
+
+| Surface | Who can reach it | New install |
+|---|---|---|
+| H.A.C.A sidebar panel | Administrators only | on |
+| 32 `haca/*` WebSocket commands (everything the panel calls) | Administrators only | on |
+| 16 `config_auditor.*` HA services | Administrators only | on |
+| `/api/config_auditor/report/<file>` — generated reports | Authenticated administrators | on |
+| `/api/haca_mcp` — MCP server, 60 tools over HTTP | Administrator token; anything else gets `403` | **off** |
+| `/api/haca_mcp/info` — MCP discovery document | Administrator token | **off** |
+| H.A.C.A LLM API — the same 60 tools offered to HA conversation agents | Read tools: anyone who talks to that agent. Write tools: administrators, and only with `llm_write_enabled` on | **off** |
+| Proactive agent — periodic report, AI-enriched | Runs on its own; calls the AI provider configured in HA | **off** |
+
+Two things are worth knowing about that table:
+
+- **The last three are off on a new installation.** They are the only features that reach outside the panel, so you turn them on knowing what they open — from Configuration → **Exposed features**. An entry created *before* v1.8.0 was migrated with all three **on**, so nothing broke on upgrade; if you never used them, turn them off.
+- **Reports are not static files.** They used to be served from a plain static path, which Home Assistant serves without authentication, under predictable names. They now go through an authenticated admin-only view.
+
+### What is sent to an LLM, and when
+
+H.A.C.A never contacts an AI provider itself. It calls whatever you have configured in Home Assistant — an `ai_task` entity, or a conversation agent — so the provider, the account and the billing are the ones you already set up there.
+
+| When | What leaves your instance |
+|---|---|
+| You press the **AI** button on an issue | The issue's type, severity, message, recommendation, and the entity ID or alias |
+| You type in the **Chat** tab | Your message, plus whatever the tools you let it call return |
+| You open a **fix suggestion** modal | The field being fixed and the surrounding automation |
+| You run the **automation optimizer** or ask for a description | The automation's YAML |
+| **Proactive agent**, on its own | Health score, issue counts by severity, and the top 5 issues — entity ID plus the first 100 characters of each message |
+
+Only the last row happens without you asking. It is off on a new install, and `report_frequency: never` stops it on an existing one.
+
+**The fallback chain is worth understanding.** A single AI call tries *every* `ai_task` entity, then *every* conversation agent — your preferred Assist pipeline first, the rest in discovery order — until one answers. So if your local agent is down or out of quota, the same prompt goes to the next provider you have configured, which may be a cloud one. There is no per-call provider pin. If that matters to you, keep a single AI provider configured in Home Assistant, or leave the proactive agent off.
+
+### Turning it all off
+
+Everything above is a toggle in the panel's **Configuration** tab:
+
+| Option | Effect when off |
+|---|---|
+| `mcp_server_enabled` | The `/api/haca_mcp` endpoints are not registered at all |
+| `llm_api_enabled` | The HACA LLM API disappears from Settings → Voice assistants |
+| `llm_write_enabled` | Conversation agents keep the read tools and lose the 31 write ones |
+| `proactive_agent_enabled` | No autonomous analysis, no AI report |
+| `report_frequency: never` | Keeps the agent's event monitoring, drops the periodic report |
+
+Changing one of the first three reloads the integration, so the change takes effect immediately. Removing the integration removes every endpoint and service with it; `.haca_backups/` and `.haca_reports/` stay on disk for you to delete.
+
+### Do not expose Home Assistant directly on the internet
+
+Every H.A.C.A endpoint requires an administrator, but an administrator is proven by a bearer token — and a long-lived token that leaks gives its holder your configuration files, `lock.unlock`, and `alarm_control_panel.disarm` through a single HTTP endpoint. That is true of Home Assistant with or without H.A.C.A; H.A.C.A raises what is reachable through one URL.
+
+Reach your instance through Home Assistant Cloud, a VPN, or a reverse proxy with MFA in front of it. Do not port-forward 8123. Issue MCP tokens from an account you can revoke, and revoke them in Settings → Security when an agent no longer needs one.
 
 ---
 
