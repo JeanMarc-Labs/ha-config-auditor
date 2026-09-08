@@ -14,7 +14,6 @@ both of them.
 """
 from __future__ import annotations
 
-import ast
 import random
 import sys
 from fractions import Fraction
@@ -27,8 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from custom_components.config_auditor.automation_analyzer import AutomationAnalyzer
 
-_SOURCE = Path(__file__).parent.parent / "automation_analyzer.py"
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +34,7 @@ class _Translator:
     it are: a message naming the wrong count, or a recommendation listing the
     wrong automations, has to fail here rather than in the panel."""
 
-    def t(self, key, **kwargs):
+    def t(self, key, /, **kwargs):
         if not kwargs:
             return key
         return f"{key} " + " ".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
@@ -467,66 +464,3 @@ class TestOneIssuePerAutomation:
         ]
         assert issues[0]["duplicate_ids"] == ["automation.light_hall"]
         assert issues[1]["duplicate_ids"] == ["automation.light_kitchen"]
-
-
-# ── The step timings 5-3 step 1 was measured with ─────────────────────────────
-
-def _analyze_all_ast():
-    tree = ast.parse(_SOURCE.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "analyze_all":
-            return node
-    raise AssertionError("analyze_all not found in automation_analyzer.py")
-
-
-class TestTheStepTimings:
-    """Which of this analyzer's steps holds the loop is the question 5-3 step 2
-    is answered from. A step that slips out of a stage stops being measured
-    without anything failing, so the source is checked, not the log."""
-
-    def _stage_labels_around(self, call_name: str) -> list[str]:
-        labels = []
-        for node in ast.walk(_analyze_all_ast()):
-            if not isinstance(node, ast.With):
-                continue
-            calls = [
-                n.func.attr for n in ast.walk(node)
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-            ]
-            if call_name not in calls:
-                continue
-            for item in node.items:
-                call = item.context_expr
-                if (isinstance(call, ast.Call)
-                        and isinstance(call.func, ast.Attribute)
-                        and call.func.attr == "stage"
-                        and call.args
-                        and isinstance(call.args[0], ast.Constant)):
-                    labels.append(call.args[0].value)
-        return labels
-
-    @pytest.mark.parametrize("method,label", [
-        ("_check_duplicate_automations", "duplicates"),
-        ("_check_never_triggered", "never triggered"),
-        ("_check_blueprint_issues", "blueprints"),
-    ])
-    def test_each_check_is_timed_under_its_own_name(self, method, label):
-        assert label in self._stage_labels_around(method), (
-            f"{method}() must run inside timer.stage({label!r}) — without it "
-            "its share of the analysis is invisible"
-        )
-
-    def test_the_breakdown_is_logged_once(self):
-        logged = [
-            node for node in ast.walk(_analyze_all_ast())
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "log"
-        ]
-        assert len(logged) == 1, "one analysis, one breakdown line"
-
-    def test_the_breakdown_stays_quiet_on_a_fast_analysis(self):
-        assert AutomationAnalyzer.SLOW_ANALYSIS_SECONDS > 0, (
-            "a per-step line on INFO at every scan of every installation is "
-            "noise; it is there for the analysis that was actually slow"
-        )

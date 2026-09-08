@@ -71,6 +71,11 @@ def _iter_entity_tokens(text: str):
 class EntityAnalyzer:
     """Analyze entities for issues."""
 
+    # Under this, the per-step breakdown of one analysis is DEBUG detail. At or
+    # above it the analysis held the event loop long enough to be felt in the
+    # interface, and the line saying where the time went belongs on INFO.
+    SLOW_ANALYSIS_SECONDS = 2.0
+
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the analyzer."""
         self.hass = hass
@@ -110,60 +115,84 @@ class EntityAnalyzer:
         script_configs: dict[str, dict] = None,
     ) -> list[dict[str, Any]]:
         """Analyze all entities."""
+        # Audit 5-3 measured this analyzer at 10.4s of an 18.4s scan, in a
+        # single 10.1s stretch that never handed the event loop back — the
+        # largest freeze left in HACA. It was timed as one block, so nothing
+        # said which of its ten steps the time went to. These stages answer
+        # that before anything is refactored, exactly as they did for the
+        # automation analysis, where the answer turned out twice to be work
+        # repeated rather than work that had to be done.
+        from . import ScanTimer
+        steps = ScanTimer("entity analysis", quiet_below=self.SLOW_ANALYSIS_SECONDS)
+
         self.issues = []
-        
+
         # Load language for translations — see automation_analyzer for the rationale.
-        from .translation_utils import resolve_notification_language
-        language = resolve_notification_language(self.hass)
-        await self._translator.async_load_language(language)
-        
+        with steps.stage("translations"):
+            from .translation_utils import resolve_notification_language
+            language = resolve_notification_language(self.hass)
+            await self._translator.async_load_language(language)
+
         # Load ignored entities (haca_ignore label) — MUST be first, before any analysis
-        self._ignored_entity_ids = await self._load_ignored_entity_ids()
+        with steps.stage("haca_ignore"):
+            self._ignored_entity_ids = await self._load_ignored_entity_ids()
 
         # Build entity reference map (automations + scripts)
-        if automation_configs or script_configs:
-            await self._build_entity_references(automation_configs or {}, script_configs or {})
-        
+        with steps.stage("references"):
+            if automation_configs or script_configs:
+                await self._build_entity_references(automation_configs or {}, script_configs or {})
+
         # Analyze entity states
-        await self._analyze_entity_states()
+        with steps.stage("states"):
+            await self._analyze_entity_states()
 
         # Analyze zombie entities
-        await self._analyze_zombie_entities()
-        
+        with steps.stage("zombies"):
+            await self._analyze_zombie_entities()
+
         # Analyze entity registry
-        await self._analyze_entity_registry()
-        
+        with steps.stage("registry"):
+            await self._analyze_entity_registry()
+
         # Analyze ghost registry entries (Spook inspired)
-        await self._analyze_ghost_registry_entries()
-        
+        with steps.stage("ghost registry"):
+            await self._analyze_ghost_registry_entries()
+
         # Analyze broken device references
-        await self._analyze_device_integrity(automation_configs)
-        
+        with steps.stage("device integrity"):
+            await self._analyze_device_integrity(automation_configs)
+
         # v1.2.0 — Extended input_* helper analysis (covers input_boolean too)
-        await self._analyze_input_helpers(automation_configs or {}, script_configs or {})
+        with steps.stage("input helpers"):
+            await self._analyze_input_helpers(automation_configs or {}, script_configs or {})
 
         # v1.2.0 — Timer helper analysis
-        await self._analyze_timer_helpers(automation_configs or {}, script_configs or {})
+        with steps.stage("timer helpers"):
+            await self._analyze_timer_helpers(automation_configs or {}, script_configs or {})
 
         # v1.3.0 — Group analysis
-        await self._analyze_groups()
-        
+        with steps.stage("groups"):
+            await self._analyze_groups()
+
         _LOGGER.info("Entity analysis complete: %d issues found", len(self.issues))
 
         # Separate helper issues (input_*, timer, counter) from pure entity issues
-        _HELPER_DOMAINS = {
-            "input_boolean", "input_number", "input_text",
-            "input_select", "input_datetime", "input_button",
-            "timer", "counter",
-        }
-        self.helper_issues: list[dict] = []
-        pure_entity_issues: list[dict] = []
-        for issue in self.issues:
-            domain = issue.get("entity_id", "").split(".")[0]
-            if domain in _HELPER_DOMAINS or issue.get("type", "").startswith("helper_") or issue.get("type", "") in ("unused_input_boolean",):
-                self.helper_issues.append(issue)
-            else:
-                pure_entity_issues.append(issue)
+        with steps.stage("sorting"):
+            _HELPER_DOMAINS = {
+                "input_boolean", "input_number", "input_text",
+                "input_select", "input_datetime", "input_button",
+                "timer", "counter",
+            }
+            self.helper_issues: list[dict] = []
+            pure_entity_issues: list[dict] = []
+            for issue in self.issues:
+                domain = issue.get("entity_id", "").split(".")[0]
+                if domain in _HELPER_DOMAINS or issue.get("type", "").startswith("helper_") or issue.get("type", "") in ("unused_input_boolean",):
+                    self.helper_issues.append(issue)
+                else:
+                    pure_entity_issues.append(issue)
+
+        steps.log()
 
         return pure_entity_issues
 

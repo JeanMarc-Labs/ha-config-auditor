@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import yaml
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from pathlib import Path
@@ -27,6 +28,39 @@ from .yaml_sources import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Blueprints are written with `!input <name>` throughout, and SafeLoader
+# refuses a tag it does not know. The checks below only need the shape of the
+# file — which inputs exist, which are required, which take an entity — never
+# a resolved value, so every custom tag is read as its own scalar.
+class _AnyTagLoader(yaml.SafeLoader):
+    """SafeLoader that walks straight through a blueprint's !input tags."""
+
+
+_AnyTagLoader.add_multi_constructor(
+    "!", lambda loader, tag, node: loader.construct_scalar(node)
+)
+
+
+def _collect_blueprint_inputs(declared: Any, required: set, entity: set) -> None:
+    """Split a blueprint's declared inputs into the required and entity ones.
+
+    Blueprints nest — ``blueprint.input.<group>.input.<leaf>`` — while the
+    ``use_blueprint.input`` of an automation is always flat, so the groups have
+    to be flattened before the two can be compared.
+    """
+    for key, value in (declared or {}).items():
+        if not isinstance(value, dict):
+            continue
+        if "input" in value:
+            _collect_blueprint_inputs(value["input"], required, entity)
+            continue
+        if "default" not in value:
+            required.add(key)
+        selector = value.get("selector") or {}
+        if isinstance(selector, dict) and ("entity" in selector or "target" in selector):
+            entity.add(key)
 
 
 class AutomationAnalyzer:
@@ -2018,10 +2052,50 @@ class AutomationAnalyzer:
         
         return None
 
+    async def _read_blueprint(self, blueprint_file: Path) -> tuple[bool, frozenset, frozenset]:
+        """Does this blueprint exist, and which inputs does it declare?
+
+        Returns (exists, inputs with no default, inputs behind an entity or
+        target selector). Both the read and the parse run in the executor:
+        parsing a 2 KB blueprint costs about 13 ms on a desktop and closer to
+        a quarter of a second on a Raspberry Pi 3, and audit 5-3 measured that
+        parse sitting on the event loop, where it is time Home Assistant
+        answers nothing.
+
+        A blueprint that cannot be read or parsed reports as present with no
+        declared inputs: the required and entity checks are skipped for the
+        automations using it, rather than the scan failing over one bad file.
+        """
+        def _read_and_parse() -> tuple[bool, frozenset, frozenset]:
+            if not blueprint_file.exists():
+                return False, frozenset(), frozenset()
+            required: set[str] = set()
+            entity: set[str] = set()
+            try:
+                definition = yaml.load(
+                    blueprint_file.read_text(encoding="utf-8"), Loader=_AnyTagLoader
+                ) or {}
+                declared = definition.get("blueprint", {}).get("input", {})
+                if isinstance(declared, dict):
+                    _collect_blueprint_inputs(declared, required, entity)
+            except Exception:
+                pass
+            return True, frozenset(required), frozenset(entity)
+
+        return await self.hass.async_add_executor_job(_read_and_parse)
+
     async def _check_blueprint_issues(self) -> None:
         """Check for malformed or incomplete blueprint configurations."""
         t = self._translator.t
         config_dir = Path(self.hass.config.config_dir)
+
+        # One entry per blueprint path. Reading and parsing the same file once
+        # per automation is what audit 5-3 measured at 5.9s of a 6.3s
+        # automation analysis on a Raspberry Pi 3 — and a blueprint exists to
+        # be reused, so a house has far fewer of them than automations built
+        # on them. The cache lives for one call: a blueprint edited between
+        # two scans is read again by the next one.
+        blueprints: dict[str, tuple[bool, frozenset, frozenset]] = {}
 
         for entity_id, config in self._automation_configs.items():
             # Respect haca_ignore label
@@ -2049,9 +2123,12 @@ class AutomationAnalyzer:
                     })
                     continue
 
-                # Verify blueprint file exists on disk (via executor — non-blocking)
+                # Verify blueprint file exists on disk (read in the executor,
+                # once per blueprint rather than once per automation)
                 blueprint_file = config_dir / "blueprints" / "automation" / blueprint_path
-                _file_exists = await self.hass.async_add_executor_job(blueprint_file.exists)
+                if blueprint_path not in blueprints:
+                    blueprints[blueprint_path] = await self._read_blueprint(blueprint_file)
+                _file_exists, _required_inputs, _entity_inputs = blueprints[blueprint_path]
                 if not _file_exists:
                     self.issues.append({
                         "entity_id": entity_id,
@@ -2069,50 +2146,11 @@ class AutomationAnalyzer:
                 # Original strict logic: flag any null/"" input (medium).
                 # Added: detect unknown entity_id in entity selectors (high),
                 #        flag falsy values [] / False / 0 as low severity.
-                # Blueprint YAML is read via executor to avoid blocking the event loop.
+                # _required_inputs / _entity_inputs came from the cache above:
+                # the leaf inputs with no declared default, and those behind an
+                # entity or target selector.
 
                 inputs = blueprint.get("input", {}) if isinstance(blueprint, dict) else {}
-
-                # Load blueprint definition: resolve nested input groups + detect selectors.
-                # Blueprints use nested groups: blueprint.input.<group>.input.<leaf>
-                # use_blueprint.input is always flat (just leaf key names).
-                # We use a permissive loader that ignores !input tags.
-                _required_inputs: set = set()   # leaf inputs with NO default declared
-                _entity_inputs: set = set()     # leaf inputs with entity/target selector
-
-                def _collect_bp_inputs(d, out_required, out_entity):
-                    for k, v in (d or {}).items():
-                        if not isinstance(v, dict):
-                            continue
-                        if "input" in v:
-                            # input group — recurse into sub-inputs
-                            _collect_bp_inputs(v["input"], out_required, out_entity)
-                        else:
-                            # leaf input
-                            if "default" not in v:
-                                out_required.add(k)
-                            sel = v.get("selector") or {}
-                            if isinstance(sel, dict) and ("entity" in sel or "target" in sel):
-                                out_entity.add(k)
-
-                try:
-                    import yaml as _yaml
-
-                    class _AnyTagLoader(_yaml.SafeLoader):
-                        pass
-                    _AnyTagLoader.add_multi_constructor(
-                        "!", lambda ldr, tag, node: ldr.construct_scalar(node)
-                    )
-
-                    _raw = await self.hass.async_add_executor_job(
-                        lambda: blueprint_file.read_text(encoding="utf-8")
-                    )
-                    _bp_def = _yaml.load(_raw, Loader=_AnyTagLoader) or {}
-                    _bp_inputs_def = _bp_def.get("blueprint", {}).get("input", {})
-                    if isinstance(_bp_inputs_def, dict):
-                        _collect_bp_inputs(_bp_inputs_def, _required_inputs, _entity_inputs)
-                except Exception:
-                    pass  # unreadable — entity/required checks skipped
 
                 if not inputs:
                     self.issues.append({
