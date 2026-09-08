@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 
 import logging
+from contextlib import contextmanager
 import shutil
 from datetime import timedelta
 from pathlib import Path
@@ -271,6 +272,88 @@ async def _wait_for_entities_to_settle(
         await asyncio.sleep(SETTLE_POLL_SECONDS)
 
 
+
+# ─── Scan timings ─────────────────────────────────────────────────────────
+# Audit 5-3 asks whether the scan blocks Home Assistant long enough to be
+# worth moving off the event loop. Nothing in the package measured it, so the
+# plan's "10 to 30 seconds" was an estimate. ScanTimer records how long each
+# stage of a scan takes and logs one line per scan, so that decision can be
+# made from the user's own installation instead of from a guess.
+
+
+class ScanTimer:
+    """Wall-clock timings for one scan, and the log line they produce.
+
+    ``stage()`` is for the sequential parts: their durations add up to the
+    total, and whatever is left over is reported as ``other`` — the untimed
+    glue between stages, which is pure Python on the event loop and therefore
+    exactly what 5-3 is about.
+
+    ``overlapping()`` is for the six analyzers inside the ``asyncio.gather``
+    phase. Each one's clock keeps running while its siblings hold the loop, so
+    those numbers must never be summed; the phase as a whole is timed with
+    ``stage()``, and the breakdown goes to DEBUG with the caveat attached.
+    """
+
+    # A stage quicker than this is folded into the total and not named: on a
+    # small installation most of them are, and a line of twelve "0.0s" hides
+    # the one entry that matters.
+    MIN_REPORTED_SECONDS = 0.1
+
+    def __init__(self) -> None:
+        self._started = monotonic()
+        self._stages: dict[str, float] = {}
+        self._overlapping: dict[str, float] = {}
+
+    @contextmanager
+    def stage(self, label: str):
+        """Time one sequential stage, whether it returns or raises."""
+        start = monotonic()
+        try:
+            yield
+        finally:
+            self._stages[label] = self._stages.get(label, 0.0) + (monotonic() - start)
+
+    @contextmanager
+    def overlapping(self, label: str):
+        """Time one analyzer that shares the loop with its siblings."""
+        start = monotonic()
+        try:
+            yield
+        finally:
+            self._overlapping[label] = (
+                self._overlapping.get(label, 0.0) + (monotonic() - start)
+            )
+
+    @classmethod
+    def _ranked(cls, durations: dict[str, float]) -> str:
+        """Slowest first — the culprit should be the first thing read."""
+        return " · ".join(
+            f"{label} {secs:.1f}s"
+            for label, secs in sorted(
+                durations.items(), key=lambda kv: kv[1], reverse=True
+            )
+            if secs >= cls.MIN_REPORTED_SECONDS
+        )
+
+    def log(self) -> None:
+        """Emit the timings: one INFO line, the gather breakdown at DEBUG."""
+        total = monotonic() - self._started
+        reported = dict(self._stages)
+        reported["other"] = max(0.0, total - sum(self._stages.values()))
+        _LOGGER.info(
+            "HACA: scan finished in %.1fs — %s",
+            total,
+            self._ranked(reported) or "every stage under 0.1s",
+        )
+        if self._overlapping:
+            _LOGGER.debug(
+                "HACA: parallel phase, per analyzer (wall clock — these overlap "
+                "and do not add up to the phase) — %s",
+                self._ranked(self._overlapping) or "every analyzer under 0.1s",
+            )
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the H.A.C.A component.
 
@@ -422,6 +505,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def async_update_data() -> dict[str, Any]:
         """Update data."""
         _LOGGER.debug("Running scheduled scan")
+        timer = ScanTimer()
 
         # Seven analyzers ask for the haca_ignore set. Opening the window here
         # means one registry walk per scan instead of one per analyzer; the
@@ -437,7 +521,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # its return value is not needed here.
         try:
             if "automations" not in excluded:
-                await automation_analyzer.analyze_all()
+                with timer.stage("automations"):
+                    await automation_analyzer.analyze_all()
         except Exception as _auto_err:
             _LOGGER.error(
                 "HACA: automation_analyzer.analyze_all() CRASHED — %s",
@@ -445,13 +530,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         try:
-            entity_issues = (
-                await entity_analyzer.analyze_all(
-                    automation_analyzer.automation_configs,
-                    automation_analyzer.script_configs,
+            with timer.stage("entities"):
+                entity_issues = (
+                    await entity_analyzer.analyze_all(
+                        automation_analyzer.automation_configs,
+                        automation_analyzer.script_configs,
+                    )
+                    if "entities" not in excluded else []
                 )
-                if "entities" not in excluded else []
-            )
         except Exception as _ent_err:
             _LOGGER.error(
                 "HACA: entity_analyzer.analyze_all() CRASHED — %s",
@@ -467,51 +553,58 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def _safe_perf() -> list:
             if "performance" in excluded:
                 return []
-            return await performance_analyzer.analyze_all(
-                automation_analyzer.automation_configs
-            )
+            with timer.overlapping("performance"):
+                return await performance_analyzer.analyze_all(
+                    automation_analyzer.automation_configs
+                )
 
         async def _safe_security() -> list:
             if "security" in excluded:
                 return []
-            return await security_analyzer.analyze_all(
-                automation_analyzer.automation_configs
-            )
+            with timer.overlapping("security"):
+                return await security_analyzer.analyze_all(
+                    automation_analyzer.automation_configs
+                )
 
         async def _safe_dashboard() -> list:
             if not dashboard_analyzer or "dashboards" in excluded:
                 return []
-            return await dashboard_analyzer.analyze_all()
+            with timer.overlapping("dashboards"):
+                return await dashboard_analyzer.analyze_all()
 
         async def _safe_battery() -> list:
             if "batteries" in excluded:
                 return []
-            return await battery_monitor.analyze_all(
-                critical=entry.options.get("battery_critical", 5),
-                low=entry.options.get("battery_low", 15),
-                warning=entry.options.get("battery_warning", 25),
-            )
+            with timer.overlapping("batteries"):
+                return await battery_monitor.analyze_all(
+                    critical=entry.options.get("battery_critical", 5),
+                    low=entry.options.get("battery_low", 15),
+                    warning=entry.options.get("battery_warning", 25),
+                )
 
         async def _safe_recorder() -> tuple[list, float]:
             if not recorder_analyzer or "recorder" in excluded:
                 return [], 0.0
-            orphans = await recorder_analyzer.analyze_all()
+            with timer.overlapping("recorder"):
+                orphans = await recorder_analyzer.analyze_all()
             return orphans, recorder_analyzer.total_wasted_mb
 
         async def _safe_compliance() -> list:
             if not compliance_analyzer or "compliance" in excluded:
                 return []
-            return await compliance_analyzer.async_analyze()
+            with timer.overlapping("compliance"):
+                return await compliance_analyzer.async_analyze()
 
-        results = await asyncio.gather(
-            _safe_perf(),
-            _safe_security(),
-            _safe_dashboard(),
-            _safe_battery(),
-            _safe_recorder(),
-            _safe_compliance(),
-            return_exceptions=True,
-        )
+        with timer.stage("parallel phase"):
+            results = await asyncio.gather(
+                _safe_perf(),
+                _safe_security(),
+                _safe_dashboard(),
+                _safe_battery(),
+                _safe_recorder(),
+                _safe_compliance(),
+                return_exceptions=True,
+            )
 
         # Unpack results with safe fallbacks for exceptions
         performance_issues = results[0] if not isinstance(results[0], BaseException) else []
@@ -601,8 +694,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         battery_predictions: list = []
         if battery_predictor and battery_list:
             try:
-                await battery_predictor.async_save_battery_snapshot(battery_list)
-                battery_predictions = await battery_predictor.async_compute_predictions(battery_list)
+                with timer.stage("battery predictions"):
+                    await battery_predictor.async_save_battery_snapshot(battery_list)
+                    battery_predictions = await battery_predictor.async_compute_predictions(battery_list)
             except Exception as bp_err:
                 _LOGGER.warning("Battery predictor error: %s", bp_err)
 
@@ -610,10 +704,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         area_complexity_data: dict = {}
         if area_complexity_analyzer:
             try:
-                area_complexity_data = await area_complexity_analyzer.async_analyze(
-                    automation_configs=automation_analyzer.automation_configs,
-                    complexity_scores=automation_analyzer.complexity_scores,
-                )
+                with timer.stage("area complexity"):
+                    area_complexity_data = await area_complexity_analyzer.async_analyze(
+                        automation_configs=automation_analyzer.automation_configs,
+                        complexity_scores=automation_analyzer.complexity_scores,
+                    )
             except Exception as ac_err:
                 _LOGGER.warning("Area complexity analyzer error: %s", ac_err)
 
@@ -621,11 +716,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         redundancy_data: dict = {}
         if redundancy_analyzer:
             try:
-                redundancy_data = await redundancy_analyzer.async_analyze(
-                    automation_configs=automation_analyzer.automation_configs,
-                    blueprint_stats=automation_analyzer.blueprint_stats,
-                    complexity_scores=automation_analyzer.complexity_scores,
-                )
+                with timer.stage("redundancy"):
+                    redundancy_data = await redundancy_analyzer.async_analyze(
+                        automation_configs=automation_analyzer.automation_configs,
+                        blueprint_stats=automation_analyzer.blueprint_stats,
+                        complexity_scores=automation_analyzer.complexity_scores,
+                    )
             except Exception as red_err:
                 _LOGGER.warning("Redundancy analyzer error: %s", red_err)
 
@@ -658,10 +754,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         recorder_impact_data: dict = {}
         if recorder_impact_analyzer:
             try:
-                recorder_impact_data = await recorder_impact_analyzer.async_analyze(
-                    automation_configs=automation_analyzer.automation_configs,
-                    complexity_scores=automation_analyzer.complexity_scores,
-                )
+                with timer.stage("recorder impact"):
+                    recorder_impact_data = await recorder_impact_analyzer.async_analyze(
+                        automation_configs=automation_analyzer.automation_configs,
+                        complexity_scores=automation_analyzer.complexity_scores,
+                    )
             except Exception as ri_err:
                 _LOGGER.warning("Recorder impact analyzer error: %s", ri_err)
 
@@ -705,7 +802,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
         if history_manager:
             try:
-                await history_manager.async_save_scan(scan_result)
+                with timer.stage("history"):
+                    await history_manager.async_save_scan(scan_result)
             except Exception as hist_err:
                 _LOGGER.warning("HACA History save error: %s", hist_err)
 
@@ -717,21 +815,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 blueprint_issues + entity_issues + helper_issues + performance_issues +
                 security_issues + dashboard_issues
             )
-            dependency_graph = await dependency_mapper.build(
-                automation_configs=automation_analyzer.automation_configs,
-                script_configs=automation_analyzer.script_configs,
-                scene_configs=automation_analyzer.scene_configs,
-                # Explicit `entity_id:` references only. The full map also holds
-                # the entities reached through an `area_id` / `label_id` target,
-                # which is right for "is this entity used?" but would add one
-                # graph edge per entity of the area — a rendered graph that grows
-                # with the size of the house rather than with the config.
-                entity_references=dict(entity_analyzer.strong_entity_references),
-                alias_map=entity_analyzer.automation_alias_map,
-                all_issues=all_flat_issues,
-            )
+            with timer.stage("dependency graph"):
+                dependency_graph = await dependency_mapper.build(
+                    automation_configs=automation_analyzer.automation_configs,
+                    script_configs=automation_analyzer.script_configs,
+                    scene_configs=automation_analyzer.scene_configs,
+                    # Explicit `entity_id:` references only. The full map also
+                    # holds the entities reached through an `area_id` /
+                    # `label_id` target, which is right for "is this entity
+                    # used?" but would add one graph edge per entity of the
+                    # area — a rendered graph that grows with the size of the
+                    # house rather than with the config.
+                    entity_references=dict(entity_analyzer.strong_entity_references),
+                    alias_map=entity_analyzer.automation_alias_map,
+                    all_issues=all_flat_issues,
+                )
         except Exception as dep_err:
             _LOGGER.error("Dependency mapper error: %s", dep_err)
+
+        timer.log()
 
         return {
             "health_score": health_score,
