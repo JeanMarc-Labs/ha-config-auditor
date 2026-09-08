@@ -12,6 +12,7 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 - **Configuration → Agents IA → Autoriser les outils d'écriture** — l'interrupteur qui autorise un agent conversationnel à utiliser les outils HACA qui modifient l'instance. Désactivé par défaut ; voir la dernière entrée ci-dessous.
 - **Configuration → Fonctions exposées** — trois interrupteurs pour les surfaces qui sortent du panneau : le serveur MCP, l'agent IA proactif et l'API LLM HACA. Elles sont éteintes sur une installation neuve, et en basculer une recharge H.A.C.A. **Une installation antérieure à 1.8.0 les garde toutes les trois allumées**, donc rien de ce dont vous dépendez ne s'arrête. L'onglet MCP dit désormais franchement que le serveur est éteint, au lieu d'afficher un point d'entrée qui répond 404.
 - **Intégration continue** — chaque push et chaque pull request lance hassfest, le contrôle HACS, la suite de tests et `ruff`. Rien ne vérifiait ce dépôt jusqu'ici, et c'est ainsi que le correctif 1.7.7 sur les configs éclatées est parti en release en ayant oublié deux fonctions. `requirements_test.txt` rend la suite exécutable en local en une commande.
+- **Chaque scan indique désormais sa durée, étape par étape** — rien dans H.A.C.A ne mesurait le scan : impossible de dire s'il est assez lent pour mériter d'être sorti de la boucle d'événements de Home Assistant. Une ligne INFO par scan nomme les étapes de la plus lente à la plus rapide ; le détail par analyseur de la phase parallèle s'y trouve aussi, avec `debug_mode`.
 
 ### Sécurité
 

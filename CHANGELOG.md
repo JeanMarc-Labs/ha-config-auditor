@@ -12,6 +12,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Configuration → AI agents → Allow write tools** — the switch that lets a conversation agent use the HACA tools that change the instance. Off by default; see the last entry below.
 - **Configuration → Exposed features** — three switches for the surfaces that reach outside the panel: the MCP server, the proactive AI agent and the HACA LLM API. They are off on a new install, and toggling one reloads H.A.C.A. **An installation that predates 1.8.0 keeps all three on**, so nothing you rely on stops working. The MCP tab now says plainly when the server is off, instead of showing an endpoint that answers 404.
 - **Continuous integration** — every push and pull request runs hassfest, the HACS check, the test suite and `ruff`. Nothing checked this repository before, which is how the 1.7.7 split-config fix reached a release having missed two functions. `requirements_test.txt` makes the suite runnable locally in one command.
+- **Every scan now logs how long it took, stage by stage** — nothing in H.A.C.A measured the scan, so there was no way to tell whether it is slow enough to be worth moving off Home Assistant's event loop. One INFO line per scan names the stages slowest first; the per-analyzer breakdown of the parallel phase is there too, under `debug_mode`.
 
 ### Security
 
