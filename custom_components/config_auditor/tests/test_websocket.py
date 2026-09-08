@@ -6,10 +6,15 @@ from pathlib import Path
 
 import pytest
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from custom_components.config_auditor.tests.conftest import mcp_package_source  # noqa: E402
+
 WS_FILE   = Path(__file__).parent.parent / "websocket.py"
 CONTENT   = WS_FILE.read_text(encoding="utf-8")
-MCP_FILE  = Path(__file__).parent.parent / "mcp_server.py"
-MCP_CONTENT = MCP_FILE.read_text(encoding="utf-8")
+# mcp_server is a package since the 1.8.0 split — read all of it.
+MCP_CONTENT = mcp_package_source()
 YAML_SOURCES_FILE = Path(__file__).parent.parent / "yaml_sources.py"
 YAML_SOURCES_CONTENT = YAML_SOURCES_FILE.read_text(encoding="utf-8")
 YAML_WRITER_FILE = Path(__file__).parent.parent / "yaml_writer.py"

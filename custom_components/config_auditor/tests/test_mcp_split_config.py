@@ -20,9 +20,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from custom_components.config_auditor.tests.conftest import MockHass
 
-mcp = pytest.importorskip(
-    "custom_components.config_auditor.mcp_server",
-    reason="mcp_server needs aiohttp + homeassistant",
+tools_automation = pytest.importorskip(
+    "custom_components.config_auditor.mcp_server.tools_automation",
+    reason="the MCP tools need aiohttp + homeassistant",
+)
+tools_blueprint = pytest.importorskip(
+    "custom_components.config_auditor.mcp_server.tools_blueprint",
+    reason="the MCP tools need aiohttp + homeassistant",
+)
+tools_script_scene = pytest.importorskip(
+    "custom_components.config_auditor.mcp_server.tools_script_scene",
+    reason="the MCP tools need aiohttp + homeassistant",
 )
 
 
@@ -63,11 +71,17 @@ def _read(tmp_path, rel: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _no_backup(monkeypatch):
-    """The tools snapshot the config before destructive ops; not under test here."""
+    """The tools snapshot the config before destructive ops; not under test here.
+
+    _auto_backup lives in tools_system but is imported by name into each tool
+    module, so the stub has to go on every module holding a reference —
+    patching tools_system alone would leave the others on the real one.
+    """
     async def _noop(hass, reason):
         return None
 
-    monkeypatch.setattr(mcp, "_auto_backup", _noop)
+    for module in (tools_automation, tools_blueprint, tools_script_scene):
+        monkeypatch.setattr(module, "_auto_backup", _noop)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -79,7 +93,7 @@ class TestAutomationTools:
     async def test_create_writes_into_the_merged_folder(self, tmp_path):
         """Never the stale config-root file: HA does not read it in this layout."""
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_create_automation(hass, {
+        res = await tools_automation._tool_ha_create_automation(hass, {
             "alias": "Nouvelle", "triggers": TRIGGERS, "actions": ACTIONS})
 
         assert res.get("success") is True, res
@@ -89,7 +103,7 @@ class TestAutomationTools:
     @pytest.mark.asyncio
     async def test_create_detects_a_duplicate_in_any_file(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_create_automation(hass, {
+        res = await tools_automation._tool_ha_create_automation(hass, {
             "alias": "Clima", "triggers": TRIGGERS, "actions": ACTIONS})
 
         assert "already exists" in res.get("error", "")
@@ -97,7 +111,7 @@ class TestAutomationTools:
     @pytest.mark.asyncio
     async def test_update_writes_the_owning_file(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_update_automation(hass, {
+        res = await tools_automation._tool_ha_update_automation(hass, {
             "entity_id": "automation.clima", "description": "modifiee"})
 
         assert res.get("success") is True, res
@@ -107,7 +121,7 @@ class TestAutomationTools:
     @pytest.mark.asyncio
     async def test_update_reports_a_miss_instead_of_a_false_success(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_update_automation(hass, {
+        res = await tools_automation._tool_ha_update_automation(hass, {
             "entity_id": "automation.inexistante", "description": "x"})
 
         assert "error" in res and "not found" in res["error"]
@@ -116,7 +130,7 @@ class TestAutomationTools:
     @pytest.mark.asyncio
     async def test_remove_deletes_from_the_owning_file(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_remove_automation(hass, {"entity_id": "a2"})
+        res = await tools_automation._tool_ha_remove_automation(hass, {"entity_id": "a2"})
 
         assert res.get("success") is True, res
         assert "General" not in _read(tmp_path, "automations/general.yaml")
@@ -128,7 +142,7 @@ class TestAutomationTools:
             "configuration.yaml": "automation: !include automations.yaml\n",
             "automations.yaml": "- id: f1\n  alias: Flat\n  triggers: []\n  actions: []\n",
         })
-        res = await mcp._tool_ha_create_automation(hass, {
+        res = await tools_automation._tool_ha_create_automation(hass, {
             "alias": "Autre", "triggers": TRIGGERS, "actions": ACTIONS})
 
         assert res.get("success") is True, res
@@ -144,7 +158,7 @@ class TestScriptAndSceneTools:
     @pytest.mark.asyncio
     async def test_get_script_finds_a_split_script(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_get_script(hass, {"entity_id": "script.notificar_todo"})
+        res = await tools_script_scene._tool_ha_get_script(hass, {"entity_id": "script.notificar_todo"})
 
         assert res.get("slug") == "notificar_todo", res
         assert res.get("source_file", "").endswith("general.yaml")
@@ -152,27 +166,27 @@ class TestScriptAndSceneTools:
     @pytest.mark.asyncio
     async def test_update_and_remove_script_touch_the_owning_file(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_update_script(hass, {
+        res = await tools_script_scene._tool_ha_update_script(hass, {
             "entity_id": "script.notificar_todo", "description": "maj"})
         assert res.get("success") is True, res
         assert "maj" in _read(tmp_path, "ha_scripts/general.yaml")
 
-        res = await mcp._tool_ha_remove_script(hass, {"entity_id": "script.notificar_todo"})
+        res = await tools_script_scene._tool_ha_remove_script(hass, {"entity_id": "script.notificar_todo"})
         assert res.get("success") is True, res
         assert "notificar_todo" not in _read(tmp_path, "ha_scripts/general.yaml")
 
     @pytest.mark.asyncio
     async def test_scene_read_update_create(self, tmp_path):
         hass = _hass(tmp_path, SPLIT_CONFIG)
-        res = await mcp._tool_ha_get_scene(hass, {"entity_id": "scene.soir"})
+        res = await tools_script_scene._tool_ha_get_scene(hass, {"entity_id": "scene.soir"})
         assert res.get("name") == "Evening", res
 
-        res = await mcp._tool_ha_update_scene(hass, {
+        res = await tools_script_scene._tool_ha_update_scene(hass, {
             "entity_id": "scene.soir", "name": "Late Evening"})
         assert res.get("success") is True, res
         assert "Late Evening" in _read(tmp_path, "scenes/soir.yaml")
 
-        res = await mcp._tool_ha_create_scene(hass, {
+        res = await tools_script_scene._tool_ha_create_scene(hass, {
             "name": "Morning", "entities": {"light.a": "on"}})
         assert res.get("success") is True, res
         assert "Morning" in _read(tmp_path, "scenes/haca_mcp.yaml")
@@ -214,7 +228,7 @@ class TestBlueprintTools:
         """!input is a standard HA tag; PyYAML safe_load raised on every real
         blueprint, so the tool returned an error for all of them."""
         hass = _hass(tmp_path, BP_FILES)
-        res = await mcp._tool_ha_get_blueprint(hass, {"path": BP_REL})
+        res = await tools_blueprint._tool_ha_get_blueprint(hass, {"path": BP_REL})
 
         assert res.get("name") == "Apagar switch", res
         assert list(res.get("inputs", {})) == ["switch_entity"]
@@ -225,7 +239,7 @@ class TestBlueprintTools:
     @pytest.mark.asyncio
     async def test_list_blueprints_returns_metadata_not_errors(self, tmp_path):
         hass = _hass(tmp_path, BP_FILES)
-        res = await mcp._tool_ha_list_blueprints(hass, {})
+        res = await tools_blueprint._tool_ha_list_blueprints(hass, {})
 
         assert res["total"] == 1, res
         assert res["blueprints"][0]["name"] == "Apagar switch"
@@ -235,7 +249,7 @@ class TestBlueprintTools:
     async def test_update_writes_verbatim_and_keeps_input_tags(self, tmp_path):
         hass = _hass(tmp_path, BP_FILES)
         new_text = BLUEPRINT.replace("Apagar switch", "Apagar switch v2")
-        res = await mcp._tool_ha_update_blueprint(hass, {"path": BP_REL, "yaml": new_text})
+        res = await tools_blueprint._tool_ha_update_blueprint(hass, {"path": BP_REL, "yaml": new_text})
 
         assert res.get("success") is True, res
         on_disk = _read(tmp_path, "blueprints/" + BP_REL)
@@ -247,7 +261,7 @@ class TestBlueprintTools:
         """Patching fields meant a yaml.dump() round-trip, which cannot
         represent !input — it silently mangled any real blueprint."""
         hass = _hass(tmp_path, BP_FILES)
-        res = await mcp._tool_ha_update_blueprint(hass, {"path": BP_REL, "name": "X"})
+        res = await tools_blueprint._tool_ha_update_blueprint(hass, {"path": BP_REL, "name": "X"})
 
         assert "yaml=" in res.get("error", "")
         assert "!input switch_entity" in _read(tmp_path, "blueprints/" + BP_REL)
@@ -255,7 +269,7 @@ class TestBlueprintTools:
     @pytest.mark.asyncio
     async def test_update_rejects_yaml_without_a_blueprint_key(self, tmp_path):
         hass = _hass(tmp_path, BP_FILES)
-        res = await mcp._tool_ha_update_blueprint(hass, {
+        res = await tools_blueprint._tool_ha_update_blueprint(hass, {
             "path": BP_REL, "yaml": "alias: not a blueprint\n"})
 
         assert "blueprint" in res.get("error", "")
@@ -272,9 +286,9 @@ class TestBlueprintTools:
         resolved path stays there — these tools are LLM-driven."""
         hass = _hass(tmp_path, BP_FILES)
 
-        assert "error" in await mcp._tool_ha_get_blueprint(hass, {"path": bad_path})
-        assert "error" in await mcp._tool_ha_remove_blueprint(hass, {"path": bad_path})
-        assert "error" in await mcp._tool_ha_update_blueprint(
+        assert "error" in await tools_blueprint._tool_ha_get_blueprint(hass, {"path": bad_path})
+        assert "error" in await tools_blueprint._tool_ha_remove_blueprint(hass, {"path": bad_path})
+        assert "error" in await tools_blueprint._tool_ha_update_blueprint(
             hass, {"path": bad_path, "yaml": "blueprint:\n  name: x\n"})
         assert (tmp_path / "secrets.yaml").exists()
         assert "TOPSECRET" in _read(tmp_path, "secrets.yaml")
@@ -284,6 +298,6 @@ class TestBlueprintTools:
         hass = _hass(tmp_path, BP_FILES)
         outside = str(tmp_path / "secrets.yaml")
 
-        assert "error" in await mcp._tool_ha_get_blueprint(hass, {"path": outside})
-        assert "error" in await mcp._tool_ha_remove_blueprint(hass, {"path": outside})
+        assert "error" in await tools_blueprint._tool_ha_get_blueprint(hass, {"path": outside})
+        assert "error" in await tools_blueprint._tool_ha_remove_blueprint(hass, {"path": outside})
         assert (tmp_path / "secrets.yaml").exists()
