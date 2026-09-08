@@ -338,7 +338,7 @@ class TestJsonSerialization:
         ar_mock.async_get.return_value.async_list_areas.return_value = []
         er_mock.async_get.return_value.entities.get.return_value = None
 
-        from custom_components.config_auditor.mcp_server import _tool_ha_get_entities
+        from custom_components.config_auditor.mcp_server.tools_registry import _tool_ha_get_entities
 
         # Patch the local namespace via the module's helper imports
         with patch("homeassistant.helpers.area_registry.async_get", ar_mock.async_get), \
@@ -479,7 +479,7 @@ class TestHaCreateAutomationFormat:
     @pytest.mark.asyncio
     async def test_accepts_new_format_triggers_actions(self, tmp_path):
         """ha_create_automation must accept triggers/actions (new HA format)."""
-        from custom_components.config_auditor.mcp_server import _tool_ha_create_automation
+        from custom_components.config_auditor.mcp_server.tools_automation import _tool_ha_create_automation
         hass = MockHass(config_dir=str(tmp_path))
         (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
 
@@ -496,7 +496,7 @@ class TestHaCreateAutomationFormat:
     @pytest.mark.asyncio
     async def test_accepts_legacy_format_trigger_action(self, tmp_path):
         """ha_create_automation must still accept legacy trigger/action keys."""
-        from custom_components.config_auditor.mcp_server import _tool_ha_create_automation
+        from custom_components.config_auditor.mcp_server.tools_automation import _tool_ha_create_automation
         hass = MockHass(config_dir=str(tmp_path))
         (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
 
@@ -512,7 +512,7 @@ class TestHaCreateAutomationFormat:
     async def test_uses_triggers_key_in_saved_yaml(self, tmp_path):
         """Saved automation must use 'triggers' key (new HA format)."""
         import yaml as _yaml
-        from custom_components.config_auditor.mcp_server import _tool_ha_create_automation
+        from custom_components.config_auditor.mcp_server.tools_automation import _tool_ha_create_automation
         hass = MockHass(config_dir=str(tmp_path))
         (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
 

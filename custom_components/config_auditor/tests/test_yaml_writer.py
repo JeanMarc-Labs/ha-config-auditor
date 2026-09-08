@@ -348,10 +348,10 @@ class TestEveryWritePathPreservesComments:
 
     @pytest.mark.asyncio
     async def test_mcp_update_automation(self, tmp_path):
-        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        tools_automation = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_automation")
         hass = _hass(tmp_path, FLAT)
 
-        result = await mcp._tool_ha_update_automation(
+        result = await tools_automation._tool_ha_update_automation(
             hass, {"entity_id": "automation.clima", "mode": "restart"}
         )
 
@@ -362,10 +362,10 @@ class TestEveryWritePathPreservesComments:
 
     @pytest.mark.asyncio
     async def test_mcp_remove_automation(self, tmp_path):
-        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        tools_automation = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_automation")
         hass = _hass(tmp_path, FLAT)
 
-        result = await mcp._tool_ha_remove_automation(hass, {"entity_id": "a2"})
+        result = await tools_automation._tool_ha_remove_automation(hass, {"entity_id": "a2"})
 
         assert result.get("success") is True, result
         written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
@@ -374,10 +374,10 @@ class TestEveryWritePathPreservesComments:
 
     @pytest.mark.asyncio
     async def test_mcp_create_automation_appends_without_flattening(self, tmp_path):
-        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        tools_automation = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_automation")
         hass = _hass(tmp_path, FLAT)
 
-        result = await mcp._tool_ha_create_automation(hass, {
+        result = await tools_automation._tool_ha_create_automation(hass, {
             "alias": "Brand new",
             "triggers": [{"platform": "state", "entity_id": "light.x"}],
             "actions": [{"service": "light.turn_on"}],
@@ -390,13 +390,13 @@ class TestEveryWritePathPreservesComments:
 
     @pytest.mark.asyncio
     async def test_mcp_update_script(self, tmp_path):
-        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        tools_script_scene = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_script_scene")
         hass = _hass(tmp_path, {
             "configuration.yaml": "script: !include scripts.yaml\n",
             "scripts.yaml": "# my scripts\nmorning:\n  alias: Morning\n  sequence: []\n",
         })
 
-        result = await mcp._tool_ha_update_script(
+        result = await tools_script_scene._tool_ha_update_script(
             hass, {"entity_id": "script.morning", "alias": "Wake up"}
         )
 
@@ -407,13 +407,13 @@ class TestEveryWritePathPreservesComments:
 
     @pytest.mark.asyncio
     async def test_mcp_create_script_into_a_commented_file(self, tmp_path):
-        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        tools_script_scene = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_script_scene")
         hass = _hass(tmp_path, {
             "configuration.yaml": "script: !include scripts.yaml\n",
             "scripts.yaml": "# my scripts\nmorning:\n  alias: Morning\n  sequence: []\n",
         })
 
-        result = await mcp._tool_ha_create_script(hass, {
+        result = await tools_script_scene._tool_ha_create_script(hass, {
             "script_id": "evening",
             "alias": "Evening",
             "sequence": [{"service": "light.turn_off"}],
@@ -427,7 +427,7 @@ class TestEveryWritePathPreservesComments:
 
     @pytest.mark.asyncio
     async def test_mcp_remove_scene(self, tmp_path):
-        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        tools_script_scene = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_script_scene")
         hass = _hass(tmp_path, {
             "configuration.yaml": "scene: !include scenes.yaml\n",
             "scenes.yaml": (
@@ -437,7 +437,7 @@ class TestEveryWritePathPreservesComments:
             ),
         })
 
-        result = await mcp._tool_ha_remove_scene(hass, {"entity_id": "scene.soir"})
+        result = await tools_script_scene._tool_ha_remove_scene(hass, {"entity_id": "scene.soir"})
 
         assert result.get("success") is True, result
         written = (tmp_path / "scenes.yaml").read_text(encoding="utf-8")

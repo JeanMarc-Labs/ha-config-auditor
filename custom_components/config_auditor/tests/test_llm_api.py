@@ -19,6 +19,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from custom_components.config_auditor.tests.conftest import (  # noqa: E402
+    mcp_package_files,
+    mcp_package_source,
+)
+
 
 # ── Syntax guards ─────────────────────────────────────────────────────────────
 
@@ -28,8 +33,8 @@ class TestLLMApiSyntax:
         ast.parse(src)
 
     def test_mcp_server_valid_syntax(self):
-        src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
-        ast.parse(src)
+        for path in mcp_package_files():
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 # ── HacaLLMAPI structure ──────────────────────────────────────────────────────
@@ -159,7 +164,7 @@ class TestAutoBackupDelegation:
     """_auto_backup must delegate to _tool_ha_backup_create (no duplication)."""
 
     def test_auto_backup_calls_tool(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
+        mcp_src = mcp_package_source()
         # Find _auto_backup function body
         start = mcp_src.find("async def _auto_backup(")
         end   = mcp_src.find("\nasync def ", start + 1)
@@ -171,12 +176,12 @@ class TestAutoBackupDelegation:
             "_auto_backup must not duplicate BackupManager logic"
 
     def test_safe_write_and_reload_exists(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
+        mcp_src = mcp_package_source()
         assert "async def _safe_write_and_reload(" in mcp_src, \
             "_safe_write_and_reload helper not found in mcp_server.py"
 
     def test_safe_write_and_reload_has_rollback(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
+        mcp_src = mcp_package_source()
         start = mcp_src.find("async def _safe_write_and_reload(")
         end   = mcp_src.find("\nasync def ", start + 1)
         fn_body = mcp_src[start:end]
@@ -192,7 +197,7 @@ class TestDeepSearchTimeout:
     """deep_search must have a timeout to protect the event loop."""
 
     def test_wait_for_timeout_present(self):
-        mcp_src = (Path(__file__).parent.parent / "mcp_server.py").read_text(encoding="utf-8")
+        mcp_src = mcp_package_source()
         start = mcp_src.find("async def _tool_ha_deep_search(")
         end   = mcp_src.find("\nasync def ", start + 1)
         fn_body = mcp_src[start:end]

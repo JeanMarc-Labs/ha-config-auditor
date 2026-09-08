@@ -44,6 +44,43 @@ def panel_bundle_path() -> Path:
     return found[0] if found else _WWW / f"haca-panel.{cache_bust or '<no hash file>'}.js"
 
 
+_MCP_PKG = Path(__file__).parent.parent / "mcp_server"
+
+# The reading order of the package: plumbing, then data, then the tool modules,
+# then the assembly and the HTTP surface. Several tests slice the source between
+# two landmarks, so this order is part of what they assert.
+_MCP_MODULES = (
+    "common", "schemas",
+    "tools_system", "tools_audit", "tools_history", "tools_registry",
+    "tools_automation", "tools_script_scene", "tools_blueprint", "tools_lovelace",
+    "catalog", "views", "__init__",
+)
+
+
+def mcp_package_files() -> list[Path]:
+    """Every module of the mcp_server package, in reading order.
+
+    Used by the tests that must parse or compile each file on its own — a
+    concatenation is not valid Python, every module opens with __future__.
+    """
+    files = [_MCP_PKG / f"{name}.py" for name in _MCP_MODULES]
+    missing = [p.name for p in files if not p.is_file()]
+    extra = sorted(p.name for p in _MCP_PKG.glob("*.py") if p not in files)
+    assert not missing, f"mcp_server package is missing {missing}"
+    assert not extra, f"mcp_server gained {extra} — add it to conftest._MCP_MODULES"
+    return files
+
+
+def mcp_package_source() -> str:
+    """The whole MCP server as one string, for the source-level guards.
+
+    mcp_server was a single 6 000-line file until the 1.8.0 split; the checks
+    that used to grep it now grep the package, so a handler cannot escape them
+    by moving to another module.
+    """
+    return "\n".join(p.read_text(encoding="utf-8") for p in mcp_package_files())
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Minimal HA object stubs
 # ═══════════════════════════════════════════════════════════════════════════

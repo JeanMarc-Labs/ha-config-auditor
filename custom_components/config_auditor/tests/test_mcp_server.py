@@ -1,22 +1,35 @@
-"""Tests for mcp_server.py — handler name consistency, tool registry, schema completeness."""
+"""Tests for the mcp_server package — handler name consistency, tool registry,
+schema completeness.
+
+The guards below read the server's own source. mcp_server was one file until
+the 1.8.0 split, so they now read the whole package as one string: a handler
+that moves to another module stays inside the same checks.
+"""
 from __future__ import annotations
 
 import re
 import json
+import sys
 from pathlib import Path
 from collections import Counter
 
 import pytest
 
-MCP_FILE = Path(__file__).parent.parent / "mcp_server.py"
-CONTENT = MCP_FILE.read_text(encoding="utf-8")
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from custom_components.config_auditor.tests.conftest import (  # noqa: E402
+    mcp_package_files,
+    mcp_package_source,
+)
+
+CONTENT = mcp_package_source()
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
 def defined_handlers():
-    """All async def _tool_*() functions defined in mcp_server.py."""
+    """All async def _tool_*() functions defined in the package."""
     return set(re.findall(r"^async def (_tool_\w+)\(", CONTENT, re.MULTILINE))
 
 
@@ -195,18 +208,22 @@ class TestNoHardcodedLanguage:
 # ── Module importability ──────────────────────────────────────────────────────
 
 class TestMcpServerImport:
-    """mcp_server.py must be syntactically valid and importable."""
+    """Every module of the package must be syntactically valid and importable."""
 
     def test_valid_python_syntax(self):
-        import py_compile
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as f:
-            f.write(CONTENT.encode())
-            fname = f.name
-        try:
-            py_compile.compile(fname, doraise=True)
-        except py_compile.PyCompileError as e:
-            pytest.fail(f"Syntax error in mcp_server.py: {e}")
+        import ast
+        for path in mcp_package_files():
+            try:
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            except SyntaxError as e:
+                pytest.fail(f"Syntax error in mcp_server/{path.name}: {e}")
+
+    def test_package_exports_the_public_surface(self):
+        """llm_api.py and __init__.py import these from the package root."""
+        mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")
+        for name in ("MCP_TOOLS", "TOOL_HANDLERS", "MCP_WRITE_TOOLS", "tool_access",
+                     "json_safe", "async_setup_mcp_server"):
+            assert hasattr(mcp, name), f"mcp_server no longer exports {name}"
 
     def test_tool_handlers_dict_has_correct_structure(self):
         """TOOL_HANDLERS must be defined and not empty."""
@@ -231,7 +248,7 @@ class TestJsonSerialization:
         from enum import Enum
         from pathlib import Path as _Path
 
-        from custom_components.config_auditor.mcp_server import _json_default
+        from custom_components.config_auditor.mcp_server.common import _json_default
 
         class _Colour(Enum):
             RED = "red"
@@ -249,7 +266,7 @@ class TestJsonSerialization:
 
     def test_json_default_never_raises(self):
         """Unknown objects must degrade to str(), not blow up the call."""
-        from custom_components.config_auditor.mcp_server import _json_default
+        from custom_components.config_auditor.mcp_server.common import _json_default
 
         class _Exploding:
             def as_dict(self):
@@ -265,7 +282,7 @@ class TestJsonSerialization:
         """A datetime buried in state attributes must not break tools/call."""
         from datetime import datetime, timezone
 
-        from custom_components.config_auditor.mcp_server import _json_default, json_safe
+        from custom_components.config_auditor.mcp_server.common import _json_default, json_safe
 
         result = {
             "state": "on",
