@@ -208,7 +208,10 @@ ruff check .
 
 `ruff.toml` enables pyflakes only (`F`) and the tree is clean against it, so any
 finding is yours. The same four checks run on every push and pull request from
-`.github/workflows/validate.yml`: hassfest, HACS, pytest, ruff.
+`.github/workflows/validate.yml`: HACS, pytest, ruff. hassfest is not run — it
+validates against the schema of a Home Assistant *core* integration, and H.A.C.A
+keeps its own strings at the root of `translations/<lang>.json`, which that schema
+rejects. Home Assistant itself ignores those keys at runtime.
 
 ### Local deployment for testing
 

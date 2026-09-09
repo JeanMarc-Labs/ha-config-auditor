@@ -14,9 +14,14 @@
   ],
   "version": "1.8.0",
   "iot_class": "local_polling",
-  "icon": "mdi:shield-check",
   "dependencies": [
     "frontend",
     "http"
+  ],
+  "after_dependencies": [
+    "assist_pipeline",
+    "backup",
+    "logbook",
+    "recorder"
   ]
 }
