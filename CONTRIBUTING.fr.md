@@ -210,7 +210,10 @@ ruff check .
 
 `ruff.toml` n'active que pyflakes (`F`) et l'arbre est propre — toute remontée
 vient donc de vous. Les mêmes quatre contrôles tournent à chaque push et chaque
-pull request via `.github/workflows/validate.yml` : hassfest, HACS, pytest, ruff.
+pull request via `.github/workflows/validate.yml` : HACS, pytest, ruff. hassfest
+n'est pas lancé : il valide le schéma d'une intégration du *cœur* de Home Assistant,
+or H.A.C.A range ses propres chaînes à la racine de `translations/<lang>.json`, ce que
+ce schéma refuse. Home Assistant, lui, ignore ces clés à l'exécution.
 
 ### Déploiement local pour test
 

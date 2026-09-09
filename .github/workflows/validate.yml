@@ -1,9 +1,20 @@
 name: Validate
 
-# Nothing checked this repository before 1.8.0: no hassfest, no HACS check, and
-# the 24 test files in custom_components/config_auditor/tests were never run
-# outside a developer's machine. That is how the 1.7.7 split-config fix reached
-# a release having missed two functions.
+# Nothing checked this repository before 1.8.0: no HACS check, and the 24 test
+# files in custom_components/config_auditor/tests were never run outside a
+# developer's machine. That is how the 1.7.7 split-config fix reached a release
+# having missed two functions.
+#
+# hassfest is deliberately NOT run here. It validates against the schema of a
+# Home Assistant *core* integration, and H.A.C.A stores its own 16 groups of
+# strings (panel, analyzer, ai_prompts, report, …) at the root of
+# translations/<lang>.json — 97 KB of the 112 KB. Home Assistant ignores those
+# keys at runtime; only hassfest's strict schema rejects them, and splitting the
+# two stores apart is a refactor of the whole translation layer for no runtime
+# gain. The four real defects hassfest did find on its single run (an invalid
+# manifest `icon` key, four undeclared optional components, and eleven
+# `supports_response` entries that services.yaml never reads) are fixed in the
+# same commit that removed this job.
 
 on:
   push:
@@ -16,13 +27,6 @@ on:
     - cron: "0 4 * * 1"
 
 jobs:
-  hassfest:
-    name: hassfest
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
-
   hacs:
     name: HACS
     runs-on: ubuntu-latest
@@ -48,7 +52,7 @@ jobs:
           # The suite imports the real homeassistant package (see
           # tests/conftest.py), and current Core releases require 3.14.
           python-version: "3.14"
-          cache: pip
+          cache-dependency-path: requirements_test.txt
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements_test.txt
       - run: python -m pytest custom_components/config_auditor/tests -q

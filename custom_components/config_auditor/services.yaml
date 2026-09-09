@@ -17,12 +17,10 @@ generate_report:
 list_reports:
   name: List Reports
   description: List all generated reports.
-  supports_response: only
 
 preview_device_id:
   name: Preview device_id Fix
   description: Preview conversion of device_id references to entity_id in an automation without modifying the file.
-  supports_response: only
   fields:
     automation_id:
       name: Automation ID
@@ -68,7 +66,6 @@ fix_device_id:
 preview_mode:
   name: Preview Mode Change
   description: Preview automation mode change without applying.
-  supports_response: only
   fields:
     automation_id:
       name: Automation ID
@@ -117,7 +114,6 @@ fix_mode:
 preview_template:
   name: Preview Template Fix
   description: Preview conversion of simple template conditions into native state conditions.
-  supports_response: only
   fields:
     automation_id:
       name: Automation ID
@@ -145,7 +141,6 @@ fix_template:
 suggest_description_ai:
   name: Suggest Description AI
   description: Use AI to suggest a description for an automation or script based on its logic.
-  supports_response: only
   fields:
     entity_id:
       name: Entity ID
@@ -171,18 +166,15 @@ fix_description:
 list_backups:
   name: List Backups
   description: List all available automation backups.
-  supports_response: only
 
 
 create_backup:
   name: Create Backup
   description: Manually create a backup of automations.yaml.
-  supports_response: optional
 
 restore_backup:
   name: Restore Backup
   description: Restore automations from a backup file (creates backup of current state first).
-  supports_response: optional
   fields:
     backup_path:
       name: Backup Path
@@ -195,7 +187,6 @@ restore_backup:
 get_report_content:
   name: Get Report Content
   description: Retrieve the content of a generated report file.
-  supports_response: only
   fields:
     filename:
       name: Filename
@@ -206,7 +197,6 @@ get_report_content:
 apply_zombie_fix:
   name: Apply Zombie Entity Fix
   description: Replace or remove a reference to a non-existent entity in an automation. A backup is created automatically.
-  supports_response: only
   fields:
     automation_id:
       name: Automation ID
@@ -233,7 +223,6 @@ apply_zombie_fix:
 get_fuzzy_suggestions:
   name: Get Fuzzy Suggestions
   description: Suggest existing entities similar to a not-found entity.
-  supports_response: only
   fields:
     entity_id:
       name: Entity ID
