@@ -11,6 +11,7 @@ from homeassistant.helpers import (
     device_registry as dr,
 )
 
+from .registry_utils import iter_devices
 from .translation_utils import TranslationHelper
 
 _LOGGER = logging.getLogger(__name__)
@@ -332,7 +333,17 @@ class EntityAnalyzer:
         except Exception:  # noqa: BLE001 — registries not loaded yet
             return by_device, by_area, by_label
 
-        devices = getattr(dev_reg, "devices", None) or {}
+        # One pass over the registry, keyed by id, and then ordinary dict
+        # lookups. Asking `dev_reg.devices` for one device per entry costs a
+        # full Python stack walk each time — see registry_utils. On the user's
+        # Raspberry Pi 3 that was 10.1s of CPU on the event loop, for 539
+        # entries, and it was invisible in the log because the deprecation
+        # warning behind it is only ever printed once.
+        devices = {
+            device_id: device
+            for device in iter_devices(dev_reg)
+            if (device_id := getattr(device, "id", None))
+        }
 
         for entry in (getattr(ent_reg, "entities", None) or {}).values():
             entity_id = getattr(entry, "entity_id", None)

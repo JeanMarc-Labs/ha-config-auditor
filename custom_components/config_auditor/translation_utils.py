@@ -281,6 +281,8 @@ async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
     """
     from homeassistant.helpers import entity_registry as er, device_registry as dr
 
+    from .registry_utils import iter_devices
+
     store = _ignore_cache_store(hass)
     if store is not None and store[_IGNORE_CACHE_KEY] is not None:
         return store[_IGNORE_CACHE_KEY]
@@ -296,7 +298,7 @@ async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
                 ignored.add(entry.entity_id)
 
         # 2. Devices labeled → all their entities are ignored
-        for device in dev_reg.devices.values():
+        for device in iter_devices(dev_reg):
             if "haca_ignore" in (getattr(device, "labels", None) or set()):
                 for entry in ent_reg.entities.get_entries_for_device_id(device.id):
                     ignored.add(entry.entity_id)
