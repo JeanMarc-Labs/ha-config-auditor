@@ -52,6 +52,7 @@ jobs:
           # The suite imports the real homeassistant package (see
           # tests/conftest.py), and current Core releases require 3.14.
           python-version: "3.14"
+          cache: pip
           cache-dependency-path: requirements_test.txt
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements_test.txt
@@ -65,7 +66,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-          cache: pip
       - run: pip install ruff
       # Configuration lives in ruff.toml: pyflakes only, and the tree is clean
       # against it. Widen the rule set there, never with a flag here.
