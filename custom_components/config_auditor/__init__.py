@@ -36,6 +36,7 @@ from .const import (
     STORAGE_KEY_HISTORY,
     STORAGE_KEY_BATTERY_HISTORY,
     STORAGE_VERSION,
+    DEFAULT_EXCLUDED_ISSUE_TYPES,
 )
 from .automation_analyzer import AutomationAnalyzer
 from .entity_analyzer import EntityAnalyzer
@@ -496,7 +497,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     API became options and now default to off. An entry still at 1 was created
     before that, when all three ran unconditionally, so it is given an explicit
     True — upgrading H.A.C.A must not silently switch off a server somebody is
-    talking to. New entries are created at 2 and get the off defaults.
+    talking to.
+
+    minor_version 2 → 3 (1.8.0): the default issue-type exclusions are merged in
+    here, once. ``async_setup_entry`` used to redo that merge on every start, so
+    any of those 14 types re-enabled from Configuration → Analysis types was put
+    back into the exclusion list at the next Home Assistant restart — the change
+    looked saved, then vanished. The list belongs to the user from now on.
     """
     if entry.version > 1:
         # Written by a newer H.A.C.A than the one running: refuse rather than
@@ -516,6 +523,21 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "start with them off)."
         )
 
+    if entry.minor_version < 3:
+        options = dict(entry.options)
+        excluded = set(options.get("excluded_issue_types") or ())
+        missing = set(DEFAULT_EXCLUDED_ISSUE_TYPES) - excluded
+        if missing:
+            options["excluded_issue_types"] = sorted(excluded | missing)
+        hass.config_entries.async_update_entry(
+            entry, options=options, version=1, minor_version=3
+        )
+        _LOGGER.info(
+            "[HACA] Config entry migrated to 1.3 — default issue-type exclusions "
+            "seeded once (added %s); the list is no longer rewritten at startup.",
+            sorted(missing) or "nothing",
+        )
+
     return True
 
 
@@ -527,26 +549,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Pré-charger le cache de traductions (évite tout I/O bloquant dans l'event loop)
     await _async_preload_ts_cache(hass)
-
-    # ── Migrate default excluded_issue_types for existing installations ──
-    # New installs get these defaults via config_flow, but users who
-    # installed before v1.6.3 don't.  Merge missing defaults once.
-    _DEFAULT_EXCLUDED_TYPES = {
-        "no_description", "no_alias",
-        "helper_no_friendly_name", "helper_orphaned_disabled_only",
-        "helper_unused", "unused_input_boolean",
-        "script_orphan", "script_blueprint_candidate",
-        "scene_not_triggered", "timer_orphaned",
-        "template_sensor_no_metadata", "template_missing_availability",
-        "missing_state_class", "group_nested_deep",
-    }
-    current_excluded = set(entry.options.get("excluded_issue_types", []))
-    missing_defaults = _DEFAULT_EXCLUDED_TYPES - current_excluded
-    if missing_defaults:
-        new_excluded = sorted(current_excluded | _DEFAULT_EXCLUDED_TYPES)
-        new_options = {**entry.options, "excluded_issue_types": new_excluded}
-        hass.config_entries.async_update_entry(entry, options=new_options)
-        _LOGGER.info("Migrated excluded_issue_types: added %s", missing_defaults)
 
     # ── Refresh ``notification_language_auto`` from the owner's frontend
     # profile language. The panel handshake also writes this option, but

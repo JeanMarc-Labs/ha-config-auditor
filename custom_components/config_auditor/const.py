@@ -189,6 +189,29 @@ DEFAULT_MCP_SERVER_ENABLED = False
 DEFAULT_PROACTIVE_AGENT_ENABLED = False
 DEFAULT_LLM_API_ENABLED = False
 
+# Types d'anomalies exclus par défaut : du bruit pour la plupart des
+# installations, à réactiver depuis Configuration → Types d'analyse.
+# Écrits une seule fois — à la création de l'entrée (config_flow) ou, pour une
+# entrée antérieure à 1.6.3, par async_migrate_entry. Jusqu'à 1.8.0 la fusion
+# était refaite à chaque démarrage, ce qui remettait ces 14 types en exclusion
+# et annulait toute réactivation au premier redémarrage de Home Assistant.
+DEFAULT_EXCLUDED_ISSUE_TYPES: tuple[str, ...] = (
+    "no_description",
+    "no_alias",
+    "helper_no_friendly_name",
+    "helper_orphaned_disabled_only",
+    "helper_unused",
+    "unused_input_boolean",
+    "script_orphan",
+    "script_blueprint_candidate",
+    "scene_not_triggered",
+    "timer_orphaned",
+    "template_sensor_no_metadata",
+    "template_missing_availability",
+    "missing_state_class",
+    "group_nested_deep",
+)
+
 # Issue types - v1.4.0 — Compliance (Module 17)
 ISSUE_COMPLIANCE_NO_FRIENDLY_NAME       = "compliance_no_friendly_name"
 ISSUE_COMPLIANCE_RAW_ENTITY_NAME        = "compliance_raw_entity_name"
