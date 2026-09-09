@@ -7,12 +7,19 @@ YAML loader class, re-read the blueprint file, and re-parsed it — on the event
 loop. A blueprint exists to be reused, so that work was repeated once per
 automation when once per file would do.
 
-This file pins both halves: that the file is read once per blueprint and parsed
-off the loop, and that every finding the checks used to produce still comes out
-of them unchanged.
+Step 2(a) then found that once per file was still once per *scan*: the wall
+clock had not moved, because the user has many distinct blueprints rather than
+many automations sharing a few. The parse is now kept across scans, keyed on
+the file's (mtime, size).
+
+This file pins all three: that the file is read once per blueprint and parsed
+off the loop, that an unchanged blueprint is not parsed again on the next scan
+while an edited or deleted one is, and that every finding the checks used to
+produce still comes out of them unchanged.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -96,14 +103,38 @@ class _Translator:
 
 
 def analyzer(hass, configs, ignored=()):
-    """`_check_blueprint_issues` reads these four attributes and hass."""
+    """`_check_blueprint_issues` reads these five attributes and hass."""
     a = AutomationAnalyzer.__new__(AutomationAnalyzer)
     a.hass = hass
     a._automation_configs = configs
     a._ignored_entity_ids = set(ignored)
     a._translator = _Translator()
     a.issues = []
+    a._blueprint_cache = {}
     return a
+
+
+def rescan(a, configs=None):
+    """A second scan on the same analyzer — which is what production does.
+
+    The analyzer is built once in `async_setup_entry` and captured by the
+    update closure, so its cache is what carries from one scan to the next.
+    """
+    if configs is not None:
+        a._automation_configs = configs
+    a.issues = []
+    return a._check_blueprint_issues()
+
+
+def set_mtime(config_dir: Path, name: str, seconds: int) -> None:
+    """Move a blueprint's mtime by hand.
+
+    Rewriting a file twice in a row is not enough to guarantee two different
+    timestamps — a filesystem clock ticks about every 15 ms on Windows — so
+    the edit tests below say what the mtime is instead of hoping.
+    """
+    path = config_dir / "blueprints" / "automation" / name
+    os.utime(path, ns=(seconds * 10**9, seconds * 10**9))
 
 
 def write_blueprint(config_dir: Path, name: str, body: str = BLUEPRINT) -> None:
@@ -197,6 +228,232 @@ class TestTheBlueprintIsReadOncePerFile:
         """It used to be a fresh class per automation, with its multi-constructor
         registered again each time."""
         assert isinstance(aa_mod._AnyTagLoader, type)
+
+
+# ── And parsed once across scans, not once per scan ──────────────────────────
+
+class TestTheParseIsKeptBetweenScans:
+    """Audit 5-3, step 2(a).
+
+    Reading once per file (step 1b) moved the blocking but not the wall clock:
+    `blueprints` held at 5.8 s because the house has many distinct blueprints,
+    so once per file is still a full read and parse of all of them, every
+    scan. The parse now survives the scan, keyed on the file's (mtime, size).
+    """
+
+    @pytest.fixture
+    def parses(self, monkeypatch):
+        """Every yaml.load of a blueprint, in order."""
+        seen = []
+        real_load = aa_mod.yaml.load
+
+        def _watched_load(stream, *args, **kwargs):
+            seen.append(stream)
+            return real_load(stream, *args, **kwargs)
+
+        monkeypatch.setattr(aa_mod.yaml, "load", _watched_load)
+        return seen
+
+    @pytest.mark.asyncio
+    async def test_an_unchanged_blueprint_is_not_parsed_again(self, tmp_path, parses):
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_000)
+        a = analyzer(hass, {"automation.a": using("motion.yaml", {"transition": 1})})
+
+        await a._check_blueprint_issues()
+        await rescan(a)
+
+        assert len(parses) == 1, "the second scan re-parsed an untouched file"
+        assert hass.executor_jobs == 2, (
+            "one trip per scan is the point — the stat has to happen off the "
+            "loop too, and it is the only thing left to do"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_second_scan_reports_exactly_what_the_first_did(self, tmp_path):
+        """The cache is an optimisation; a scan served from it must be
+        indistinguishable from one that read the file."""
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        write_blueprint(tmp_path, "empty-inputs.yaml")
+        configs = {
+            "automation.empty_required": using("motion.yaml", {"motion_entity": None}),
+            "automation.no_inputs": using("empty-inputs.yaml", {}),
+            "automation.gone": using("removed.yaml", {"x": 1}),
+            "automation.no_path": {"alias": "a", "use_blueprint": {"input": {}}},
+        }
+        a = analyzer(hass, configs)
+
+        await a._check_blueprint_issues()
+        first = list(a.issues)
+        await rescan(a)
+
+        assert first, "the fixture has to produce findings for this to mean anything"
+        assert a.issues == first
+
+    @pytest.mark.asyncio
+    async def test_an_edited_blueprint_is_parsed_again(self, tmp_path, parses):
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_000)
+        a = analyzer(
+            hass, {"automation.a": using("motion.yaml", {"no_motion_wait": None})}
+        )
+        await a._check_blueprint_issues()
+        assert a.issues == [], "an empty value is fine while the input has a default"
+
+        # `no_motion_wait` loses its default, so it joins the required ones and
+        # leaving it empty becomes a finding.
+        write_blueprint(
+            tmp_path, "motion.yaml", BLUEPRINT.replace("      default: 120\n", "")
+        )
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_060)
+        await rescan(a)
+
+        assert len(parses) == 2, "an edited blueprint was served from the cache"
+        assert types_of(a.issues) == ["blueprint_empty_input"], (
+            "the re-parse has to change the verdict, not just happen"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_edit_that_keeps_the_size_is_still_seen(self, tmp_path, parses):
+        """Size alone would miss it — the mtime is half of the key."""
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_000)
+        a = analyzer(hass, {"automation.a": using("motion.yaml", {"transition": 1})})
+        await a._check_blueprint_issues()
+
+        edited = BLUEPRINT.replace("default: 120", "default: 121")
+        assert len(edited) == len(BLUEPRINT)
+        write_blueprint(tmp_path, "motion.yaml", edited)
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_060)
+        await rescan(a)
+
+        assert len(parses) == 2
+
+    @pytest.mark.asyncio
+    async def test_an_edit_that_keeps_the_mtime_is_still_seen(self, tmp_path, parses):
+        """And the size is the other half. A blueprint restored from a backup
+        carries the timestamp it was saved with, not the one it is written at."""
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_000)
+        a = analyzer(hass, {"automation.a": using("motion.yaml", {"transition": 1})})
+        await a._check_blueprint_issues()
+
+        write_blueprint(tmp_path, "motion.yaml", BLUEPRINT + "\n# a longer file\n")
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_000)
+        await rescan(a)
+
+        assert len(parses) == 2
+
+    @pytest.mark.asyncio
+    async def test_each_file_gets_its_own_entry(self, tmp_path, parses):
+        """Two blueprints deliberately given the same size and the same mtime:
+        only the path tells them apart, so it has to be in the key."""
+        hass = _CountingHass(tmp_path)
+        # Same size, same mtime, opposite verdicts: in the twin the wait has no
+        # default, so leaving it empty is a finding there and not in the other.
+        twin = (
+            BLUEPRINT.replace("      default: 120\n", "") + "# padded for tests\n"
+        )
+        assert len(twin) == len(BLUEPRINT)
+        write_blueprint(tmp_path, "motion.yaml")
+        write_blueprint(tmp_path, "twin.yaml", twin)
+        for name in ("motion.yaml", "twin.yaml"):
+            set_mtime(tmp_path, name, 1_700_000_000)
+
+        a = analyzer(hass, {
+            "automation.a": using("motion.yaml", {"no_motion_wait": None}),
+            "automation.b": using("twin.yaml", {"no_motion_wait": None}),
+        })
+        await a._check_blueprint_issues()
+
+        assert len(parses) == 2
+        assert [issue["entity_id"] for issue in a.issues] == ["automation.b"]
+
+    @pytest.mark.asyncio
+    async def test_a_touched_but_unchanged_file_is_parsed_again(self, tmp_path, parses):
+        """A signature is not a checksum. Re-reading a file whose mtime moved
+        is the safe half of the trade and costs one parse."""
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_000)
+        a = analyzer(hass, {"automation.a": using("motion.yaml", {"transition": 1})})
+        await a._check_blueprint_issues()
+
+        set_mtime(tmp_path, "motion.yaml", 1_700_000_060)
+        await rescan(a)
+        assert len(parses) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_blueprint_installed_between_two_scans_is_picked_up(self, tmp_path):
+        """Nothing negative is remembered: a missing file is stat()ed again
+        every scan, which costs nothing and lets it come back on its own."""
+        hass = _CountingHass(tmp_path)
+        a = analyzer(
+            hass, {"automation.a": using("motion.yaml", {"motion_entity": None})}
+        )
+        await a._check_blueprint_issues()
+        assert types_of(a.issues) == ["blueprint_file_not_found"]
+
+        write_blueprint(tmp_path, "motion.yaml")
+        await rescan(a)
+        assert types_of(a.issues) == ["blueprint_empty_input"], (
+            "the file is there now, so its declared inputs are what gets checked"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_blueprint_deleted_between_two_scans_is_reported_missing(
+        self, tmp_path
+    ):
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        a = analyzer(hass, {"automation.a": using("motion.yaml", {"transition": 1})})
+        await a._check_blueprint_issues()
+
+        (tmp_path / "blueprints" / "automation" / "motion.yaml").unlink()
+        await rescan(a)
+        assert types_of(a.issues) == ["blueprint_file_not_found"]
+        assert a._blueprint_cache == {}, (
+            "a file that is gone must leave nothing behind, or it can never "
+            "be seen changing again"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_stat_runs_in_the_executor(self, tmp_path, monkeypatch):
+        """The whole point of the cached scan is that it touches the disk off
+        the loop. A stat is cheap, but it is still I/O on an SD card."""
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        stats_inside = []
+        real_stat = Path.stat
+
+        def _watched_stat(self, *args, **kwargs):
+            if self.name == "motion.yaml":
+                stats_inside.append(hass.inside_executor)
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", _watched_stat)
+
+        a = analyzer(hass, {"automation.a": using("motion.yaml", {"transition": 1})})
+        await a._check_blueprint_issues()
+        await rescan(a)
+
+        assert stats_inside and all(stats_inside), f"stat on the loop: {stats_inside}"
+
+    @pytest.mark.asyncio
+    async def test_two_analyzers_do_not_share_a_cache(self, tmp_path, parses):
+        """The cache belongs to the analyzer instance, so a reload of the
+        integration starts from the disk again."""
+        hass = _CountingHass(tmp_path)
+        write_blueprint(tmp_path, "motion.yaml")
+        configs = {"automation.a": using("motion.yaml", {"transition": 1})}
+        await analyzer(hass, configs)._check_blueprint_issues()
+        await analyzer(hass, configs)._check_blueprint_issues()
+        assert len(parses) == 2
 
 
 # ── The findings themselves, unchanged ───────────────────────────────────────

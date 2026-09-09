@@ -94,6 +94,11 @@ class AutomationAnalyzer:
         self._registered_floor_ids: set[str] = set()
         self._registered_label_ids: set[str] = set()
         self._ignored_entity_ids: set[str] = set()
+        # One entry per blueprint file, kept across scans — see
+        # _read_blueprint. Bounded by the blueprint paths the config refers to.
+        self._blueprint_cache: dict[
+            str, tuple[tuple[int, int], tuple[bool, frozenset, frozenset]]
+        ] = {}
         # complexity_scores: one entry per automation, all of them (score 0 included)
         self.complexity_scores: list[dict] = []
         # script_complexity_scores: one entry per script
@@ -2056,19 +2061,43 @@ class AutomationAnalyzer:
         """Does this blueprint exist, and which inputs does it declare?
 
         Returns (exists, inputs with no default, inputs behind an entity or
-        target selector). Both the read and the parse run in the executor:
-        parsing a 2 KB blueprint costs about 13 ms on a desktop and closer to
-        a quarter of a second on a Raspberry Pi 3, and audit 5-3 measured that
-        parse sitting on the event loop, where it is time Home Assistant
-        answers nothing.
+        target selector). The stat, the read and the parse all run in the
+        executor: parsing a 2 KB blueprint costs about 13 ms on a desktop and
+        closer to a quarter of a second on a Raspberry Pi 3, and audit 5-3
+        measured that parse sitting on the event loop, where it is time Home
+        Assistant answers nothing.
+
+        The parse is then kept across scans, keyed on the file's (mtime, size):
+        this analyzer is built once and captured by the update closure, so it
+        outlives the scan. An unchanged blueprint therefore costs one stat()
+        per scan instead of a full read and parse — 5.8 s of the automation
+        analysis on the user's Raspberry Pi 3, where reading once per file had
+        not moved the wall clock because the house has many distinct
+        blueprints. An edited file changes its signature and is read again; a
+        missing one is stat()ed every scan, which is free and lets it come
+        back on its own.
 
         A blueprint that cannot be read or parsed reports as present with no
         declared inputs: the required and entity checks are skipped for the
         automations using it, rather than the scan failing over one bad file.
+        That verdict is cached like any other — the file has to change before
+        it can parse differently.
         """
-        def _read_and_parse() -> tuple[bool, frozenset, frozenset]:
-            if not blueprint_file.exists():
-                return False, frozenset(), frozenset()
+        cache_key = str(blueprint_file)
+        cached = self._blueprint_cache.get(cache_key)
+
+        def _stat_read_and_parse() -> tuple[
+            tuple[int, int] | None, tuple[bool, frozenset, frozenset]
+        ]:
+            try:
+                stat = blueprint_file.stat()
+            except OSError:
+                return None, (False, frozenset(), frozenset())
+            # Nanoseconds rather than st_mtime: a float loses precision on
+            # recent timestamps, and a blueprint can be saved twice a second.
+            signature = (stat.st_mtime_ns, stat.st_size)
+            if cached is not None and cached[0] == signature:
+                return signature, cached[1]
             required: set[str] = set()
             entity: set[str] = set()
             try:
@@ -2080,9 +2109,14 @@ class AutomationAnalyzer:
                     _collect_blueprint_inputs(declared, required, entity)
             except Exception:
                 pass
-            return True, frozenset(required), frozenset(entity)
+            return signature, (True, frozenset(required), frozenset(entity))
 
-        return await self.hass.async_add_executor_job(_read_and_parse)
+        signature, result = await self.hass.async_add_executor_job(_stat_read_and_parse)
+        if signature is None:
+            self._blueprint_cache.pop(cache_key, None)
+        else:
+            self._blueprint_cache[cache_key] = (signature, result)
+        return result
 
     async def _check_blueprint_issues(self) -> None:
         """Check for malformed or incomplete blueprint configurations."""
@@ -2093,8 +2127,9 @@ class AutomationAnalyzer:
         # per automation is what audit 5-3 measured at 5.9s of a 6.3s
         # automation analysis on a Raspberry Pi 3 — and a blueprint exists to
         # be reused, so a house has far fewer of them than automations built
-        # on them. The cache lives for one call: a blueprint edited between
-        # two scans is read again by the next one.
+        # on them. This dict lives for one call and holds the whole scan to a
+        # single trip per blueprint; _read_blueprint holds the parse itself
+        # across scans, so that trip is usually just a stat().
         blueprints: dict[str, tuple[bool, frozenset, frozenset]] = {}
 
         for entity_id, config in self._automation_configs.items():

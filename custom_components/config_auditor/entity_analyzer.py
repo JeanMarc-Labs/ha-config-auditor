@@ -1,7 +1,6 @@
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
-import json
 import logging
 import re
 from typing import Any
@@ -242,10 +241,42 @@ class EntityAnalyzer:
         if script_configs:
             sources.extend(script_configs.items())
 
+        # Audit 5-3 step 2(b): the walk itself goes to a worker thread in one
+        # trip. It was 9.9s of a 10.0s entity analysis on the user's Raspberry
+        # Pi 3, and the loop-latency probe caught it as a single 9.8s freeze —
+        # the whole of it pure Python on the event loop. What stays here is the
+        # 7ms that reads Home Assistant: the alias map above, the known ids and
+        # the target indexes. The job below touches no hass object, only those
+        # results and the config dicts, which belong to automation_analyzer and
+        # are not written while the scan runs.
+        strong, combined, text_ids = await self.hass.async_add_executor_job(
+            self._resolve_references, sources, known_ids, indexes
+        )
+        self._strong_entity_references.update(strong)
+        self._entity_references.update(combined)
+        self._all_config_entity_ids = text_ids
+
+    def _resolve_references(
+        self,
+        sources: list[tuple[str, dict]],
+        known_ids: set[str],
+        indexes: dict[str, dict[str, set[str]]],
+    ) -> tuple[dict[str, list[str]], dict[str, list[str]], set[str]]:
+        """Resolve every source's references — the executor half of the walk.
+
+        Returns ``(strong, strong + weak, entity-shaped tokens)``. Runs in a
+        worker thread, so it must stay pure: no ``self.hass``, no registry, no
+        state machine, nothing but ``_walk_config`` and the two structures the
+        caller built while it held the loop. There is no ``sleep(0)`` in here
+        either — a thread is preempted by the interpreter every few
+        milliseconds, which is the whole point of moving the work.
+        """
+        strong: dict[str, list[str]] = defaultdict(list)
+        combined: dict[str, list[str]] = defaultdict(list)
         text_ids: set[str] = set()
 
-        for idx, (source_id, config) in enumerate(sources):
-            explicit, templates, targets = self._walk_config(config)
+        for source_id, config in sources:
+            explicit, templates, targets, tokens = self._walk_config(config)
 
             weak: set[str] = set()
             for text in templates:
@@ -260,21 +291,18 @@ class EntityAnalyzer:
                 weak.update(indexes[field].get(value, ()))
 
             for entity_id in explicit:
-                self._strong_entity_references[entity_id].append(source_id)
+                strong[entity_id].append(source_id)
             for entity_id in explicit | weak:
-                self._entity_references[entity_id].append(source_id)
+                combined[entity_id].append(source_id)
 
             # Safety net for the "unused helper" checks: every entity-shaped
-            # token in the raw config, whatever key it hides under.
-            try:
-                text_ids.update(_iter_entity_tokens(json.dumps(config, default=str)))
-            except Exception:  # noqa: BLE001 — an unserialisable config just skips the net
-                pass
+            # token in the config, whatever key it hides under. It used to be a
+            # second pass, json.dumps + regex over the same config the walk had
+            # just visited — 32% of this method, measured. The walk collects it
+            # on the way through now.
+            text_ids.update(tokens)
 
-            if idx % 10 == 0:
-                await asyncio.sleep(0)
-
-        self._all_config_entity_ids = text_ids
+        return strong, combined, text_ids
 
     def _collect_known_entity_ids(self) -> set[str]:
         """Every entity id Home Assistant knows about (state machine + registry)."""
@@ -328,15 +356,33 @@ class EntityAnalyzer:
 
     def _walk_config(
         self, config: Any
-    ) -> tuple[set[str], list[str], list[tuple[str, str]]]:
+    ) -> tuple[set[str], list[str], list[tuple[str, str]], set[str]]:
         """Walk one automation/script config and collect every reference it holds.
 
-        Returns ``(entity_ids, template_strings, target_ids)``, where ``target_ids``
-        is a list of ``(field, value)`` pairs for device_id / area_id / label_id.
+        Returns ``(entity_ids, template_strings, target_ids, text_tokens)``, where
+        ``target_ids`` is a list of ``(field, value)`` pairs for device_id /
+        area_id / label_id, and ``text_tokens`` is every ``domain.object_id``
+        shaped token found anywhere in the config — the safety net the unused
+        helper checks read.
+
+        That last set used to be built by a second pass, ``json.dumps`` plus the
+        same regex over the config this walk had just visited, and it was 32% of
+        the reference build (audit 5-3, step 2(c)). Collecting it here walks the
+        config once. Three deliberate differences from the dump:
+
+        * the depth cap applies to it now — beyond thirty levels nothing is
+          collected, where the dump had no limit;
+        * a value that cannot be rendered as text costs only itself, where the
+          dump used to fail and take the whole config's tokens with it;
+        * ``json.dumps`` escapes non-ASCII, so it turned "sensor.café" into
+          "sensor.caf\u00e9" and found a "sensor.caf" token in it. Reading the
+          string itself finds nothing there, which is the better answer: an
+          entity id is slugified ASCII, so no real entity is ever spelt that way.
         """
         entity_ids: set[str] = set()
         templates: list[str] = []
         targets: list[tuple[str, str]] = []
+        text_parts: list[str] = []
 
         def _add_entity(value: Any) -> None:
             if isinstance(value, str):
@@ -353,6 +399,26 @@ class EntityAnalyzer:
                 for item in value:
                     _add_target(field, item)
 
+        def _add_tokens(value: Any) -> None:
+            """Keep one scalar for the token pass, as the JSON dump presented it.
+
+            The strings are collected rather than searched one by one: matching
+            a regex 4 000 times costs far more in call overhead than matching it
+            once over the joined text, which is why the dump looked cheap. The
+            dot test throws away most of them for nothing — a token needs one.
+            """
+            if isinstance(value, str):
+                if "." in value:
+                    text_parts.append(value)
+            elif value is None or isinstance(value, (bool, int, float)):
+                # Written as null / true / a number: no token can hide in one.
+                return
+            else:
+                try:  # what `default=str` did for anything else
+                    text_parts.append(str(value))
+                except Exception:  # noqa: BLE001 — unrenderable, so unreadable
+                    pass
+
         def _walk(node: Any, depth: int) -> None:
             if depth > _MAX_CONFIG_DEPTH:
                 return
@@ -362,6 +428,9 @@ class EntityAnalyzer:
                         _add_entity(value)
                     elif key in _TARGET_ID_FIELDS:
                         _add_target(key, value)
+                    # The dump quoted the keys too, and an entity id does turn
+                    # up as one — `input_boolean.x: {...}` in a package file.
+                    _add_tokens(key)
                     _walk(value, depth + 1)
             elif isinstance(node, list):
                 for item in node:
@@ -369,9 +438,16 @@ class EntityAnalyzer:
             elif isinstance(node, str):
                 if "{{" in node or "{%" in node:
                     templates.append(node)
+                _add_tokens(node)
+            else:
+                _add_tokens(node)
 
         _walk(config, 0)
-        return entity_ids, templates, targets
+        # One pass over everything the walk kept. A newline cannot glue two
+        # halves into a token: the regex is anchored on word boundaries, and
+        # the dump separated its values the same way.
+        text_ids = set(_iter_entity_tokens("\n".join(text_parts)))
+        return entity_ids, templates, targets, text_ids
 
     async def _analyze_entity_states(self) -> None:
         """Analyze entity states."""
@@ -652,10 +728,9 @@ class EntityAnalyzer:
         if not text_ids and (automation_configs or script_configs):
             text_ids = set()
             for cfg in list(automation_configs.values()) + list(script_configs.values()):
-                try:
-                    text_ids.update(_iter_entity_tokens(json.dumps(cfg, default=str)))
-                except Exception:  # noqa: BLE001 — an unserialisable config just skips the net
-                    pass
+                # The same walk the reference pass uses, so this fallback and
+                # production can never answer differently.
+                text_ids.update(self._walk_config(cfg)[3])
 
         all_states = self.hass.states.async_all()
         helpers = [s for s in all_states if s.entity_id.split(".")[0] in INPUT_DOMAINS]
