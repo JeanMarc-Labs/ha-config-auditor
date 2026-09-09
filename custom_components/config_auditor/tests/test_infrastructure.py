@@ -309,9 +309,29 @@ class TestExposedFeatureOptions:
         entry = MagicMock()
         entry.version = version
         entry.minor_version = minor_version
-        entry.options = options if options is not None else {}
+        entry.options = dict(options) if options is not None else {}
         entry.entry_id = "haca_entry"
         return entry
+
+    def _hass(self, entry):
+        """A hass whose ``async_update_entry`` writes back, like the real one.
+
+        The migration runs one step per minor_version, and each step reads the
+        options the previous one left. A mock that only records the call makes
+        every step start from the original entry, which is not what happens in
+        Home Assistant.
+        """
+        hass = MagicMock()
+
+        def _apply(target, **kwargs):
+            if "options" in kwargs:
+                target.options = dict(kwargs["options"])
+            for attr in ("version", "minor_version"):
+                if attr in kwargs:
+                    setattr(target, attr, kwargs[attr])
+
+        hass.config_entries.async_update_entry = MagicMock(side_effect=_apply)
+        return hass
 
     @pytest.mark.asyncio
     async def test_pre_1_8_0_entry_keeps_all_three_enabled(self):
@@ -322,60 +342,56 @@ class TestExposedFeatureOptions:
             OPT_LLM_API_ENABLED,
         )
 
-        hass = MagicMock()
-        hass.config_entries.async_update_entry = MagicMock()
         entry = self._entry(options={"scan_interval": 60})
+        hass = self._hass(entry)
 
         assert await async_migrate_entry(hass, entry) is True
 
-        _, kwargs = hass.config_entries.async_update_entry.call_args
-        assert kwargs["minor_version"] == 2
-        assert kwargs["options"][OPT_MCP_SERVER_ENABLED] is True
-        assert kwargs["options"][OPT_PROACTIVE_AGENT_ENABLED] is True
-        assert kwargs["options"][OPT_LLM_API_ENABLED] is True
+        assert entry.minor_version == 3
+        assert entry.options[OPT_MCP_SERVER_ENABLED] is True
+        assert entry.options[OPT_PROACTIVE_AGENT_ENABLED] is True
+        assert entry.options[OPT_LLM_API_ENABLED] is True
         # Untouched options survive the migration.
-        assert kwargs["options"]["scan_interval"] == 60
+        assert entry.options["scan_interval"] == 60
 
     @pytest.mark.asyncio
     async def test_migration_does_not_override_an_explicit_choice(self):
         from custom_components.config_auditor import async_migrate_entry
         from custom_components.config_auditor.const import OPT_MCP_SERVER_ENABLED
 
-        hass = MagicMock()
-        hass.config_entries.async_update_entry = MagicMock()
         entry = self._entry(options={OPT_MCP_SERVER_ENABLED: False})
+        hass = self._hass(entry)
 
         await async_migrate_entry(hass, entry)
 
-        _, kwargs = hass.config_entries.async_update_entry.call_args
-        assert kwargs["options"][OPT_MCP_SERVER_ENABLED] is False
+        assert entry.options[OPT_MCP_SERVER_ENABLED] is False
 
     @pytest.mark.asyncio
     async def test_already_migrated_entry_is_left_alone(self):
         from custom_components.config_auditor import async_migrate_entry
 
-        hass = MagicMock()
-        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._entry(minor_version=3)
+        hass = self._hass(entry)
 
-        assert await async_migrate_entry(hass, self._entry(minor_version=2)) is True
+        assert await async_migrate_entry(hass, entry) is True
         hass.config_entries.async_update_entry.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_entry_from_a_newer_haca_is_refused(self):
         from custom_components.config_auditor import async_migrate_entry
 
-        hass = MagicMock()
-        hass.config_entries.async_update_entry = MagicMock()
+        entry = self._entry(version=2)
+        hass = self._hass(entry)
 
-        assert await async_migrate_entry(hass, self._entry(version=2)) is False
+        assert await async_migrate_entry(hass, entry) is False
         hass.config_entries.async_update_entry.assert_not_called()
 
     def test_config_flow_declares_the_migration_target(self):
         from custom_components.config_auditor.config_flow import ConfigAuditorConfigFlow
 
         assert ConfigAuditorConfigFlow.VERSION == 1
-        assert ConfigAuditorConfigFlow.MINOR_VERSION == 2, (
-            "async_migrate_entry migrates to minor_version 2 — HA only calls it "
+        assert ConfigAuditorConfigFlow.MINOR_VERSION == 3, (
+            "async_migrate_entry migrates to minor_version 3 — HA only calls it "
             "while the flow declares a higher version than the stored entry"
         )
 
@@ -416,3 +432,99 @@ class TestExposedFeatureOptions:
             "the three options are read only at setup, so save_options must "
             "reload the entry when one of them changes"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Default issue-type exclusions
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDefaultExcludedIssueTypes:
+    """The 14 types excluded by default are seeded once, never re-applied.
+
+    Up to 1.8.0 ``async_setup_entry`` merged them back into
+    ``excluded_issue_types`` on every start. Re-enabling one of them from
+    Configuration → Analysis types therefore held until the next Home Assistant
+    restart and then silently reverted — the panel's own saved value was
+    overwritten by the merge.
+    """
+
+    BASE = Path(__file__).parent.parent
+
+    def _entry(self, *, minor_version, options):
+        entry = MagicMock()
+        entry.version = 1
+        entry.minor_version = minor_version
+        entry.options = dict(options)
+        entry.entry_id = "haca_entry"
+        return entry
+
+    def _hass(self, entry):
+        hass = MagicMock()
+
+        def _apply(target, **kwargs):
+            if "options" in kwargs:
+                target.options = dict(kwargs["options"])
+            for attr in ("version", "minor_version"):
+                if attr in kwargs:
+                    setattr(target, attr, kwargs[attr])
+
+        hass.config_entries.async_update_entry = MagicMock(side_effect=_apply)
+        return hass
+
+    @pytest.mark.asyncio
+    async def test_defaults_are_seeded_once_for_an_older_entry(self):
+        from custom_components.config_auditor import async_migrate_entry
+        from custom_components.config_auditor.const import DEFAULT_EXCLUDED_ISSUE_TYPES
+
+        entry = self._entry(
+            minor_version=2,
+            options={"excluded_issue_types": ["some_type_of_mine"]},
+        )
+        hass = self._hass(entry)
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        assert entry.minor_version == 3
+        excluded = set(entry.options["excluded_issue_types"])
+        assert set(DEFAULT_EXCLUDED_ISSUE_TYPES) <= excluded
+        # The user's own exclusion is kept.
+        assert "some_type_of_mine" in excluded
+
+    @pytest.mark.asyncio
+    async def test_a_re_enabled_default_type_stays_re_enabled(self):
+        """The regression: this is the state the panel writes when the user
+        ticks "no description" back on, and it must survive a restart."""
+        from custom_components.config_auditor import async_migrate_entry
+        from custom_components.config_auditor.const import DEFAULT_EXCLUDED_ISSUE_TYPES
+
+        kept = [t for t in DEFAULT_EXCLUDED_ISSUE_TYPES if t != "no_description"]
+        entry = self._entry(minor_version=3, options={"excluded_issue_types": kept})
+        hass = self._hass(entry)
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        hass.config_entries.async_update_entry.assert_not_called()
+        assert "no_description" not in entry.options["excluded_issue_types"]
+
+    def test_setup_no_longer_rewrites_the_exclusion_list(self):
+        src = (self.BASE / "__init__.py").read_text(encoding="utf-8")
+        setup = src[src.index("async def async_setup_entry"):]
+        # Reading the list to filter a scan is fine; assigning it is the bug.
+        assert '"excluded_issue_types":' not in setup, (
+            "async_setup_entry writes excluded_issue_types again — that is the "
+            "bug where a re-enabled analysis type reverts at the next restart"
+        )
+        assert "_DEFAULT_EXCLUDED_TYPES" not in src, (
+            "the local copy of the default exclusions is back; const.py holds "
+            "the one list"
+        )
+
+    def test_config_flow_seeds_the_shared_constant(self):
+        from custom_components.config_auditor.const import DEFAULT_EXCLUDED_ISSUE_TYPES
+
+        src = (self.BASE / "config_flow.py").read_text(encoding="utf-8")
+        assert "list(DEFAULT_EXCLUDED_ISSUE_TYPES)" in src, (
+            "the config flow keeps its own copy of the default exclusions — the "
+            "two lists drift"
+        )
+        assert len(set(DEFAULT_EXCLUDED_ISSUE_TYPES)) == 14

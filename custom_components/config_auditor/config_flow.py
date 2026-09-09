@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_MCP_SERVER_ENABLED,
     DEFAULT_PROACTIVE_AGENT_ENABLED,
     DEFAULT_LLM_API_ENABLED,
+    DEFAULT_EXCLUDED_ISSUE_TYPES,
 )
 
 
@@ -30,7 +31,11 @@ class ConfigAuditorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # options désactivées par défaut. Les entrées restées en minor_version 1 sont
     # antérieures et passent par async_migrate_entry, qui leur écrit True pour
     # qu'une mise à jour n'éteigne rien.
-    MINOR_VERSION = 2
+    # 3 — 1.8.0 : les exclusions par défaut ne sont plus refusionnées à chaque
+    # démarrage. Les entrées restées en minor_version 2 reçoivent la fusion une
+    # dernière fois dans async_migrate_entry, puis la liste appartient à
+    # l'utilisateur.
+    MINOR_VERSION = 3
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -56,15 +61,7 @@ class ConfigAuditorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "event_monitoring_enabled": True,
                         "event_debounce_seconds": 30,
                         "excluded_categories": [],
-                        "excluded_issue_types": [
-                            "no_description", "no_alias",
-                            "helper_no_friendly_name", "helper_orphaned_disabled_only",
-                            "helper_unused", "unused_input_boolean",
-                            "script_orphan", "script_blueprint_candidate",
-                            "scene_not_triggered", "timer_orphaned",
-                            "template_sensor_no_metadata", "template_missing_availability",
-                            "missing_state_class", "group_nested_deep",
-                        ],
+                        "excluded_issue_types": list(DEFAULT_EXCLUDED_ISSUE_TYPES),
                         "auto_fix_enabled": False,
                         "backup_enabled": True,
                         "repairs_enabled": True,
