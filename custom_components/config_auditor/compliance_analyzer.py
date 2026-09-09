@@ -26,6 +26,7 @@ from homeassistant.helpers import area_registry as ar, label_registry as lr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
+from .registry_utils import iter_devices
 from .yaml_sources import (
     find_unloaded_in_sources,
     find_unloaded_yaml_files,
@@ -262,7 +263,7 @@ class ComplianceAnalyzer:
                     used_label_ids.add(label_id)
 
             # 2. Device labels
-            for device in device_reg.devices.values():
+            for device in iter_devices(device_reg):
                 for label_id in (getattr(device, "labels", None) or set()):
                     used_label_ids.add(label_id)
 
