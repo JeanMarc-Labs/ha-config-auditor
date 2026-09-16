@@ -262,7 +262,7 @@ class RefactoringAssistant:
                     "description": f"Trigger {idx}: {domain}.{trigger_type} → platform: state, entity_id: {resolved_entity}"
                 })
             else:
-                _LOGGER.warning("Cannot resolve entity for trigger %d (device_id=%s)", idx, device_id)
+                _LOGGER.debug("Cannot resolve entity for trigger %d (device_id=%s)", idx, device_id)
         
         # --- CONDITIONS ---
         condition_key = "conditions" if "conditions" in automation_config else "condition"
@@ -322,7 +322,7 @@ class RefactoringAssistant:
                     "description": f"Condition {idx}: {domain}.{cond_type} → {new_condition['condition']}, entity_id: {resolved_entity}"
                 })
             else:
-                _LOGGER.warning("Cannot resolve entity for condition %d (device_id=%s)", idx, device_id)
+                _LOGGER.debug("Cannot resolve entity for condition %d (device_id=%s)", idx, device_id)
         
         # --- ACTIONS ---
         action_key = "actions" if "actions" in automation_config else "action"
@@ -377,7 +377,7 @@ class RefactoringAssistant:
                         "description": f"Action {idx}: {service} → entity_id: {resolved_entity}"
                     })
                 else:
-                    _LOGGER.warning("Cannot resolve entity for action %d (device_id=%s)", idx, device_id)
+                    _LOGGER.debug("Cannot resolve entity for action %d (device_id=%s)", idx, device_id)
 
             # Case 2 : device_id inside action["target"]["device_id"]  (device_id_in_target)
             elif isinstance(action.get("target"), dict) and "device_id" in action["target"]:
@@ -415,7 +415,7 @@ class RefactoringAssistant:
                         "description": f"Action {idx}: target.device_id → target.entity_id: {resolved_entity}"
                     })
                 else:
-                    _LOGGER.warning("Cannot resolve entity for action %d target (device_id=%s)", idx, device_id)
+                    _LOGGER.debug("Cannot resolve entity for action %d target (device_id=%s)", idx, device_id)
         
         # --- Generate YAML previews ---
         import copy
@@ -1084,13 +1084,13 @@ class RefactoringAssistant:
                     _LOGGER.info("Resolved UUID %s → %s", registry_uuid, entity.entity_id)
                     return entity.entity_id
             
-            _LOGGER.warning("UUID %s not found in entity registry", registry_uuid)
+            _LOGGER.debug("UUID %s not found in entity registry", registry_uuid)
         
         # Step 2: Get all entities for this device, filter by domain
         all_entities = await self._get_entities_for_device(device_id)
         
         if not all_entities:
-            _LOGGER.warning("No entities found for device_id %s", device_id)
+            _LOGGER.debug("No entities found for device_id %s", device_id)
             return None
         
         if domain:
@@ -1286,7 +1286,7 @@ class RefactoringAssistant:
                 m = _re.search(r"```suggestion\s*(.*?)\s*```", raw, _re.DOTALL)
                 suggestion = m.group(1).strip() if m else raw.strip()
         except Exception as ai_err:
-            _LOGGER.warning("suggest_description_ai AI call failed: %s", ai_err)
+            _LOGGER.debug("suggest_description_ai AI call failed: %s", ai_err)
 
         if not suggestion:
             # Fallback: use alias as base suggestion

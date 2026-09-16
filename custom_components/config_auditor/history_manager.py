@@ -272,7 +272,7 @@ class HistoryManager:
         drop = reference_score - current_score
 
         if drop >= REGRESSION_THRESHOLD:
-            _LOGGER.warning(
+            _LOGGER.info(
                 "HACA Regression: health score dropped %d pts in %d days (%d → %d)",
                 drop, REGRESSION_WINDOW_DAYS, reference_score, current_score,
             )

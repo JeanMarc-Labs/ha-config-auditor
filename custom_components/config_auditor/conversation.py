@@ -145,7 +145,7 @@ async def _async_find_all_conversation_agents(hass: HomeAssistant) -> list[str]:
                     all_agents.append(eid)
             _LOGGER.info("[HACA AI] Source B (entity scan) added agents: %s", all_agents)
     except Exception as exc:
-        _LOGGER.warning("[HACA AI] Source B (entity scan) failed: %s", exc)
+        _LOGGER.debug("[HACA AI] Source B (entity scan) failed: %s", exc)
 
     # ── Source C : AgentManager scan ─────────────────────────────────────
     # HA 2024.x path: homeassistant.components.conversation.agent_manager
@@ -163,7 +163,7 @@ async def _async_find_all_conversation_agents(hass: HomeAssistant) -> list[str]:
         _manager_found = True
         _LOGGER.info("[HACA AI] Source C1 (agent_manager) agents total: %s", all_agents)
     except Exception as exc:
-        _LOGGER.warning("[HACA AI] Source C1 (agent_manager) failed: %s", exc)
+        _LOGGER.debug("[HACA AI] Source C1 (agent_manager) failed: %s", exc)
 
     # C2 — HA 2025.x: async_get_agent_info moved to conversation __init__
     if not _manager_found:
@@ -175,7 +175,7 @@ async def _async_find_all_conversation_agents(hass: HomeAssistant) -> list[str]:
                     all_agents.append(aid)
             _LOGGER.info("[HACA AI] Source C2 (async_get_agent_info) agents total: %s", all_agents)
         except Exception as exc:
-            _LOGGER.warning("[HACA AI] Source C2 (async_get_agent_info) failed: %s", exc)
+            _LOGGER.debug("[HACA AI] Source C2 (async_get_agent_info) failed: %s", exc)
 
     if not all_agents:
         _LOGGER.warning(
@@ -309,7 +309,7 @@ async def _async_call_ai(hass: HomeAssistant, prompt: str, task_name: str = "HAC
                 return_response=True,
             )
             if not result:
-                _LOGGER.warning("[HACA AI] ai_task %s: empty result", entity_id)
+                _LOGGER.debug("[HACA AI] ai_task %s: empty result", entity_id)
                 continue
             if entity_id in result and isinstance(result[entity_id], dict):
                 reply = str(result[entity_id].get("data", "") or "")
@@ -317,7 +317,7 @@ async def _async_call_ai(hass: HomeAssistant, prompt: str, task_name: str = "HAC
                 reply = str(result.get("data", "") or "")
             if reply:
                 if _is_llm_error_reply(reply):
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "[HACA AI] ai_task %s error: %.120s → trying next",
                         entity_id, reply,
                     )
@@ -325,10 +325,10 @@ async def _async_call_ai(hass: HomeAssistant, prompt: str, task_name: str = "HAC
                     continue
                 _LOGGER.info("[HACA AI] ✓ ai_task %s", entity_id)
                 return reply
-            _LOGGER.warning("[HACA AI] ai_task %s: empty data", entity_id)
+            _LOGGER.debug("[HACA AI] ai_task %s: empty data", entity_id)
         except Exception as exc:
             last_error = str(exc)
-            _LOGGER.warning("[HACA AI] ai_task %s failed: %s → trying next", entity_id, exc)
+            _LOGGER.debug("[HACA AI] ai_task %s failed: %s → trying next", entity_id, exc)
 
     # ── Phase 2 : conversation.async_converse ─────────────────────────────
     # Les outils HACA sont désormais injectés nativement via le LLM API HACA
@@ -366,7 +366,7 @@ async def _async_call_ai(hass: HomeAssistant, prompt: str, task_name: str = "HAC
                     )
             if reply:
                 if _is_llm_error_reply(reply):
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "[HACA AI] conversation %s error: %.120s → trying next",
                         agent_id, reply,
                     )
@@ -374,10 +374,10 @@ async def _async_call_ai(hass: HomeAssistant, prompt: str, task_name: str = "HAC
                     continue
                 _LOGGER.info("[HACA AI] ✓ conversation %s", agent_id)
                 return reply
-            _LOGGER.warning("[HACA AI] conversation %s: empty speech", agent_id)
+            _LOGGER.debug("[HACA AI] conversation %s: empty speech", agent_id)
         except Exception as exc:
             last_error = str(exc)
-            _LOGGER.warning("[HACA AI] conversation %s failed: %s → trying next", agent_id, exc)
+            _LOGGER.debug("[HACA AI] conversation %s failed: %s → trying next", agent_id, exc)
 
     _LOGGER.warning("[HACA AI] All providers failed. Last error: %s", last_error or "none")
     return ""

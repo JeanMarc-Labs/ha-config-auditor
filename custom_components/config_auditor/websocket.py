@@ -311,7 +311,7 @@ async def handle_scan_all(
             age = _monotonic() - started_at if started_at else None
             if age is None or age < SCAN_LOCK_TIMEOUT:
                 connection.send_result(msg["id"], {"accepted": False, "reason": "scan_in_progress"})
-                _LOGGER.warning("[HACA WS] Scan already in progress — request ignored")
+                _LOGGER.debug("[HACA WS] Scan already in progress — request ignored")
                 return
             _LOGGER.warning(
                 "[HACA WS] Stale scan lock (%.0fs old) — starting a new scan anyway", age
@@ -749,7 +749,7 @@ async def _purge_await_states(instance, states_meta: dict[str, int]) -> list[str
         if not pending:
             return []
         if time.monotonic() >= deadline:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[HACA Purge] %d entity(ies) still pending after %.0fs — the "
                 "recorder will finish them in the background",
                 len(pending), _PURGE_STATES_TIMEOUT,
@@ -1457,11 +1457,11 @@ async def handle_chat(
             reply  = _extract_reply(result)
 
             if not reply:
-                _LOGGER.warning("[HACA Chat] %s: empty reply → trying next", agent_id)
+                _LOGGER.debug("[HACA Chat] %s: empty reply → trying next", agent_id)
                 continue
 
             if _is_llm_error_reply(reply):
-                _LOGGER.warning("[HACA Chat] %s: error reply (%.80s) → trying next", agent_id, reply)
+                _LOGGER.debug("[HACA Chat] %s: error reply (%.80s) → trying next", agent_id, reply)
                 last_error = reply
                 continue
 
@@ -1481,7 +1481,7 @@ async def handle_chat(
 
         except Exception as exc:
             last_error = str(exc)
-            _LOGGER.warning("[HACA Chat] %s failed: %s → trying next", agent_id, exc)
+            _LOGGER.debug("[HACA Chat] %s failed: %s → trying next", agent_id, exc)
 
     # Tous les agents ont échoué
     _LOGGER.error("[HACA Chat] All agents failed. Last error: %s", last_error)

@@ -158,7 +158,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
     async def handle_scan_all(call: ServiceCall) -> None:
         """Handle scan_all service."""
         if _scan_lock.locked():
-            _LOGGER.warning("Scan already in progress — ignoring concurrent scan_all request")
+            _LOGGER.debug("Scan already in progress — ignoring concurrent scan_all request")
             return
         _LOGGER.info("Starting full scan in background")
 
@@ -236,7 +236,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if not _scan_lock.locked():
             hass.async_create_task(_run_scan())
         else:
-            _LOGGER.warning("Scan in progress — ignoring concurrent scan_automations")
+            _LOGGER.debug("Scan in progress — ignoring concurrent scan_automations")
     
     async def handle_scan_entities(call: ServiceCall) -> None:
         """Handle scan_entities service."""
@@ -306,7 +306,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if not _scan_lock.locked():
             hass.async_create_task(_run_scan())
         else:
-            _LOGGER.warning("Scan in progress — ignoring concurrent scan_entities")
+            _LOGGER.debug("Scan in progress — ignoring concurrent scan_entities")
 
     # Module 4: Report services
     if MODULE_4_COMPLIANCE_REPORT:
