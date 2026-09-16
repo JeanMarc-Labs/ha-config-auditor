@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.8.0] — 2026-09-06 — MCP server, HACA services and panel commands restricted to administrators, stored XSS closed, AI agents read-only by default, entity references followed into every branch, field fixes no longer flatten your YAML
+## [1.8.0] — 2026-09-16 — MCP server, HACA services and panel commands restricted to administrators, stored XSS closed, AI agents read-only by default, entity references followed into every branch, field fixes no longer flatten your YAML
 
 ### Added
 

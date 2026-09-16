@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.8.0] — 2026-09-06 — Serveur MCP, services HACA et commandes du panneau réservés aux administrateurs, XSS stocké fermé, agents IA en lecture seule par défaut, références d'entités suivies dans toutes les branches, les corrections de champ ne réécrasent plus votre YAML
+## [1.8.0] — 2026-09-16 — Serveur MCP, services HACA et commandes du panneau réservés aux administrateurs, XSS stocké fermé, agents IA en lecture seule par défaut, références d'entités suivies dans toutes les branches, les corrections de champ ne réécrasent plus votre YAML
 
 ### Ajouté
 
