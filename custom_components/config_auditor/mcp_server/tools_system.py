@@ -82,7 +82,7 @@ async def _auto_backup(hass: HomeAssistant, reason: str) -> None:
     """
     from datetime import datetime as _dt
     name = f"HACA auto — {reason[:40]} — {_dt.now().strftime('%Y-%m-%d %H:%M')}"
-    _LOGGER.warning("[HACA] Auto-backup avant opération destructive : %s", name)
+    _LOGGER.debug("[HACA] Auto-backup avant opération destructive : %s", name)
 
     async def _run():
         try:
@@ -90,7 +90,7 @@ async def _auto_backup(hass: HomeAssistant, reason: str) -> None:
             if result.get("success") or result.get("started"):
                 _LOGGER.info("[HACA] Auto-backup lancé : %s", name)
             else:
-                _LOGGER.warning("[HACA] Auto-backup résultat : %s", result)
+                _LOGGER.debug("[HACA] Auto-backup résultat : %s", result)
         except Exception as exc:
             _LOGGER.warning("[HACA] Auto-backup échoué (non bloquant) : %s", exc)
 
@@ -173,7 +173,7 @@ async def _tool_ha_backup_create(hass: HomeAssistant, params: dict) -> dict:
 
                         def _log_backup_result(t: asyncio.Task, _name: str = name) -> None:
                             if t.cancelled():
-                                _LOGGER.warning("[HACA] Background backup '%s' was cancelled", _name)
+                                _LOGGER.debug("[HACA] Background backup '%s' was cancelled", _name)
                                 return
                             if (exc := t.exception()) is not None:
                                 _LOGGER.error("[HACA] Background backup '%s' failed: %s", _name, exc)

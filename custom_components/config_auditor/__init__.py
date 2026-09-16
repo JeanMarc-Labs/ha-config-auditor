@@ -574,7 +574,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("[HACA] could not refresh notification language at startup: %s", exc)
 
     if entry.entry_id in hass.data[DOMAIN]:
-        _LOGGER.warning("H.A.C.A already set up for this entry")
+        _LOGGER.debug("H.A.C.A already set up for this entry")
         return True
     
     # Create analyzers

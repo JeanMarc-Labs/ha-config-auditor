@@ -347,7 +347,7 @@ class ProactiveAgent:
 
         # Détecter des patterns anormaux (ex: automation_triggered > 100x/heure)
         if event_type == "automation_triggered" and self._event_counts.get("automation_triggered", 0) > 100:
-            _LOGGER.warning(
+            _LOGGER.info(
                 "[HACA ProactiveAgent] Unusual automation activity: %d triggers recorded",
                 self._event_counts["automation_triggered"]
             )

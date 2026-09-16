@@ -83,12 +83,12 @@ class DashboardAnalyzer:
         self._load_registered_services()
 
         known = await self._build_known_entities()
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] analyze_all() START — %d known entities", len(known)
         )
 
         dashboards = await self._load_all_dashboards()
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] Dashboards loaded: %d — %s",
             len(dashboards), list(dashboards.keys()),
         )
@@ -99,13 +99,13 @@ class DashboardAnalyzer:
                 continue
 
             views = config.get("views", [])
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[HACA Dashboard] '%s' (url_path='%s'): %d view(s)", title, url_path,
                 len(views) if isinstance(views, list) else 0,
             )
 
             refs = self._extract_entity_refs(config, title)
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[HACA Dashboard] '%s': %d entity refs extracted — %s",
                 title, len(refs),
                 list({r[0] for r in refs})[:20],
@@ -119,12 +119,12 @@ class DashboardAnalyzer:
                     missing.append((entity_id, card_path))
                     self._add_issue(entity_id, title, card_path, url_path)
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[HACA Dashboard] '%s': %d missing — %s",
                 title, len(missing), missing[:10],
             )
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] analyze_all() END — %d total issue(s)", len(self.issues)
         )
         return self.issues
@@ -148,7 +148,7 @@ class DashboardAnalyzer:
                     self._registered_services.add(f"{domain}.{service_name}")
         except Exception as exc:  # pragma: no cover - defensive
             _LOGGER.warning("[HACA Dashboard] Could not load services: %s", exc)
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] Registered services: %d", len(self._registered_services)
         )
 
@@ -163,7 +163,7 @@ class DashboardAnalyzer:
         Using states-only matches exactly what the Lovelace UI sees.
         """
         known = {s.entity_id for s in self.hass.states.async_all()}
-        _LOGGER.warning("[HACA Dashboard] Known entities (states only): %d", len(known))
+        _LOGGER.debug("[HACA Dashboard] Known entities (states only): %d", len(known))
         return known
 
     # ── Dashboard loading ─────────────────────────────────────────────────
@@ -177,12 +177,12 @@ class DashboardAnalyzer:
         dashboards: dict[str, tuple[dict, str]] = {}
 
         storage_dir = Path(self.hass.config.config_dir) / ".storage"
-        _LOGGER.warning("[HACA Dashboard] Config dir: %s", self.hass.config.config_dir)
+        _LOGGER.debug("[HACA Dashboard] Config dir: %s", self.hass.config.config_dir)
 
         storage_results = await self.hass.async_add_executor_job(
             self._read_storage_dashboards, storage_dir
         )
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] Storage results: %d — %s",
             len(storage_results), list(storage_results.keys()),
         )
@@ -194,12 +194,12 @@ class DashboardAnalyzer:
             for k, v in api_results.items():
                 if k not in dashboards:
                     dashboards[k] = v
-                    _LOGGER.warning("[HACA Dashboard] Extra from API: '%s'", k)
+                    _LOGGER.debug("[HACA Dashboard] Extra from API: '%s'", k)
         except Exception as exc:
             _LOGGER.warning("[HACA Dashboard] HA API failed: %s", exc)
 
         yaml_results = await self.hass.async_add_executor_job(self._find_yaml_dashboards)
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] YAML results: %d — %s",
             len(yaml_results), list(yaml_results.keys()),
         )
@@ -210,7 +210,7 @@ class DashboardAnalyzer:
     def _read_storage_dashboards(self, storage_dir: Path) -> dict[str, dict]:
         result: dict[str, dict] = {}
         if not storage_dir.exists():
-            _LOGGER.warning("[HACA Dashboard] .storage dir not found: %s", storage_dir)
+            _LOGGER.debug("[HACA Dashboard] .storage dir not found: %s", storage_dir)
             return result
 
         # ── Step 1: build id → real url_path mapping from lovelace_dashboards ──
@@ -228,7 +228,7 @@ class DashboardAnalyzer:
                     if isinstance(item, dict) and item.get("id") and item.get("url_path"):
                         id_to_url_path[item["id"]] = item["url_path"]
                 registry_loaded = True
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "[HACA Dashboard] lovelace_dashboards registry: %s", id_to_url_path
                 )
             except Exception as exc:
@@ -256,11 +256,11 @@ class DashboardAnalyzer:
                 continue
             lovelace_files.append(p)
         if skipped_orphans:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[HACA Dashboard] Ignored %d orphan .storage file(s) not in lovelace_dashboards: %s",
                 len(skipped_orphans), skipped_orphans,
             )
-        _LOGGER.warning(
+        _LOGGER.debug(
             "[HACA Dashboard] Lovelace files in .storage: %s",
             [p.name for p in lovelace_files],
         )
@@ -277,10 +277,10 @@ class DashboardAnalyzer:
                 # Some HA versions store config directly in data
                 if not isinstance(config, dict) and isinstance(data_section, dict) and "views" in data_section:
                     config = data_section
-                    _LOGGER.warning("[HACA Dashboard] %s: using data directly (has 'views')", path.name)
+                    _LOGGER.debug("[HACA Dashboard] %s: using data directly (has 'views')", path.name)
 
                 if not isinstance(config, dict):
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "[HACA Dashboard] %s: data.config=%s — skipping",
                         path.name, type(config).__name__,
                     )
@@ -288,7 +288,7 @@ class DashboardAnalyzer:
 
                 views = config.get("views", [])
                 if not isinstance(views, list) or not views:
-                    _LOGGER.warning("[HACA Dashboard] %s: no views — skipping", path.name)
+                    _LOGGER.debug("[HACA Dashboard] %s: no views — skipping", path.name)
                     continue
 
                 title = config.get("title") or path.name
@@ -305,7 +305,7 @@ class DashboardAnalyzer:
                     url_path = "lovelace"
 
                 result[str(title)] = (config, url_path)
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "[HACA Dashboard] Loaded '%s' from %s (%d views) url_path='%s'",
                     title, path.name, len(views), url_path,
                 )
@@ -327,7 +327,7 @@ class DashboardAnalyzer:
                     title = config.get("title") or url_path or "default"
                     result[str(title)] = (config, url_path or "lovelace")
             except Exception as exc:
-                _LOGGER.warning("[HACA Dashboard] API load failed for '%s': %s", url_path, exc)
+                _LOGGER.debug("[HACA Dashboard] API load failed for '%s': %s", url_path, exc)
         return result
 
     def _find_yaml_dashboards(self) -> dict[str, dict]:
