@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
+## [1.8.1] — 2026-09-19 — Entities reported as disabled, missing or unavailable when they were none of those
+
+### Fixed
+
+- **An automation that named a *device* or an *area* made every entity behind it look referenced** — including the ones Home Assistant cannot reach: disabled entities, and entities of a domain the service never touches. That is why `light.turn_on` on a room seemed to reference its sensors, and why three Z-Wave diagnostic sensors were reported as "disabled but referenced by 2 automations" when nothing named them. A target is now resolved the way Home Assistant resolves it. **Expect the entity count to drop after the next scan** — a large part of the jump seen in 1.8.0 was this.
+- **A disabled entity was reported as missing** — it has no state, so the check that looks for entities referenced but gone concluded it had been deleted, while another check reported the same entity as disabled. Both were shown, and they contradicted each other. A disabled entity is now reported once, as disabled.
+
+---
 ## [1.8.0] — 2026-09-16 — MCP server, HACA services and panel commands restricted to administrators, stored XSS closed, AI agents read-only by default, entity references followed into every branch, field fixes no longer flatten your YAML
 
 ### Added

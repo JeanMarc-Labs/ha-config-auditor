@@ -5,6 +5,14 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
+## [1.8.1] — 2026-09-19 — Des entités signalées désactivées, disparues ou indisponibles alors qu'elles n'étaient rien de tout cela
+
+### Corrigé
+
+- **Une automatisation qui désignait un *appareil* ou une *zone* faisait passer pour référencées toutes les entités situées derrière** — y compris celles que Home Assistant ne peut pas atteindre : les entités désactivées, et celles d'un domaine que le service ne touche jamais. D'où un `light.turn_on` sur une pièce qui semblait référencer ses capteurs, et trois capteurs de diagnostic Z-Wave signalés « désactivés mais référencés par 2 automatisations » alors que rien ne les nommait. Une cible est désormais résolue comme Home Assistant la résout. **Le compteur d'entités va baisser au prochain scan** — une bonne part de la hausse constatée en 1.8.0 venait de là.
+- **Une entité désactivée était signalée comme disparue** — elle n'a pas d'état, donc le contrôle qui cherche les entités référencées mais absentes concluait à une suppression, pendant qu'un autre contrôle signalait la même entité comme désactivée. Les deux s'affichaient, et ils se contredisaient. Une entité désactivée n'est plus signalée qu'une fois, comme désactivée.
+
+---
 ## [1.8.0] — 2026-09-16 — Serveur MCP, services HACA et commandes du panneau réservés aux administrateurs, XSS stocké fermé, agents IA en lecture seule par défaut, références d'entités suivies dans toutes les branches, les corrections de champ ne réécrasent plus votre YAML
 
 ### Ajouté
