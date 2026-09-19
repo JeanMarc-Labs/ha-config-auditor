@@ -131,6 +131,23 @@
   // Exposer globalement pour config_tab.js, battery.js et autres modules
   window._icon = _icon;
 
+  // ── fnmatch glob → RegExp ───────────────────────────────────────────
+  // The panel tests patterns in three places (the two Configuration test
+  // buttons and the per-issue Ignore buttons) and Python tests the same
+  // strings with fnmatch.fnmatchcase. One converter, so the panel can never
+  // tell the user something the scan then disagrees with.
+  window._hacaGlobToRegex = function (pat) {
+    let re = '';
+    for (let i = 0; i < pat.length; i++) {
+      const c = pat[i];
+      if (c === '*') re += '.*';
+      else if (c === '?') re += '.';
+      else if ('\\^$+()|{}.'.indexOf(c) !== -1) re += '\\' + c;
+      else re += c;
+    }
+    return new RegExp('^' + re + '$');
+  };
+
   // ── HACA ID utilities (shared across issues, compliance, redundancy) ───
   window._hacaHash6 = function(str) {
     // Simple deterministic 6-char hex hash (matches Python md5[:6])
@@ -3458,41 +3475,37 @@
         window.__haca_debug_mode = debugToggle.checked;
       }
 
-      // Noisy-scan exclude-patterns: live test button (no save needed)
-      el.querySelector('#cfg-noisy-exclude-test-btn')?.addEventListener('click', () => {
-        const input = el.querySelector('#cfg-noisy-exclude-test');
-        const ta = el.querySelector('#cfg-noisy-exclude-patterns');
-        const out = el.querySelector('#cfg-noisy-exclude-test-result');
-        if (!input || !ta || !out) return;
-        const entityId = (input.value || '').trim();
-        if (!entityId) {
-          out.textContent = '';
-          return;
-        }
-        const patterns = ta.value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
-        // fnmatch-style: * matches anything, ? matches one char, [...] charset
-        const toRegex = (pat) => {
-          let re = '';
-          for (let i = 0; i < pat.length; i++) {
-            const c = pat[i];
-            if (c === '*') re += '.*';
-            else if (c === '?') re += '.';
-            else if ('\\^$+()|{}.'.indexOf(c) !== -1) re += '\\' + c;
-            else re += c;
+      // The two pattern lists (noisy-scan, global ignore) each get a live
+      // test button: type an entity_id, see whether the list covers it,
+      // without saving first.
+      const wirePatternTest = (taId, testId, matchKey, noMatchKey) => {
+        el.querySelector(`#${testId}-btn`)?.addEventListener('click', () => {
+          const input = el.querySelector(`#${testId}`);
+          const ta = el.querySelector(`#${taId}`);
+          const out = el.querySelector(`#${testId}-result`);
+          if (!input || !ta || !out) return;
+          const entityId = (input.value || '').trim();
+          if (!entityId) {
+            out.textContent = '';
+            return;
           }
-          return new RegExp('^' + re + '$');
-        };
-        const matched = patterns.find(p => {
-          try { return toRegex(p).test(entityId); } catch (e) { return false; }
+          const patterns = ta.value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+          const matched = patterns.find(p => {
+            try { return window._hacaGlobToRegex(p).test(entityId); } catch (e) { return false; }
+          });
+          if (matched) {
+            out.textContent = '✓ ' + this.t(matchKey).replace('{pattern}', matched);
+            out.style.color = 'var(--success-color, #15803d)';
+          } else {
+            out.textContent = '✗ ' + this.t(noMatchKey);
+            out.style.color = 'var(--error-color, #dc2626)';
+          }
         });
-        if (matched) {
-          out.textContent = '✓ ' + this.t('config.noisy_exclude_test_match').replace('{pattern}', matched);
-          out.style.color = 'var(--success-color, #15803d)';
-        } else {
-          out.textContent = '✗ ' + this.t('config.noisy_exclude_test_no_match');
-          out.style.color = 'var(--error-color, #dc2626)';
-        }
-      });
+      };
+      wirePatternTest('cfg-noisy-exclude-patterns', 'cfg-noisy-exclude-test',
+        'config.noisy_exclude_test_match', 'config.noisy_exclude_test_no_match');
+      wirePatternTest('cfg-ignore-patterns', 'cfg-ignore-patterns-test',
+        'config.ignore_patterns_test_match', 'config.ignore_patterns_test_no_match');
 
       // Dashboard creation button (in config tab)
       el.querySelector('#cfg-create-dashboard-btn')?.addEventListener('click', async () => {

@@ -1,4 +1,4 @@
-// HACA-BUILD: 4a184df3  2026-09-19T07:04:21Z
+// HACA-BUILD: 27b3f7ed  2026-09-19T07:29:33Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -376,6 +376,27 @@ function renderConfigTab(options, lang, t) {
       </div>
     </div>` +
 
+    // ── Global ignore patterns section ──
+    // The label above cannot reach an entity that has no registry entry — a
+    // dashboard card pointing at a deleted entity, an integration that never
+    // set up because its device is unplugged on purpose. A glob is tested on
+    // the entity_id itself, so it can.
+    `<div class="cfg-section" style="padding:16px 20px;">
+      <div class="cfg-section-title">${_icon("eye-off", 18)}${t('config.ignore_patterns_title')}</div>
+      <div class="cfg-row-hint" style="margin-top:8px;line-height:1.6;">${t('config.ignore_patterns_info')}</div>
+      <div class="cfg-row-hint" style="margin-top:6px;font-size:0.78em;">${t('config.ignore_patterns_examples')}</div>
+      <textarea id="cfg-ignore-patterns" class="cfg-textarea" rows="6" cols="100" spellcheck="false"
+        placeholder="${t('config.ignore_patterns_placeholder')}">${(options.haca_ignore_patterns || []).join('\n')}</textarea>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="cfg-ignore-patterns-test" class="cfg-input" style="flex:1;min-width:180px;text-align:left;width:auto;"
+          placeholder="${t('config.ignore_patterns_test_placeholder')}">
+        <button class="cfg-btn cfg-btn-secondary" id="cfg-ignore-patterns-test-btn" style="height:38px;">
+          ${_icon("flask-outline", 16)} ${t('config.ignore_patterns_test')}
+        </button>
+        <span id="cfg-ignore-patterns-test-result" class="cfg-row-hint" style="margin-left:6px;font-weight:600;"></span>
+      </div>
+    </div>` +
+
     // ── Noisy scan exclude patterns section ──
     `<div class="cfg-section" style="padding:16px 20px;">
       <div class="cfg-section-title">${_icon("volume-mute", 18)}${t('config.noisy_exclude_title')}</div>
@@ -501,6 +522,7 @@ var DEFAULT_OPTIONS = {
   notify_medium_severity: false,
   notify_low_severity: false,
   noisy_scan_exclude_patterns: [],
+  haca_ignore_patterns: [],
   llm_write_enabled: false,
   mcp_server_enabled: false,
   proactive_agent_enabled: false,
@@ -545,6 +567,11 @@ function collectFormOptions(root) {
     llm_api_enabled: bool('#cfg-llm-api', false),
     noisy_scan_exclude_patterns: (function () {
       var el = q('#cfg-noisy-exclude-patterns');
+      if (!el) return [];
+      return el.value.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    })(),
+    haca_ignore_patterns: (function () {
+      var el = q('#cfg-ignore-patterns');
       if (!el) return [];
       return el.value.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
     })(),
@@ -698,6 +725,23 @@ function _updateTypeCounts(el) {
   }
   // Exposer globalement pour config_tab.js, battery.js et autres modules
   window._icon = _icon;
+
+  // ── fnmatch glob → RegExp ───────────────────────────────────────────
+  // The panel tests patterns in three places (the two Configuration test
+  // buttons and the per-issue Ignore buttons) and Python tests the same
+  // strings with fnmatch.fnmatchcase. One converter, so the panel can never
+  // tell the user something the scan then disagrees with.
+  window._hacaGlobToRegex = function (pat) {
+    let re = '';
+    for (let i = 0; i < pat.length; i++) {
+      const c = pat[i];
+      if (c === '*') re += '.*';
+      else if (c === '?') re += '.';
+      else if ('\\^$+()|{}.'.indexOf(c) !== -1) re += '\\' + c;
+      else re += c;
+    }
+    return new RegExp('^' + re + '$');
+  };
 
   // ── HACA ID utilities (shared across issues, compliance, redundancy) ───
   window._hacaHash6 = function(str) {
@@ -4026,41 +4070,37 @@ function _updateTypeCounts(el) {
         window.__haca_debug_mode = debugToggle.checked;
       }
 
-      // Noisy-scan exclude-patterns: live test button (no save needed)
-      el.querySelector('#cfg-noisy-exclude-test-btn')?.addEventListener('click', () => {
-        const input = el.querySelector('#cfg-noisy-exclude-test');
-        const ta = el.querySelector('#cfg-noisy-exclude-patterns');
-        const out = el.querySelector('#cfg-noisy-exclude-test-result');
-        if (!input || !ta || !out) return;
-        const entityId = (input.value || '').trim();
-        if (!entityId) {
-          out.textContent = '';
-          return;
-        }
-        const patterns = ta.value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
-        // fnmatch-style: * matches anything, ? matches one char, [...] charset
-        const toRegex = (pat) => {
-          let re = '';
-          for (let i = 0; i < pat.length; i++) {
-            const c = pat[i];
-            if (c === '*') re += '.*';
-            else if (c === '?') re += '.';
-            else if ('\\^$+()|{}.'.indexOf(c) !== -1) re += '\\' + c;
-            else re += c;
+      // The two pattern lists (noisy-scan, global ignore) each get a live
+      // test button: type an entity_id, see whether the list covers it,
+      // without saving first.
+      const wirePatternTest = (taId, testId, matchKey, noMatchKey) => {
+        el.querySelector(`#${testId}-btn`)?.addEventListener('click', () => {
+          const input = el.querySelector(`#${testId}`);
+          const ta = el.querySelector(`#${taId}`);
+          const out = el.querySelector(`#${testId}-result`);
+          if (!input || !ta || !out) return;
+          const entityId = (input.value || '').trim();
+          if (!entityId) {
+            out.textContent = '';
+            return;
           }
-          return new RegExp('^' + re + '$');
-        };
-        const matched = patterns.find(p => {
-          try { return toRegex(p).test(entityId); } catch (e) { return false; }
+          const patterns = ta.value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+          const matched = patterns.find(p => {
+            try { return window._hacaGlobToRegex(p).test(entityId); } catch (e) { return false; }
+          });
+          if (matched) {
+            out.textContent = '✓ ' + this.t(matchKey).replace('{pattern}', matched);
+            out.style.color = 'var(--success-color, #15803d)';
+          } else {
+            out.textContent = '✗ ' + this.t(noMatchKey);
+            out.style.color = 'var(--error-color, #dc2626)';
+          }
         });
-        if (matched) {
-          out.textContent = '✓ ' + this.t('config.noisy_exclude_test_match').replace('{pattern}', matched);
-          out.style.color = 'var(--success-color, #15803d)';
-        } else {
-          out.textContent = '✗ ' + this.t('config.noisy_exclude_test_no_match');
-          out.style.color = 'var(--error-color, #dc2626)';
-        }
-      });
+      };
+      wirePatternTest('cfg-noisy-exclude-patterns', 'cfg-noisy-exclude-test',
+        'config.noisy_exclude_test_match', 'config.noisy_exclude_test_no_match');
+      wirePatternTest('cfg-ignore-patterns', 'cfg-ignore-patterns-test',
+        'config.ignore_patterns_test_match', 'config.ignore_patterns_test_no_match');
 
       // Dashboard creation button (in config tab)
       el.querySelector('#cfg-create-dashboard-btn')?.addEventListener('click', async () => {
@@ -9071,6 +9111,7 @@ function _updateTypeCounts(el) {
                 ${isBlueprintCandidate ? `<button class="blueprint-ai-btn" data-idx="${idx}" style="background:linear-gradient(135deg,#0ea5e9,#6366f1);color:white;border:none;display:flex;align-items:center;gap:4px;" title="${this.t('actions.generate_blueprint')}">${_icon("robot", 15)} ${this.t('actions.generate_blueprint')}</button>` : ''}
                 ${i.type === 'noisy_entity' && i.entity_id ? `<button class="recorder-exclude-btn" data-entity-id="${this.escapeHtml(i.entity_id)}" title="${this.t('actions.recorder_exclude_title')}" style="background:linear-gradient(135deg,#16a34a,#15803d);color:white;border:none;display:flex;align-items:center;gap:4px;">${_icon('database-off-outline', 15)} ${this.t('actions.recorder_exclude')}</button>` : ''}
                 ${i.type === 'noisy_entity' && i.entity_id ? `<button class="noisy-ignore-btn" data-entity-id="${this.escapeHtml(i.entity_id)}" title="${this.t('actions.noisy_ignore_title')}" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;display:flex;align-items:center;gap:4px;">${_icon('volume-mute', 15)} ${this.t('actions.noisy_ignore')}</button>` : ''}
+                ${['dashboard_missing_entity', 'unavailable_entity', 'zombie_entity'].includes(i.type) && i.entity_id ? `<button class="entity-ignore-btn" data-entity-id="${this.escapeHtml(i.entity_id)}" title="${this.t('actions.entity_ignore_title')}" style="background:linear-gradient(135deg,#64748b,#475569);color:white;border:none;display:flex;align-items:center;gap:4px;">${_icon('eye-off', 15)} ${this.t('actions.entity_ignore')}</button>` : ''}
             </div>
         </div>
         <div class="issue-message">${this.escapeHtml(i.message || '')}</div>
@@ -9200,67 +9241,72 @@ function _updateTypeCounts(el) {
       });
     });
 
-    // ── Noisy-scan ignore button (noisy_entity issues only) ─────────────
-    // Adds the literal entity_id to options.noisy_scan_exclude_patterns.
-    // Dedup: if any existing pattern already matches the entity_id (literal
-    // or fnmatch glob), we no-op and tell the user which pattern covered it.
-    container.querySelectorAll('.noisy-ignore-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const entityId = e.currentTarget.dataset.entityId;
-        if (!entityId) return;
-        btn.disabled = true;
-        const orig = btn.innerHTML;
-        btn.innerHTML = `${_icon('loading', 14)} ...`;
-        // fnmatch-style glob → JS regex (same converter as the config tab test button)
-        const toRegex = (pat) => {
-          let re = '';
-          for (let i2 = 0; i2 < pat.length; i2++) {
-            const c = pat[i2];
-            if (c === '*') re += '.*';
-            else if (c === '?') re += '.';
-            else if ('\\^$+()|{}.'.indexOf(c) !== -1) re += '\\' + c;
-            else re += c;
+    // ── Pattern-ignore buttons ──────────────────────────────────────────
+    // Both add the literal entity_id to a pattern list in the options:
+    //   .noisy-ignore-btn  → noisy_scan_exclude_patterns (noisy scan only)
+    //   .entity-ignore-btn → haca_ignore_patterns        (every scan)
+    // Dedup: if a pattern in the list already matches the entity_id (literal
+    // or glob), we no-op and name the pattern that covered it.
+    const wireIgnoreButton = (selector, optionKey, keys) => {
+      container.querySelectorAll(selector).forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const entityId = e.currentTarget.dataset.entityId;
+          if (!entityId) return;
+          btn.disabled = true;
+          const orig = btn.innerHTML;
+          btn.innerHTML = `${_icon('loading', 14)} ...`;
+          try {
+            const opts = await this.hass.callWS({ type: 'haca/get_options' });
+            const current = (opts?.options?.[optionKey]) || [];
+            const list = Array.isArray(current) ? current.slice() : [];
+            const matched = list.find(p => {
+              try { return window._hacaGlobToRegex(p).test(entityId); } catch (_) { return false; }
+            });
+            if (matched) {
+              this._showToast?.(
+                this.t(keys.already, {entity: entityId, pattern: matched}),
+                'info',
+              );
+              this._markIssueExcluded?.(btn);
+              return;
+            }
+            list.push(entityId);
+            const save = await this.hass.callWS({
+              type: 'haca/save_options',
+              options: { [optionKey]: list },
+            });
+            if (save?.success) {
+              this._showToast?.(
+                this.t(keys.success, {entity: entityId}),
+                'success',
+              );
+              this._markIssueExcluded?.(btn);
+            } else {
+              this._showToast?.(this.t(keys.error), 'error');
+            }
+          } catch (err) {
+            const msg = (err && (err.message || err.code || JSON.stringify(err))) || 'unknown';
+            this._showToast?.(this.t(keys.error) + ': ' + msg, 'error');
+          } finally {
+            btn.disabled = false;
+            btn.innerHTML = orig;
           }
-          return new RegExp('^' + re + '$');
-        };
-        try {
-          const opts = await this.hass.callWS({ type: 'haca/get_options' });
-          const current = (opts?.options?.noisy_scan_exclude_patterns) || [];
-          const list = Array.isArray(current) ? current.slice() : [];
-          const matched = list.find(p => {
-            try { return toRegex(p).test(entityId); } catch (_) { return false; }
-          });
-          if (matched) {
-            this._showToast?.(
-              this.t('actions.noisy_ignore_already', {entity: entityId, pattern: matched}),
-              'info',
-            );
-            this._markIssueExcluded?.(btn);
-            return;
-          }
-          list.push(entityId);
-          const save = await this.hass.callWS({
-            type: 'haca/save_options',
-            options: { noisy_scan_exclude_patterns: list },
-          });
-          if (save?.success) {
-            this._showToast?.(
-              this.t('actions.noisy_ignore_success', {entity: entityId}),
-              'success',
-            );
-            this._markIssueExcluded?.(btn);
-          } else {
-            this._showToast?.(this.t('actions.noisy_ignore_error'), 'error');
-          }
-        } catch (err) {
-          const msg = (err && (err.message || err.code || JSON.stringify(err))) || 'unknown';
-          this._showToast?.(this.t('actions.noisy_ignore_error') + ': ' + msg, 'error');
-        } finally {
-          btn.disabled = false;
-          btn.innerHTML = orig;
-        }
+        });
       });
+    };
+    // The key names are spelled out rather than built from a prefix: a key
+    // assembled at runtime leaves no literal trace, and scripts/check_translation_keys.py
+    // would report all six as dead and fail the build.
+    wireIgnoreButton('.noisy-ignore-btn', 'noisy_scan_exclude_patterns', {
+      already: 'actions.noisy_ignore_already',
+      success: 'actions.noisy_ignore_success',
+      error:   'actions.noisy_ignore_error',
+    });
+    wireIgnoreButton('.entity-ignore-btn', 'haca_ignore_patterns', {
+      already: 'actions.entity_ignore_already',
+      success: 'actions.entity_ignore_success',
+      error:   'actions.entity_ignore_error',
     });
 
     // Click-to-copy for HACA issue IDs
