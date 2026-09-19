@@ -219,6 +219,12 @@ class MockHass:
 
     def add_registry_entry(self, entry: MockRegistryEntry) -> None:
         self._entity_registry.add(entry)
+        # A disabled entity is in the registry and nowhere else: Home Assistant
+        # never loads it, so it has no state. Handing it one here would hide
+        # every bug that comes from reading the state machine alone.
+        if entry.disabled_by is not None:
+            self._states.pop(entry.entity_id, None)
+            return
         if entry.entity_id not in self._states:
             self._states[entry.entity_id] = MockState(entry.entity_id)
 

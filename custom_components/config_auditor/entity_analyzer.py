@@ -57,6 +57,10 @@ _TEMPLATE_ENTITY_RE = re.compile(r"\b([a-z][a-z0-9_]*)\.([a-z0-9_]+)\b")
 # `target:` selectors that reach entities indirectly.
 _TARGET_ID_FIELDS: frozenset[str] = frozenset({"device_id", "area_id", "label_id"})
 
+# A service call — `light.turn_on`. Same slugified shape as an entity id, and
+# its domain is the only entity domain a `target:` beside it can ever reach.
+_SERVICE_CALL_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+
 # Depth cap for the config walk — real automations nest a handful of levels;
 # this only guards against a pathological or hand-crafted config.
 _MAX_CONFIG_DEPTH = 30
@@ -237,6 +241,11 @@ class EntityAnalyzer:
         known_ids = self._collect_known_entity_ids()
         by_device, by_area, by_label = self._build_target_indexes()
         indexes = {"device_id": by_device, "area_id": by_area, "label_id": by_label}
+        # Every domain Home Assistant actually holds entities in. A service whose
+        # domain is not one of them — `zwave_js.set_value`, `homeassistant.turn_on`
+        # — acts through something other than its own domain, so its target stays
+        # unfiltered rather than being narrowed down to nothing.
+        entity_domains = {eid.split(".", 1)[0] for eid in known_ids}
 
         sources: list[tuple[str, dict]] = list(automation_configs.items())
         if script_configs:
@@ -251,7 +260,7 @@ class EntityAnalyzer:
         # results and the config dicts, which belong to automation_analyzer and
         # are not written while the scan runs.
         strong, combined, text_ids = await self.hass.async_add_executor_job(
-            self._resolve_references, sources, known_ids, indexes
+            self._resolve_references, sources, known_ids, indexes, entity_domains
         )
         self._strong_entity_references.update(strong)
         self._entity_references.update(combined)
@@ -262,6 +271,7 @@ class EntityAnalyzer:
         sources: list[tuple[str, dict]],
         known_ids: set[str],
         indexes: dict[str, dict[str, set[str]]],
+        entity_domains: set[str],
     ) -> tuple[dict[str, list[str]], dict[str, list[str]], set[str]]:
         """Resolve every source's references — the executor half of the walk.
 
@@ -288,8 +298,18 @@ class EntityAnalyzer:
                     # Jinja attributes would masquerade as entity references.
                     if candidate in known_ids:
                         weak.add(candidate)
-            for field, value in targets:
-                weak.update(indexes[field].get(value, ()))
+            for field, value, scope in targets:
+                hits = indexes[field].get(value, ())
+                # `light.turn_on` on an area reaches the lights of that area, not
+                # its thermostats, its update entities or its diagnostic sensors.
+                # Home Assistant narrows a target by the service's domain, and so
+                # must this: without it a single area-wide call marked every
+                # entity of the area as referenced, which is what turned
+                # unknown_state and disabled_but_referenced into noise.
+                if scope and scope in entity_domains:
+                    prefix = f"{scope}."
+                    hits = [eid for eid in hits if eid.startswith(prefix)]
+                weak.update(hits)
 
             for entity_id in explicit:
                 strong[entity_id].append(source_id)
@@ -321,7 +341,8 @@ class EntityAnalyzer:
 
         Built once per scan so that resolving a `target:` block is a dict lookup.
         An entity inherits the area and the labels of its device, which is how
-        Home Assistant itself resolves a service call.
+        Home Assistant itself resolves a service call. Disabled entities are left
+        out for the same reason: Home Assistant cannot reach one either.
         """
         by_device: dict[str, set[str]] = defaultdict(set)
         by_area: dict[str, set[str]] = defaultdict(set)
@@ -349,6 +370,14 @@ class EntityAnalyzer:
             entity_id = getattr(entry, "entity_id", None)
             if not entity_id:
                 continue
+            # A disabled entity is not loaded, so a device / area / label target
+            # never reaches it — Home Assistant resolves a target against the
+            # state machine, which a disabled entity is absent from. Indexing it
+            # made every diagnostic sensor of a device look referenced by
+            # whatever automation names that device, and disabled_but_referenced
+            # then asked the user to repair a link that was never there.
+            if getattr(entry, "disabled_by", None) is not None:
+                continue
             device_id = getattr(entry, "device_id", None)
             device = devices.get(device_id) if device_id else None
             if device_id:
@@ -367,12 +396,14 @@ class EntityAnalyzer:
 
     def _walk_config(
         self, config: Any
-    ) -> tuple[set[str], list[str], list[tuple[str, str]], set[str]]:
+    ) -> tuple[set[str], list[str], list[tuple[str, str, str | None]], set[str]]:
         """Walk one automation/script config and collect every reference it holds.
 
         Returns ``(entity_ids, template_strings, target_ids, text_tokens)``, where
-        ``target_ids`` is a list of ``(field, value)`` pairs for device_id /
-        area_id / label_id, and ``text_tokens`` is every ``domain.object_id``
+        ``target_ids`` is a list of ``(field, value, scope_domain)`` triples for
+        device_id / area_id / label_id — ``scope_domain`` being the entity domain
+        the enclosing service call or device block can reach, or ``None`` when
+        nothing in scope names one — and ``text_tokens`` is every ``domain.object_id``
         shaped token found anywhere in the config — the safety net the unused
         helper checks read.
 
@@ -392,7 +423,7 @@ class EntityAnalyzer:
         """
         entity_ids: set[str] = set()
         templates: list[str] = []
-        targets: list[tuple[str, str]] = []
+        targets: list[tuple[str, str, str | None]] = []
         text_parts: list[str] = []
 
         def _add_entity(value: Any) -> None:
@@ -403,12 +434,12 @@ class EntityAnalyzer:
                 for item in value:
                     _add_entity(item)
 
-        def _add_target(field: str, value: Any) -> None:
+        def _add_target(field: str, value: Any, scope: str | None) -> None:
             if isinstance(value, str):
-                targets.append((field, value))
+                targets.append((field, value, scope))
             elif isinstance(value, list):
                 for item in value:
-                    _add_target(field, item)
+                    _add_target(field, item, scope)
 
         def _add_tokens(value: Any) -> None:
             """Keep one scalar for the token pass, as the JSON dump presented it.
@@ -430,22 +461,41 @@ class EntityAnalyzer:
                 except Exception:  # noqa: BLE001 — unrenderable, so unreadable
                     pass
 
-        def _walk(node: Any, depth: int) -> None:
+        def _scope_domain(node: dict, inherited: str | None) -> str | None:
+            """The entity domain a `target:` inside this dict can reach.
+
+            A service call names it: `light.turn_on` only ever reaches a
+            `light.*` entity, whatever else the area behind the target holds.
+            A device trigger / condition / action names it in its own `domain:`
+            field, next to the `device_id:` it applies to. Anything else keeps
+            the enclosing block's answer, so a `target:` sub-dict inherits the
+            domain of the service call it belongs to.
+            """
+            call = node.get("service") or node.get("action")
+            if isinstance(call, str) and _SERVICE_CALL_RE.match(call):
+                return call.split(".", 1)[0]
+            device_domain = node.get("domain")
+            if isinstance(device_domain, str) and "device_id" in node:
+                return device_domain
+            return inherited
+
+        def _walk(node: Any, depth: int, scope: str | None) -> None:
             if depth > _MAX_CONFIG_DEPTH:
                 return
             if isinstance(node, dict):
+                scope = _scope_domain(node, scope)
                 for key, value in node.items():
                     if key == "entity_id":
                         _add_entity(value)
                     elif key in _TARGET_ID_FIELDS:
-                        _add_target(key, value)
+                        _add_target(key, value, scope)
                     # The dump quoted the keys too, and an entity id does turn
                     # up as one — `input_boolean.x: {...}` in a package file.
                     _add_tokens(key)
-                    _walk(value, depth + 1)
+                    _walk(value, depth + 1, scope)
             elif isinstance(node, list):
                 for item in node:
-                    _walk(item, depth + 1)
+                    _walk(item, depth + 1, scope)
             elif isinstance(node, str):
                 if "{{" in node or "{%" in node:
                     templates.append(node)
@@ -453,7 +503,7 @@ class EntityAnalyzer:
             else:
                 _add_tokens(node)
 
-        _walk(config, 0)
+        _walk(config, 0, None)
         # One pass over everything the walk kept. A newline cannot glue two
         # halves into a token: the regex is anchored on word boundaries, and
         # the dump separated its values the same way.
@@ -541,9 +591,26 @@ class EntityAnalyzer:
         explicit `entity_id:` field to be called a zombie. Template hits and
         device/area/label targets can never point at an entity that does not
         exist, so counting them here would only manufacture false positives.
+
+        A disabled entity is not missing either. It has no state, but it is in
+        the registry and the user can switch it back on from its own device
+        page; `_analyze_entity_registry` reports it as `disabled_but_referenced`.
+        Reading the state machine alone told the user that an entity they can
+        see in Home Assistant does not exist, and filed the same entity under
+        two contradictory issues.
         """
         all_entities = self.hass.states.async_all()
         existing_entities = {entity.entity_id for entity in all_entities}
+        try:
+            existing_entities.update(
+                entry.entity_id
+                for entry in (
+                    getattr(er.async_get(self.hass), "entities", None) or {}
+                ).values()
+                if getattr(entry, "disabled_by", None) is not None
+            )
+        except Exception:  # noqa: BLE001 — registry not loaded yet
+            pass
         t = self._translator.t
 
         for idx, (entity_id, automations) in enumerate(self._strong_entity_references.items()):
