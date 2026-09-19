@@ -221,8 +221,11 @@ class ComplianceAnalyzer:
                     continue
 
                 # Si TOUTES les entités de l'area ont haca_ignore → skip
+                # `issubset` would run in C against the hash table and never
+                # reach IgnoredEntityIds.__contains__, so it would miss every
+                # entity ignored by a glob pattern. Test them one by one.
                 entities_in_area = area_entities.get(area.id, set())
-                if entities_in_area and entities_in_area.issubset(self._ignored_entity_ids):
+                if entities_in_area and all(e in self._ignored_entity_ids for e in entities_in_area):
                     _LOGGER.debug(
                         "[HACA Compliance] Area '%s' ignorée (toutes les entités ont haca_ignore)",
                         area.name,

@@ -679,3 +679,235 @@ class TestSceneNotInEntityIssues:
             "Missing scene references must produce a zombie issue (routed to scene_issue_list by __init__)"
         assert "sensor.missing_sensor" in entity_ids_with_issues, \
             "Missing sensor references must still produce zombie entity issues"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# haca_ignore_patterns — the glob list that ignores an entity everywhere
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _with_patterns(hass, *patterns):
+    """Give ``hass`` a HACA config entry carrying ``haca_ignore_patterns``."""
+    from unittest.mock import MagicMock
+    entry = MagicMock()
+    entry.options = {"haca_ignore_patterns": list(patterns)}
+    hass.config_entries.async_entries = MagicMock(return_value=[entry])
+    return hass
+
+
+class TestIgnorePatterns:
+
+    @pytest.mark.asyncio
+    async def test_pattern_ignores_an_entity_no_registry_knows(self):
+        """The reason the feature exists.
+
+        A device powered down on purpose keeps its integration from setting
+        up, so its entities are in no registry and in no state machine. The
+        haca_ignore label has nothing to attach to; a pattern still matches.
+        """
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "sensor.bbq_probe_1" in result
+        assert "sensor.bbq_" in result          # * matches the empty string
+        assert "sensor.kitchen_temp" not in result
+
+    @pytest.mark.asyncio
+    async def test_label_and_patterns_are_additive(self):
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+        hass.add_registry_entry(MockRegistryEntry("sensor.labelled", labels={"haca_ignore"}))
+        hass.add_registry_entry(MockRegistryEntry("sensor.plain"))
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "sensor.labelled" in result
+        assert "sensor.bbq_probe_1" in result
+        assert "sensor.plain" not in result
+
+    @pytest.mark.asyncio
+    async def test_matching_is_case_sensitive_like_fnmatchcase(self):
+        """Same semantics as the noisy-scan list and the recorder entity_globs."""
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "sensor.bbq_probe" in result
+        assert "sensor.BBQ_probe" not in result
+
+    @pytest.mark.asyncio
+    async def test_question_mark_matches_exactly_one_character(self):
+        hass = _with_patterns(MockHass(), "climate.garage?")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "climate.garage1" in result
+        assert "climate.garage" not in result
+        assert "climate.garage12" not in result
+
+    @pytest.mark.asyncio
+    async def test_patterns_are_anchored_at_both_ends(self):
+        hass = _with_patterns(MockHass(), "binary_sensor.*_test")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "binary_sensor.door_test" in result
+        assert "binary_sensor.door_testx" not in result
+        assert "xbinary_sensor.door_test" not in result
+
+    @pytest.mark.asyncio
+    async def test_blank_lines_are_dropped(self):
+        """The panel posts the textarea verbatim; an empty line must not match all."""
+        hass = _with_patterns(MockHass(), "  ", "", "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "sensor.bbq_probe" in result
+        assert "sensor.anything_else" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_patterns_behaves_exactly_like_a_plain_set(self):
+        hass = _with_patterns(MockHass())
+        hass.add_registry_entry(MockRegistryEntry("sensor.x", labels={"haca_ignore"}))
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert result == {"sensor.x"}
+        assert "sensor.y" not in result
+
+    @pytest.mark.asyncio
+    async def test_an_unusable_pattern_does_not_disable_the_others(self):
+        hass = _with_patterns(MockHass(), "sensor.[unclosed", "sensor.ok_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "sensor.ok_1" in result
+
+    @pytest.mark.asyncio
+    async def test_non_string_lookup_does_not_raise(self):
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert None not in result
+        assert 42 not in result
+
+    @pytest.mark.asyncio
+    async def test_set_algebra_sees_only_the_labelled_ids(self):
+        """Documents the trap, and pins it.
+
+        ``issubset`` / ``&`` / ``-`` run in C against the hash table and never
+        reach ``__contains__``, so they ignore the patterns. Any caller that
+        needs pattern matching must use ``in`` — see the guard below on
+        compliance_analyzer, which used ``issubset`` and had to be rewritten.
+        """
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert "sensor.bbq_probe" in result
+        assert not {"sensor.bbq_probe"}.issubset(result)
+        assert all(e in result for e in {"sensor.bbq_probe"})
+
+    @pytest.mark.asyncio
+    async def test_matching_pattern_names_the_one_that_covered_it(self):
+        hass = _with_patterns(MockHass(), "light.*", "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert result.matching_pattern("sensor.bbq_probe") == "sensor.bbq_*"
+        assert result.matching_pattern("sensor.other") is None
+        assert result.patterns == ["light.*", "sensor.bbq_*"]
+
+    @pytest.mark.asyncio
+    async def test_cache_window_shares_the_patterns(self):
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import (
+            async_get_haca_ignored_entity_ids, begin_haca_ignore_scan,
+        )
+        begin_haca_ignore_scan(hass)
+        first = await async_get_haca_ignored_entity_ids(hass)
+        second = await async_get_haca_ignored_entity_ids(hass)
+        assert first is second
+        assert "sensor.bbq_probe" in second
+
+    @pytest.mark.asyncio
+    async def test_options_without_the_key_are_harmless(self):
+        from unittest.mock import MagicMock
+        hass = MockHass()
+        entry = MagicMock()
+        entry.options = {"scan_interval": 60}
+        hass.config_entries.async_entries = MagicMock(return_value=[entry])
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        result = await async_get_haca_ignored_entity_ids(hass)
+        assert result == set()
+
+
+class TestIgnorePatternsReachTheAnalyzers:
+
+    @pytest.mark.asyncio
+    async def test_dashboard_missing_entity_silenced_by_pattern(self):
+        """The reported case: a card pointing at an entity that no longer exists."""
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        d = _make_dashboard_analyzer(hass)
+        d._haca_ignored = await async_get_haca_ignored_entity_ids(hass)
+        d.issues = []
+        d._add_issue("sensor.bbq_probe_1", "Test Dashboard", "cards[0]")
+        d._add_issue("sensor.kitchen_temp", "Test Dashboard", "cards[1]")
+
+        assert [i["entity_id"] for i in d.issues] == ["sensor.kitchen_temp"]
+
+    @pytest.mark.asyncio
+    async def test_unavailable_entity_silenced_by_pattern(self):
+        """Same device, the other half of the story: powered down, so unavailable."""
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+        hass.add_state("sensor.bbq_probe_1", "unavailable")
+        hass.add_state("sensor.kitchen_temp", "unavailable")
+
+        a = _make_entity_analyzer(hass)
+        a._ignored_entity_ids = await a._load_ignored_entity_ids()
+        await a._analyze_entity_states()
+
+        issue_ids = [i["entity_id"] for i in a.issues]
+        assert "sensor.bbq_probe_1" not in issue_ids
+        assert "sensor.kitchen_temp" in issue_ids
+
+    @pytest.mark.asyncio
+    async def test_automation_analyzer_is_ignored_honours_patterns(self):
+        hass = _with_patterns(MockHass(), "sensor.bbq_*")
+
+        from custom_components.config_auditor.translation_utils import async_get_haca_ignored_entity_ids
+        a = _make_automation_analyzer(hass)
+        a._ignored_entity_ids = await async_get_haca_ignored_entity_ids(hass)
+        assert a._is_ignored("sensor.bbq_probe_1") is True
+        assert a._is_ignored("sensor.kitchen_temp") is False
+
+
+class TestIgnorePatternsWiring:
+    """Source-level guards: the two places a pattern can silently stop working."""
+
+    def test_compliance_analyzer_does_not_use_issubset_on_the_ignore_set(self):
+        src = (Path(__file__).parent.parent / "compliance_analyzer.py").read_text(encoding="utf-8")
+        assert "issubset(self._ignored_entity_ids)" not in src, (
+            "issubset() bypasses IgnoredEntityIds.__contains__ and would ignore "
+            "every glob pattern — test each entity with `in` instead"
+        )
+
+    def test_save_options_accepts_the_new_key(self):
+        src = (Path(__file__).parent.parent / "websocket.py").read_text(encoding="utf-8")
+        assert "OPT_HACA_IGNORE_PATTERNS" in src, (
+            "haca_ignore_patterns must be in websocket ALLOWED_KEYS or the panel "
+            "cannot save it"
+        )
+
+    def test_panel_sources_read_and_write_the_option(self):
+        www = Path(__file__).parent.parent / "www" / "src"
+        config_tab = (www / "config_tab.js").read_text(encoding="utf-8")
+        issues = (www / "issues.js").read_text(encoding="utf-8")
+        assert "haca_ignore_patterns" in config_tab
+        assert "cfg-ignore-patterns" in config_tab
+        assert "haca_ignore_patterns" in issues
+        assert "entity-ignore-btn" in issues

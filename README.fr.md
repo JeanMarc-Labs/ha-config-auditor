@@ -108,7 +108,12 @@ Le panel H.A.C.A est organisé en **10 onglets principaux** :
 
 ### Ignorer des entités
 
-Ajoutez le label **`haca_ignore`** à toute entité, appareil ou zone pour l'exclure de tous les scans.
+Deux moyens, cumulables :
+
+- **Le label `haca_ignore`** — ajoutez-le à toute entité, appareil ou zone pour l'exclure de tous les scans.
+- **Des patterns glob** — *Configuration → Ignorer des entités avec un pattern*, un [glob](https://docs.python.org/3/library/fnmatch.html) par ligne (`sensor.bbq_*`, `climate.garage?`). Toute entité dont l'`entity_id` correspond est ignorée par tous les scans, exactement comme si elle portait le label.
+
+Le label ne peut se poser que sur quelque chose que Home Assistant connaît. Une carte qui pointe vers une entité supprimée, ou un appareil éteint volontairement dont l'intégration ne démarre donc jamais, n'a aucune entrée dans le registre — il n'y a rien à étiqueter. Un pattern, lui, se compare à l'`entity_id` brut : il couvre aussi ces cas. Sur une anomalie *entité manquante*, *indisponible* ou *zombie*, le bouton **Ignorer l'entité** ajoute l'entity_id à la liste pour vous.
 
 ---
 

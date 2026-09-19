@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     DOMAIN,
+    OPT_HACA_IGNORE_PATTERNS,
     OPT_MCP_SERVER_ENABLED,
     OPT_PROACTIVE_AGENT_ENABLED,
     OPT_LLM_API_ENABLED,
@@ -1560,6 +1561,7 @@ async def handle_save_options(
         "notify_low_severity",     # false (default) — persistent notification for LOW issues
         "battery_last_replaced",   # dict {entity_id: ISO datetime} — battery replacement tracking
         "noisy_scan_exclude_patterns",  # list[str] — glob patterns to skip in noisy entity scan
+        OPT_HACA_IGNORE_PATTERNS,  # list[str] — glob patterns ignored by every scan
         "llm_write_enabled",   # false (default) — let conversation agents use HACA write tools
         # The three surfaces that reach outside the panel. Off on a new install;
         # an entry created before 1.8.0 was migrated to on. See const.py.

@@ -1,8 +1,10 @@
 """Translation utilities for H.A.C.A analyzers."""
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
+import re
 from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
@@ -249,6 +251,105 @@ class TranslationHelper:
 _IGNORE_CACHE_KEY = "_haca_ignore_cache"
 
 
+def _get_haca_ignore_patterns(hass) -> list[str]:
+    """Return the user's glob patterns that ignore an entity everywhere.
+
+    Stored in the first HACA config entry options under
+    ``haca_ignore_patterns``; the panel writes one pattern per line. Empty and
+    whitespace-only lines are dropped. Returns ``[]`` when there is no entry
+    or no pattern — the same shape as ``noisy_scan_exclude_patterns``, which
+    stays separate because it silences the noisy scan *only*.
+    """
+    try:
+        from .const import DOMAIN, OPT_HACA_IGNORE_PATTERNS
+
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            raw = entry.options.get(OPT_HACA_IGNORE_PATTERNS) or []
+            if isinstance(raw, str):
+                raw = raw.splitlines()
+            return [p.strip() for p in raw if isinstance(p, str) and p.strip()]
+    except Exception:  # noqa: BLE001 — never let a bad option break a scan
+        _LOGGER.debug("[HACA] could not read the haca_ignore_patterns option")
+    return []
+
+
+def _compile_ignore_patterns(patterns: list[str]):
+    """Compile the whole list into one regex — one test per entity, not N.
+
+    ``fnmatch.translate`` is what ``fnmatch.fnmatchcase`` uses, so the
+    semantics are exactly those documented for the noisy-scan list: ``*``,
+    ``?``, ``[...]``, case-sensitive. A pattern that does not compile is
+    dropped with a warning rather than taking the others down with it.
+    """
+    parts: list[str] = []
+    for pat in patterns:
+        try:
+            parts.append(f"(?:{fnmatch.translate(pat)})")
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("[HACA] ignoring unusable haca_ignore pattern %r", pat)
+    if not parts:
+        return None
+    try:
+        return re.compile("|".join(parts))
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning("[HACA] could not compile the haca_ignore patterns — ignoring them")
+        return None
+
+
+class IgnoredEntityIds(set):
+    """The labelled entity ids, plus the user's glob patterns.
+
+    A plain ``set`` of entity ids is what the eight analyzers have always been
+    handed, and they test it about thirty times with ``entity_id in ignored``.
+    Subclassing keeps every one of those call sites working while
+    ``__contains__`` also tries the patterns.
+
+    Two things follow from that and matter:
+
+    - A pattern can match an entity that exists nowhere — no state, no
+      registry entry. That is the point: ``dashboard_missing_entity`` fires
+      precisely on entity ids Home Assistant has never heard of, so expanding
+      the patterns against the registry up front would miss exactly the case
+      the feature exists for.
+    - Set algebra (``issubset``, ``&``, ``-``, ``>=``) is implemented in C
+      against the underlying hash table and does **not** call
+      ``__contains__``: it only sees the literal ids. Use ``in`` — see
+      ``compliance_analyzer`` for the one place that had to be rewritten.
+    """
+
+    __slots__ = ("_patterns", "_pattern_re")
+
+    def __new__(cls, ids=(), patterns=()):
+        return super().__new__(cls)
+
+    def __init__(self, ids=(), patterns=()):
+        super().__init__(ids)
+        self._patterns: list[str] = list(patterns)
+        self._pattern_re = _compile_ignore_patterns(self._patterns)
+
+    @property
+    def patterns(self) -> list[str]:
+        """The glob patterns behind this set, for logging and diagnostics."""
+        return list(self._patterns)
+
+    def __contains__(self, item) -> bool:
+        if set.__contains__(self, item):
+            return True
+        if self._pattern_re is None or not isinstance(item, str):
+            return False
+        return self._pattern_re.match(item) is not None
+
+    def matching_pattern(self, entity_id: str) -> str | None:
+        """Which pattern covers ``entity_id``, or ``None``. For messages."""
+        for pat in self._patterns:
+            try:
+                if fnmatch.fnmatchcase(entity_id, pat):
+                    return pat
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+
 def begin_haca_ignore_scan(hass) -> None:
     """Open (and reset) the per-scan cache of haca_ignore entity ids."""
     try:
@@ -271,13 +372,22 @@ def _ignore_cache_store(hass) -> dict | None:
 
 
 async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
-    """Return the full set of entity_ids that should be ignored by HACA.
+    """Return everything HACA must skip: the labelled ids, and the patterns.
 
-    Checks both entity_registry (label on the entity itself) and
-    device_registry (label on the device — all its entities are then ignored).
+    Three sources, merged into one :class:`IgnoredEntityIds`:
+
+    1. entity_registry — the ``haca_ignore`` label on the entity itself;
+    2. device_registry — the label on the device, which ignores all of its
+       entities;
+    3. the ``haca_ignore_patterns`` option — globs tested on the entity_id at
+       lookup time, so they also cover entities that have no registry entry
+       at all (a dashboard card pointing at a deleted entity, an integration
+       that never set up because its device is unplugged on purpose).
 
     Within a scan window opened by :func:`begin_haca_ignore_scan` the result is
-    computed once and shared. Treat the returned set as read-only.
+    computed once and shared. Treat the returned set as read-only, and test it
+    with ``in`` — set algebra bypasses the patterns, see
+    :class:`IgnoredEntityIds`.
     """
     from homeassistant.helpers import entity_registry as er, device_registry as dr
 
@@ -288,6 +398,7 @@ async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
         return store[_IGNORE_CACHE_KEY]
 
     ignored: set[str] = set()
+    patterns = _get_haca_ignore_patterns(hass)
     try:
         ent_reg = er.async_get(hass)
         dev_reg = dr.async_get(hass)
@@ -306,7 +417,15 @@ async def async_get_haca_ignored_entity_ids(hass) -> set[str]:
     except Exception as exc:
         _LOGGER.warning("[HACA] Error building haca_ignore set: %s", exc)
 
+    result = IgnoredEntityIds(ignored, patterns)
     if store is not None:
-        store[_IGNORE_CACHE_KEY] = ignored
-    _LOGGER.debug("[HACA] haca_ignore: %d entity_ids will be skipped", len(ignored))
-    return ignored
+        store[_IGNORE_CACHE_KEY] = result
+    # The two counts answer different questions: how many entities carry the
+    # label, and how many patterns each unlabelled entity_id will be tested
+    # against. A pattern matches entities that are in no registry, so there is
+    # no meaningful total to print here.
+    _LOGGER.debug(
+        "[HACA] haca_ignore: %d labelled entity_ids + %d pattern(s) %s will be skipped",
+        len(ignored), len(patterns), patterns or "",
+    )
+    return result

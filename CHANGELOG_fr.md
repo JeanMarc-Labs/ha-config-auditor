@@ -7,6 +7,10 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
 ## [1.8.1] — 2026-09-19 — Des entités signalées désactivées, disparues ou indisponibles alors qu'elles n'étaient rien de tout cela
 
+### Ajouté
+
+- **Configuration → Ignorer des entités avec un pattern** — une liste de patterns glob, un par ligne, qui exclut des entités de tous les scans H.A.C.A. Le label `haca_ignore` ne peut se poser que sur quelque chose que Home Assistant connaît : il ne peut donc rien faire pour une carte de dashboard qui pointe vers une entité supprimée, ni pour un appareil éteint volontairement dont l'intégration ne démarre jamais — ni l'un ni l'autre n'a d'entrée de registre à étiqueter. Un pattern se compare à l'`entity_id` brut et couvre les deux. Un bouton **Ignorer l'entité** sur les anomalies *entité manquante*, *indisponible* et *zombie* ajoute l'entity_id à la liste en un clic, et un champ de test indique quel pattern couvre une entité avant même d'enregistrer.
+
 ### Corrigé
 
 - **Une automatisation qui désignait un *appareil* ou une *zone* faisait passer pour référencées toutes les entités situées derrière** — y compris celles que Home Assistant ne peut pas atteindre : les entités désactivées, et celles d'un domaine que le service ne touche jamais. D'où un `light.turn_on` sur une pièce qui semblait référencer ses capteurs, et trois capteurs de diagnostic Z-Wave signalés « désactivés mais référencés par 2 automatisations » alors que rien ne les nommait. Une cible est désormais résolue comme Home Assistant la résout. **Le compteur d'entités va baisser au prochain scan** — une bonne part de la hausse constatée en 1.8.0 venait de là.

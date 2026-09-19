@@ -108,7 +108,12 @@ The H.A.C.A panel is organized into **10 main tabs**:
 
 ### Ignoring entities
 
-Add the label **`haca_ignore`** to any entity, device or area to exclude it from all scans.
+Two ways, and they add up:
+
+- **The `haca_ignore` label** — add it to any entity, device or area to exclude it from all scans.
+- **Glob patterns** — *Configuration → Ignore entities with a pattern*, one [glob](https://docs.python.org/3/library/fnmatch.html) per line (`sensor.bbq_*`, `climate.garage?`). Any entity whose `entity_id` matches is skipped by every scan, exactly as if it carried the label.
+
+The label can only be put on something Home Assistant knows about. A card pointing at an entity you deleted, or a device you power down on purpose whose integration therefore never starts, has no registry entry at all — there is nothing to label. A pattern is tested on the `entity_id` itself, so it covers those too. On a *missing*, *unavailable* or *zombie entity* issue, the **Ignore entity** button adds that entity_id to the list for you.
 
 ---
 

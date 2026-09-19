@@ -7,6 +7,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ---
 ## [1.8.1] — 2026-09-19 — Entities reported as disabled, missing or unavailable when they were none of those
 
+### Added
+
+- **Configuration → Ignore entities with a pattern** — a list of glob patterns, one per line, that excludes entities from every H.A.C.A scan. The `haca_ignore` label can only be put on something Home Assistant knows about, so it cannot reach a dashboard card pointing at an entity you deleted, or a device you power down on purpose whose integration then never starts: neither has a registry entry to label. A pattern is tested on the `entity_id` itself, so it covers both. A **Ignore entity** button on *missing*, *unavailable* and *zombie entity* issues adds that entity_id to the list in one click, and a test box tells you which pattern covers a given entity before you save.
+
 ### Fixed
 
 - **An automation that named a *device* or an *area* made every entity behind it look referenced** — including the ones Home Assistant cannot reach: disabled entities, and entities of a domain the service never touches. That is why `light.turn_on` on a room seemed to reference its sensors, and why three Z-Wave diagnostic sensors were reported as "disabled but referenced by 2 automations" when nothing named them. A target is now resolved the way Home Assistant resolves it. **Expect the entity count to drop after the next scan** — a large part of the jump seen in 1.8.0 was this.

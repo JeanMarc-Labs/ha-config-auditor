@@ -374,6 +374,27 @@ function renderConfigTab(options, lang, t) {
       </div>
     </div>` +
 
+    // ── Global ignore patterns section ──
+    // The label above cannot reach an entity that has no registry entry — a
+    // dashboard card pointing at a deleted entity, an integration that never
+    // set up because its device is unplugged on purpose. A glob is tested on
+    // the entity_id itself, so it can.
+    `<div class="cfg-section" style="padding:16px 20px;">
+      <div class="cfg-section-title">${_icon("eye-off", 18)}${t('config.ignore_patterns_title')}</div>
+      <div class="cfg-row-hint" style="margin-top:8px;line-height:1.6;">${t('config.ignore_patterns_info')}</div>
+      <div class="cfg-row-hint" style="margin-top:6px;font-size:0.78em;">${t('config.ignore_patterns_examples')}</div>
+      <textarea id="cfg-ignore-patterns" class="cfg-textarea" rows="6" cols="100" spellcheck="false"
+        placeholder="${t('config.ignore_patterns_placeholder')}">${(options.haca_ignore_patterns || []).join('\n')}</textarea>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="cfg-ignore-patterns-test" class="cfg-input" style="flex:1;min-width:180px;text-align:left;width:auto;"
+          placeholder="${t('config.ignore_patterns_test_placeholder')}">
+        <button class="cfg-btn cfg-btn-secondary" id="cfg-ignore-patterns-test-btn" style="height:38px;">
+          ${_icon("flask-outline", 16)} ${t('config.ignore_patterns_test')}
+        </button>
+        <span id="cfg-ignore-patterns-test-result" class="cfg-row-hint" style="margin-left:6px;font-weight:600;"></span>
+      </div>
+    </div>` +
+
     // ── Noisy scan exclude patterns section ──
     `<div class="cfg-section" style="padding:16px 20px;">
       <div class="cfg-section-title">${_icon("volume-mute", 18)}${t('config.noisy_exclude_title')}</div>
@@ -499,6 +520,7 @@ var DEFAULT_OPTIONS = {
   notify_medium_severity: false,
   notify_low_severity: false,
   noisy_scan_exclude_patterns: [],
+  haca_ignore_patterns: [],
   llm_write_enabled: false,
   mcp_server_enabled: false,
   proactive_agent_enabled: false,
@@ -543,6 +565,11 @@ function collectFormOptions(root) {
     llm_api_enabled: bool('#cfg-llm-api', false),
     noisy_scan_exclude_patterns: (function () {
       var el = q('#cfg-noisy-exclude-patterns');
+      if (!el) return [];
+      return el.value.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    })(),
+    haca_ignore_patterns: (function () {
+      var el = q('#cfg-ignore-patterns');
       if (!el) return [];
       return el.value.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
     })(),

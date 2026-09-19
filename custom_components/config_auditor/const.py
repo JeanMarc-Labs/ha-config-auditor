@@ -185,6 +185,16 @@ OPT_MCP_SERVER_ENABLED = "mcp_server_enabled"
 OPT_PROACTIVE_AGENT_ENABLED = "proactive_agent_enabled"
 OPT_LLM_API_ENABLED = "llm_api_enabled"
 
+# Motifs glob qui ignorent une entité partout dans HACA — l'équivalent du label
+# `haca_ignore` pour les entités qu'on ne peut pas étiqueter. Une carte qui
+# référence une entité supprimée, ou une intégration qui n'a pas démarré parce
+# que l'appareil est éteint volontairement, n'a pas d'entrée de registre : il
+# n'y a rien à étiqueter. Un motif, lui, se compare à l'entity_id brut.
+# Stockage : liste de chaînes dans les options de l'entrée, un motif par ligne
+# dans l'interface. Sémantique fnmatch sensible à la casse, comme
+# `noisy_scan_exclude_patterns` et comme les `entity_globs` du recorder.
+OPT_HACA_IGNORE_PATTERNS = "haca_ignore_patterns"
+
 DEFAULT_MCP_SERVER_ENABLED = False
 DEFAULT_PROACTIVE_AGENT_ENABLED = False
 DEFAULT_LLM_API_ENABLED = False
