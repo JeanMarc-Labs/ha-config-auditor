@@ -99,7 +99,7 @@
             <div style="padding:48px 32px;text-align:center;">
               <div style="font-size:52px;margin-bottom:16px;">✅</div>
               <h2 style="margin-bottom:10px;">${this.t('misc.applied')}</h2>
-              <p style="color:var(--secondary-text-color);">${fieldLabel} mis à jour avec succès.</p>
+              <p style="color:var(--secondary-text-color);">${this.t(field === 'description' ? 'misc.description_updated' : 'misc.alias_updated')}</p>
               <button onclick="this.closest('.haca-modal').remove()"
                 style="margin-top:20px;background:var(--primary-color);color:white;padding:10px 28px;border-radius:10px;border:none;cursor:pointer;font-size:14px;">
                 ${this.t('actions.close')}
@@ -118,7 +118,7 @@
       card._updateContent(`
         <div style="padding:32px;text-align:center;color:var(--error-color);">
           <div style="font-size:40px;margin-bottom:12px;">❌</div>
-          <div>${this.escapeHtml(err.message || 'Erreur inconnue')}</div>
+          <div>${this.escapeHtml(err.message || this.t('misc.error_unknown'))}</div>
           <button onclick="this.closest('.haca-modal').remove()"
             style="margin-top:16px;background:var(--primary-color);color:white;padding:8px 20px;border-radius:8px;border:none;cursor:pointer;">
             ${this.t('actions.close')}

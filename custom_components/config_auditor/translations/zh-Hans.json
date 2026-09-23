@@ -607,6 +607,8 @@
       "ai_suggestion": "AI 建议",
       "apply_ai": "用 AI 应用",
       "applied": "已应用！",
+      "description_updated": "描述已成功更新。",
+      "alias_updated": "别名已成功更新。",
       "last_scan": "上次扫描"
     },
     "history": {

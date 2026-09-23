@@ -607,6 +607,8 @@
       "ai_suggestion": "KI-Vorschlag",
       "apply_ai": "Per KI anwenden",
       "applied": "Angewendet!",
+      "description_updated": "Beschreibung erfolgreich aktualisiert.",
+      "alias_updated": "Alias erfolgreich aktualisiert.",
       "last_scan": "Letzter Scan"
     },
     "history": {
