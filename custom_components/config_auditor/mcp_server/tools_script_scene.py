@@ -22,7 +22,6 @@ from .common import (
     _skipped_note,
     _slugify,
 )
-from .tools_system import _auto_backup
 
 
 async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
@@ -36,8 +35,6 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
     if not script_id or not alias or not sequence:
         return {"error": "script_id, alias and sequence are required"}
 
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_create_script")
     if not isinstance(sequence, list):
         sequence = [sequence]
 
@@ -72,7 +69,7 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
         )
         action = "updated" if script_id in target.document else "created"
         target.document[script_id] = script_def
-        await _safe_edit_and_reload(
+        backup = await _safe_edit_and_reload(
             hass, target, "script", entry=script_def, key=script_id
         )
 
@@ -83,6 +80,7 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
             "alias": alias,
             "action": action,
             "file": str(scripts_file),
+            "backup": backup,
             "message": f"Script '{alias}' {action} in {scripts_file} and reloaded. Call it with ha_call_service(domain='script', service='{script_id}').",
         }
     except Exception as exc:
@@ -157,9 +155,6 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
     if not script_ref:
         return {"error": "entity_id required"}
 
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_update_script")
-
     slug = script_ref.replace("script.", "").strip()
     scan = await _async_scan_named_for_edit(
         hass, "script", "scripts.yaml", lambda key, _entry: key == slug,
@@ -184,7 +179,7 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
         current["variables"] = params["variables"]
 
     try:
-        await _safe_edit_and_reload(
+        backup = await _safe_edit_and_reload(
             hass, scan.target, "script", entry=current, key=scan.key
         )
     except Exception as exc:
@@ -194,6 +189,7 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
         "success": True,
         "entity_id": f"script.{slug}",
         "file": scripts_path,
+        "backup": backup,
         "message": f"Script '{slug}' updated in {scripts_path} and reloaded.",
     }
 
@@ -203,9 +199,6 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
     script_ref = params.get("entity_id", "").strip()
     if not script_ref:
         return {"error": "entity_id required"}
-
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_remove_script")
 
     slug = script_ref.replace("script.", "").strip()
     scan = await _async_scan_named_for_edit(
@@ -222,7 +215,7 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
 
     removed = scan.document.pop(slug)
     try:
-        await _safe_edit_and_reload(hass, scan.target, "script")
+        backup = await _safe_edit_and_reload(hass, scan.target, "script")
     except Exception as exc:
         return {"error": f"Failed to write {scripts_path}: {exc}"}
 
@@ -232,6 +225,7 @@ async def _tool_ha_remove_script(hass: HomeAssistant, params: dict) -> dict:
         "deleted": slug,
         "alias": alias,
         "file": scripts_path,
+        "backup": backup,
         "message": f"Script '{alias}' deleted from {scripts_path}.",
     }
 
@@ -328,7 +322,7 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
             open_or_create, scenes_path, list
         )
         target.document.append(new_scene)
-        await _safe_edit_and_reload(hass, target, "scene", entry=new_scene)
+        backup = await _safe_edit_and_reload(hass, target, "scene", entry=new_scene)
     except Exception as exc:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
@@ -337,6 +331,7 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
         "id": slug,
         "entity_id": f"scene.{slug}",
         "file": scenes_path,
+        "backup": backup,
         "message": f"Scene '{name}' created in {scenes_path} (scene.{slug}).",
     }
 
@@ -346,9 +341,6 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
     scene_ref = params.get("entity_id", "").strip()
     if not scene_ref:
         return {"error": "entity_id required"}
-
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_update_scene")
 
     slug = scene_ref.replace("scene.", "").strip().lower()
     scan = await _async_scan_list_for_edit(
@@ -373,7 +365,7 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
         scene["entities"] = params["entities"]
 
     try:
-        await _safe_edit_and_reload(hass, scan.target, "scene", entry=scene)
+        backup = await _safe_edit_and_reload(hass, scan.target, "scene", entry=scene)
     except Exception as exc:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
@@ -381,6 +373,7 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
         "success": True,
         "entity_id": f"scene.{scene.get('id', slug)}",
         "file": scenes_path,
+        "backup": backup,
         "message": f"Scene '{scene.get('name', slug)}' updated in {scenes_path} and reloaded.",
     }
 
@@ -390,9 +383,6 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
     scene_ref = params.get("entity_id", "").strip()
     if not scene_ref:
         return {"error": "entity_id required"}
-
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_remove_scene")
 
     slug = scene_ref.replace("scene.", "").strip().lower()
     scan = await _async_scan_list_for_edit(
@@ -413,7 +403,7 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
     removed_name = removed.get("name") or removed.get("id")
 
     try:
-        await _safe_edit_and_reload(hass, scan.target, "scene")
+        backup = await _safe_edit_and_reload(hass, scan.target, "scene")
     except Exception as exc:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
@@ -421,5 +411,6 @@ async def _tool_ha_remove_scene(hass: HomeAssistant, params: dict) -> dict:
         "success": True,
         "deleted": removed_name or scene_ref,
         "file": scenes_path,
+        "backup": backup,
         "message": f"Scene '{removed_name or scene_ref}' deleted from {scenes_path}.",
     }

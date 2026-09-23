@@ -1776,7 +1776,7 @@
     "no_issues": "Keine Probleme erkannt.",
     "context_unavailable": "(Kontext nicht verfügbar)",
     "rules_title": "Wichtige Regeln:",
-    "rule_backup": "Vor jeder Änderung (Erstellen, Bearbeiten, Löschen) ha_backup_create aufrufen.",
+    "rule_backup": "Werkzeuge, die eine Datei ändern, kopieren sie zuerst nach /config/.haca_backups/ und geben den Pfad dieser Kopie als 'backup' zurück: dem Benutzer mitteilen. ha_backup_create (vollständiges Home-Assistant-Backup) nur aufrufen, wenn der Benutzer darum bittet, oder vor einer Änderung über viele Dateien hinweg bzw. einer Löschung, die keine Dateikopie abdeckt (Helfer, Entität).",
     "rule_explain": "Erkläre, was du tun wirst, BEVOR du es tust.",
     "rule_confirm": "Bei zerstörenden Operationen den Benutzer um Bestätigung bitten.",
     "rule_use_tools": "Nutze die verfügbaren Werkzeuge zum Lesen, Analysieren und Ändern der HA-Konfiguration.",

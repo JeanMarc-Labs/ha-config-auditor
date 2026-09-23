@@ -1776,7 +1776,7 @@
     "no_issues": "Nenhum problema detetado.",
     "context_unavailable": "(contexto indisponível)",
     "rules_title": "Regras importantes:",
-    "rule_backup": "Antes de qualquer alteração (criar, editar, eliminar), chama ha_backup_create.",
+    "rule_backup": "As ferramentas que alteram um ficheiro copiam-no primeiro para /config/.haca_backups/ e devolvem o caminho dessa cópia em 'backup': informa o utilizador. Chama ha_backup_create (cópia de segurança completa do Home Assistant) só quando o utilizador o pedir, ou antes de uma alteração que abranja muitos ficheiros ou de uma eliminação que nenhuma cópia de ficheiro cubra (auxiliar, entidade).",
     "rule_explain": "Explica o que vais fazer ANTES de o fazeres.",
     "rule_confirm": "Para operações destrutivas, pede confirmação ao utilizador.",
     "rule_use_tools": "Usa as ferramentas disponíveis para ler, analisar e modificar a configuração do HA.",

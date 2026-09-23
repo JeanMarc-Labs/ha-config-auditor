@@ -1,8 +1,4 @@
-"""Instance-wide tools: services, backups, reloads, raw configuration files.
-
-``_auto_backup`` lives here beside the backup tool it delegates to; the write
-tools in the sibling modules call it before they touch a file.
-"""
+"""Instance-wide tools: services, backups, reloads, raw configuration files."""
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +8,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from ..yaml_sources import is_within, iter_domain_files
+from ..yaml_writer import snapshot_file
 from .common import _async_read_file, _atomic_write, _caller_context, _LOGGER, _slugify
 
 
@@ -74,29 +71,6 @@ async def _tool_ha_call_service(hass: HomeAssistant, params: dict) -> dict:
         return {"error": f"Service call failed: {exc}"}
 
 
-async def _auto_backup(hass: HomeAssistant, reason: str) -> None:
-    """Déclenche un backup HA en arrière-plan avant une opération destructive.
-
-    Délègue à _tool_ha_backup_create (source unique de la logique backup)
-    et lance la tâche en arrière-plan pour ne pas bloquer l'outil.
-    """
-    from datetime import datetime as _dt
-    name = f"HACA auto — {reason[:40]} — {_dt.now().strftime('%Y-%m-%d %H:%M')}"
-    _LOGGER.debug("[HACA] Auto-backup avant opération destructive : %s", name)
-
-    async def _run():
-        try:
-            result = await _tool_ha_backup_create(hass, {"name": name})
-            if result.get("success") or result.get("started"):
-                _LOGGER.info("[HACA] Auto-backup lancé : %s", name)
-            else:
-                _LOGGER.debug("[HACA] Auto-backup résultat : %s", result)
-        except Exception as exc:
-            _LOGGER.warning("[HACA] Auto-backup échoué (non bloquant) : %s", exc)
-
-    hass.async_create_task(_run())
-
-
 async def _tool_ha_backup_create(hass: HomeAssistant, params: dict) -> dict:
     """Create a full HA backup. Supports HA 2024.x (service) and HA 2025.x (manager API)."""
     from datetime import datetime
@@ -121,37 +95,58 @@ async def _tool_ha_backup_create(hass: HomeAssistant, params: dict) -> dict:
             if manager is None:
                 errors.append("hass.data[DATA_MANAGER] is None — backup component not loaded?")
             else:
-                create_fn = getattr(manager, "async_create_backup", None)
+                # async_initiate_backup is what HA's own "Back up now" calls:
+                # it checks the request, starts the job and returns, so a
+                # refusal raises here, in front of the caller. The fallback,
+                # async_create_backup, waits for the whole backup and has to
+                # run in the background, where a refusal only reaches the log.
+                initiate_fn = getattr(manager, "async_initiate_backup", None)
+                create_fn = initiate_fn or getattr(manager, "async_create_backup", None)
                 if create_fn is None:
                     errors.append("BackupManager has no async_create_backup method")
                 else:
                     sig = inspect.signature(create_fn)
                     # HA 2025.1+ takes agent_ids + include_* kwargs
                     if "agent_ids" in sig.parameters:
+                        from homeassistant.helpers.hassio import is_hassio
+
                         # Collect available agent IDs from the manager
                         agents = getattr(manager, "backup_agents", {})
                         agent_ids = list(agents.keys()) if agents else []
+                        # The test HA itself makes to pick the Supervisor
+                        # backend over the Core one. Not SUPERVISOR_TOKEN, as in
+                        # Strategy 3: that says the Supervisor API is reachable,
+                        # not which backend this manager writes through.
+                        supervisor = is_hassio(hass)
 
+                        # Add-ons and folders exist only under the Supervisor,
+                        # and the Core backend refuses the whole backup when
+                        # either is asked for. Core therefore backs up the
+                        # config and the database only.
                         kwargs: dict = {
                             "agent_ids": agent_ids,
-                            "include_all_addons": True,
+                            "include_all_addons": supervisor,
                             "include_database": True,
                             "include_homeassistant": True,
                             "name": name,
                             "password": None,
                         }
-                        # Some HA versions require these extra params
+                        # Keyword-only with no default: a key left out raises
+                        # TypeError, so Core gets None, as in HA's own
+                        # backup.create handler.
                         if "include_addons" in sig.parameters:
                             kwargs["include_addons"] = None
                         if "include_folders" in sig.parameters:
-                            # Mirror the native HA full-backup behaviour:
-                            # include media, share, ssl and locally-installed addons.
-                            try:
-                                from homeassistant.components.backup import Folder  # type: ignore
-                                kwargs["include_folders"] = list(Folder)
-                            except Exception:
-                                # Fallback: pass the string values directly
-                                kwargs["include_folders"] = ["media", "share", "ssl", "addons/local"]
+                            kwargs["include_folders"] = None
+                            if supervisor:
+                                # Mirror the native HA full-backup behaviour:
+                                # include media, share, ssl and locally-installed addons.
+                                try:
+                                    from homeassistant.components.backup import Folder  # type: ignore
+                                    kwargs["include_folders"] = list(Folder)
+                                except Exception:
+                                    # Fallback: pass the string values directly
+                                    kwargs["include_folders"] = ["media", "share", "ssl", "addons/local"]
                     else:
                         # Older manager API (no agent_ids)
                         kwargs = {}
@@ -166,6 +161,28 @@ async def _tool_ha_backup_create(hass: HomeAssistant, params: dict) -> dict:
                             "No backup agent registered (manager.backup_agents is empty) "
                             "— the backup component may not be fully started yet."
                         )
+                    elif initiate_fn is not None:
+                        try:
+                            new_backup = await initiate_fn(**kwargs)
+                        except Exception as exc:
+                            # Final: backup.create goes through this same
+                            # manager, but without waiting, so it would only
+                            # hide the refusal behind a "started".
+                            return {
+                                "error": f"Home Assistant refused the backup: {exc}",
+                                "name": name,
+                            }
+                        return {
+                            "started": True,
+                            "completed": False,
+                            "name": name,
+                            "backup_job_id": getattr(new_backup, "backup_job_id", None),
+                            "message": (
+                                f"Backup '{name}' STARTED — it is NOT finished yet. "
+                                "This may take several minutes: verify in Settings → System → Backups "
+                                "before reporting the backup as done."
+                            ),
+                        }
                     else:
                         # Fire as background task — backups take minutes and the MCP
                         # client would time out long before completion.
@@ -692,17 +709,14 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
             )
         }
 
-    # Backup automatique avant toute écriture
-    await _auto_backup(hass, f"update_config_file:{basename}")
-
-    def _do_write():
-        """Blocking file operations — runs in executor."""
+    def _do_write() -> str | None:
+        """Blocking file operations — runs in executor. Returns the snapshot."""
         if mode == "append":
             try:
                 existing = open(fpath_real, encoding="utf-8").read()
             except FileNotFoundError:
                 existing = ""
-            _atomic_write(fpath_real, existing + "\n" + content)
+            new_content = existing + "\n" + content
         elif mode == "patch_line":
             old_text = params.get("old_text", "")
             if not old_text:
@@ -713,12 +727,18 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
                 raise FileNotFoundError(f"File not found: {fpath_real}")
             if old_text not in existing:
                 raise ValueError(f"old_text not found in {filename}")
-            _atomic_write(fpath_real, existing.replace(old_text, content, 1))
+            new_content = existing.replace(old_text, content, 1)
         else:  # replace
-            _atomic_write(fpath_real, content)
+            new_content = content
+        # Taken only once the edit is known to apply, and before the write: a
+        # broken configuration.yaml keeps Home Assistant from starting, and
+        # this copy is then the way back. A failed copy raises: no write.
+        backup = snapshot_file(hass.config.config_dir, fpath_real)
+        _atomic_write(fpath_real, new_content)
+        return backup
 
     try:
-        await hass.async_add_executor_job(_do_write)
+        backup = await hass.async_add_executor_job(_do_write)
     except (ValueError, FileNotFoundError) as exc:
         return {"error": str(exc)}
     except Exception as exc:
@@ -727,6 +747,7 @@ async def _tool_ha_update_config_file(hass: HomeAssistant, params: dict) -> dict
     return {
         "success": True,
         "filename": fpath,
+        "backup": backup,
         "mode": mode,
         "message": (
             f"File '{filename}' updated (mode={mode}). "

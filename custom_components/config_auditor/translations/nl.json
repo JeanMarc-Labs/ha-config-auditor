@@ -1776,7 +1776,7 @@
     "no_issues": "Geen problemen gevonden.",
     "context_unavailable": "(context niet beschikbaar)",
     "rules_title": "Belangrijke regels:",
-    "rule_backup": "Roep vóór elke wijziging (aanmaken, bewerken, verwijderen) ha_backup_create aan.",
+    "rule_backup": "Tools die een bestand wijzigen, kopiëren het eerst naar /config/.haca_backups/ en geven het pad van die kopie terug als 'backup': meld dit aan de gebruiker. Roep ha_backup_create (volledige Home Assistant-back-up) alleen aan als de gebruiker erom vraagt, of vóór een wijziging over veel bestanden of een verwijdering die geen bestandskopie dekt (helper, entiteit).",
     "rule_explain": "Leg uit wat je gaat doen VOORDAT je het doet.",
     "rule_confirm": "Vraag de gebruiker om bevestiging bij destructieve handelingen.",
     "rule_use_tools": "Gebruik de beschikbare tools om de HA-configuratie te lezen, te analyseren en te wijzigen.",

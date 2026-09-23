@@ -16,7 +16,6 @@ from .common import (
     _skipped_note,
     _slugify,
 )
-from .tools_system import _auto_backup
 
 
 async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
@@ -27,9 +26,6 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
     alias = params.get("alias", "").strip()
     if not alias:
         return {"error": "alias is required"}
-
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_create_automation")
 
     # Accept both new HA format (triggers/actions/conditions) and legacy (trigger/action/condition)
     trigger = params.get("triggers") or params.get("trigger")
@@ -86,12 +82,13 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
             open_or_create, str(auto_file), list
         )
         target.document.append(new_auto)
-        await _safe_edit_and_reload(
+        backup = await _safe_edit_and_reload(
             hass, target, "automation", entry=new_auto, key=new_auto["id"]
         )
 
         return {
             "success": True,
+            "backup": backup,
             "id": new_auto["id"],
             "alias": alias,
             "entity_id": f"automation.{_slugify(alias)}",
@@ -108,9 +105,6 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
     entity_id = params.get("entity_id", "").strip()
     if not entity_id:
         return {"error": "entity_id is required"}
-
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_update_automation")
 
     try:
         # Chercher l'automation dans TOUS les fichiers que la clé `automation:`
@@ -178,7 +172,7 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
             auto["mode"] = params["mode"]
 
         # `auto` is the node inside the round-trip document, mutated in place.
-        await _safe_edit_and_reload(
+        backup = await _safe_edit_and_reload(
             hass, scan.target, "automation", entry=auto, key=auto.get("id")
         )
 
@@ -186,6 +180,7 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
             "success": True,
             "alias": auto.get("alias"),
             "file": str(auto_file),
+            "backup": backup,
             "message": f"Automation '{auto.get('alias')}' updated in {auto_file} and reloaded.",
         }
     except Exception as exc:
@@ -266,9 +261,6 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
     identifier = params.get("entity_id", "").strip()
     if not identifier:
         return {"error": "entity_id (or alias) is required"}
-
-    # Backup automatique avant opération destructive
-    await _auto_backup(hass, "_tool_ha_remove_automation")
 
     try:
         # Toutes les sources de la clé `automation:` — la passe de recherche
@@ -357,13 +349,14 @@ async def _tool_ha_remove_automation(hass: HomeAssistant, params: dict) -> dict:
         # Remove it — rewriting only the file that actually holds it
         auto_file = Path(found_target.path)
         removed = found_target.document.pop(found_idx)
-        await _safe_edit_and_reload(hass, found_target, "automation")
+        backup = await _safe_edit_and_reload(hass, found_target, "automation")
 
         return {
             "success": True,
             "removed_alias": found_alias,
             "removed_id": removed.get("id", ""),
             "file": str(auto_file),
+            "backup": backup,
             "message": f"Automation '{found_alias}' deleted from {auto_file} and reloaded.",
         }
 

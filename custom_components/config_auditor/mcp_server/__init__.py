@@ -19,10 +19,10 @@ This was one 6 000-line file until the 1.8.0 split. The modules read bottom-up;
 no dependency points back the other way.
 
   ``common``             protocol constants, caller identity, JSON encoding,
-                         the YAML read / write helpers
+                         the YAML read / write helpers (every write snapshots
+                         the file it replaces into ``.haca_backups`` first)
   ``schemas``            the tool declarations (pure data)
-  ``tools_system``       services, backups, reloads, raw config files — and
-                         ``_auto_backup``, which the write tools call first
+  ``tools_system``       services, backups, reloads, raw config files
   ``tools_audit``        the ``haca_*`` tools, read off the coordinator
   ``tools_history``      history, statistics, logbook (recorder-backed)
   ``tools_registry``     entities, areas, labels, helpers

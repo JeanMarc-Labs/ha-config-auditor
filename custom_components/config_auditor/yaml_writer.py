@@ -49,7 +49,7 @@ import shutil
 from typing import Any, Callable, NamedTuple
 
 from .const import BACKUP_DIR
-from .yaml_sources import iter_domain_files
+from .yaml_sources import is_within, iter_domain_files
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +58,15 @@ _LOGGER = logging.getLogger(__name__)
 # now that the MCP tools take snapshots too, one chatty agent session would
 # otherwise wipe every backup the panel offers to restore.
 BACKUP_KEEP = 10
+
+# Snapshots of the files HACA writes verbatim or deletes -- a raw config file,
+# a blueprint -- get a subtree of their own that mirrors each file's path under
+# the config dir. The panel lists and restores the top level of .haca_backups
+# and matches a backup to an *automation* file by name alone, so a blueprint
+# called `lights.yaml` must not land beside the snapshots of
+# `automations/lights.yaml`; and two blueprints of one name in different
+# folders must not share a pruning quota.
+FILE_SNAPSHOT_DIR = "files"
 
 # `<stem>_<YYYYmmdd_HHMMSS>[_<seq>].yaml` -- the name refactoring_assistant has
 # always written, and the one its restore path parses back.
@@ -472,8 +481,33 @@ def create_backup(config_dir: str, source: str) -> str:
     src = os.path.abspath(source)
     if not os.path.isfile(src):
         raise FileNotFoundError(f"nothing to back up at {source}")
+    return _snapshot_into(os.path.join(config_dir, BACKUP_DIR), src)
 
-    backup_dir = os.path.join(config_dir, BACKUP_DIR)
+
+def snapshot_file(config_dir: str, source: str) -> str | None:
+    """Snapshot a file HACA is about to overwrite verbatim or delete.
+
+    Lands under ``.haca_backups/files/`` at the file's own path relative to the
+    config dir, named like every other backup, and keeps the newest
+    :data:`BACKUP_KEEP` of that one file. None when the file does not exist
+    yet: a new file has nothing to lose. Raises when the snapshot cannot be
+    taken -- the caller must not write without one.
+    """
+    root = os.path.realpath(config_dir)
+    src = os.path.realpath(source)
+    if not os.path.isfile(src):
+        return None
+    if not is_within(src, root):
+        raise ValueError(f"{source} is outside the config directory")
+    rel_dir = os.path.relpath(os.path.dirname(src), root)
+    return _snapshot_into(
+        os.path.normpath(os.path.join(root, BACKUP_DIR, FILE_SNAPSHOT_DIR, rel_dir)),
+        src,
+    )
+
+
+def _snapshot_into(backup_dir: str, src: str) -> str:
+    """Copy *src* into *backup_dir* as ``<stem>_<ts>.yaml``, prune, return the copy."""
     os.makedirs(backup_dir, exist_ok=True)
 
     stem = os.path.splitext(os.path.basename(src))[0]
@@ -489,13 +523,17 @@ def create_backup(config_dir: str, source: str) -> str:
         sequence += 1
 
     shutil.copy2(src, backup)
-    prune_backups(config_dir, stem)
+    _prune_dir(backup_dir, stem)
     return backup
 
 
 def prune_backups(config_dir: str, stem: str | None = None) -> None:
     """Keep the newest :data:`BACKUP_KEEP` backups of each source file."""
-    backup_dir = os.path.join(config_dir, BACKUP_DIR)
+    _prune_dir(os.path.join(config_dir, BACKUP_DIR), stem)
+
+
+def _prune_dir(backup_dir: str, stem: str | None = None) -> None:
+    """:func:`prune_backups` over one backup directory."""
     try:
         names = os.listdir(backup_dir)
     except OSError:

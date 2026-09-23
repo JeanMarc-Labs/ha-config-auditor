@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import os
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -36,6 +37,7 @@ from ..yaml_writer import (
     open_domain_for_edit,
     scan_list_domain_for_edit,
     scan_named_domain_for_edit,
+    snapshot_file,
 )
 
 
@@ -159,7 +161,7 @@ async def _safe_edit_and_reload(
     *,
     entry: Any = None,
     key: str | None = None,
-) -> str:
+) -> str | None:
     """Validate, round-trip write, reload -- rolling the file back if the reload fails.
 
     :func:`yaml_writer.async_write_and_reload`, with the reloads attributed to
@@ -167,7 +169,7 @@ async def _safe_edit_and_reload(
     :class:`yaml_writer.RejectedByHomeAssistant` before anything is written; a
     removal passes no entry.
 
-    Returns the backup path.
+    Returns the backup path, None when the write created the file.
     """
     return await async_write_and_reload(
         hass, target, reload_domain, entry=entry, key=key, context=_caller_context()
@@ -251,6 +253,28 @@ async def _async_read_file(hass: "HomeAssistant", path: str, encoding: str = "ut
     )
 
 
-async def _async_write_file(hass: "HomeAssistant", path: str, content: str, encoding: str = "utf-8") -> None:
-    """Écrire un fichier de façon non-bloquante via executor (atomique)."""
-    await hass.async_add_executor_job(_atomic_write, path, content, encoding)
+async def _async_write_file(
+    hass: "HomeAssistant", path: str, content: str, encoding: str = "utf-8"
+) -> str | None:
+    """Write a file atomically, snapshotting the one it replaces first.
+
+    Returns the snapshot's path (:func:`yaml_writer.snapshot_file`), None for a
+    new file. No snapshot, no write: a failed copy raises before the file is
+    touched.
+    """
+    def _work() -> str | None:
+        backup = snapshot_file(hass.config.config_dir, path)
+        _atomic_write(path, content, encoding)
+        return backup
+
+    return await hass.async_add_executor_job(_work)
+
+
+async def _async_remove_file(hass: "HomeAssistant", path: str) -> str | None:
+    """Delete a file after snapshotting it; returns the snapshot's path."""
+    def _work() -> str | None:
+        backup = snapshot_file(hass.config.config_dir, path)
+        os.remove(path)
+        return backup
+
+    return await hass.async_add_executor_job(_work)

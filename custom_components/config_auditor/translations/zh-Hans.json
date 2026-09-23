@@ -1776,7 +1776,7 @@
     "no_issues": "未检测到问题。",
     "context_unavailable": "（无法获取上下文）",
     "rules_title": "重要规则：",
-    "rule_backup": "在任何修改（创建、编辑、删除）之前，先调用 ha_backup_create。",
+    "rule_backup": "修改文件的工具会先把文件复制到 /config/.haca_backups/，并在 'backup' 中返回该副本的路径：请告知用户。仅在用户要求时，或在涉及多个文件的修改、或文件副本无法覆盖的删除（辅助元素、实体）之前，才调用 ha_backup_create（Home Assistant 完整备份）。",
     "rule_explain": "在动手之前，先说明你将要做什么。",
     "rule_confirm": "涉及破坏性操作时，请先征求用户确认。",
     "rule_use_tools": "使用可用的工具读取、分析和修改 HA 配置。",
