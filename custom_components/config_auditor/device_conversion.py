@@ -13,15 +13,22 @@ and an unknown type has no known equivalent. Guessing one used to be the
 fallback: the device's first entity, a state trigger with no ``to:``, every
 unknown key poured into ``data:``. Home Assistant's validator accepts all of
 those, and the automation then does something else.
+
+A block is found wherever it sits: ``iter_blocks`` walks into ``choose:``,
+``if:``, ``repeat:``, ``parallel:`` and the rest the way Home Assistant reads
+them. Only the top level used to be looked at, so a device condition inside a
+``choose:`` option was neither reported nor converted.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 import copy
 import functools
+import re
 from typing import Any, NamedTuple
 
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.config_validation import determine_script_action
 
 
 class Conversion(NamedTuple):
@@ -396,20 +403,224 @@ def convert_device_target(hass: Any, action: Mapping) -> Conversion:
     return Conversion(new, f"{service}: target.device_id → target.entity_id: {', '.join(entities)}")
 
 
-def convert(hass: Any, section: str, item: Mapping, *, service_key: str = "action") -> Conversion | None:
+def device_reference(role: str, item: Mapping) -> str | None:
+    """`device_id` for a device trigger, condition or action, `target` for a
+    service call aimed at a device, None for anything else."""
+    if "device_id" in item:
+        return "device_id"
+    target = item.get("target") if role == "action" else None
+    if isinstance(target, Mapping) and "device_id" in target:
+        return "target"
+    return None
+
+
+def convert(hass: Any, role: str, item: Mapping, *, service_key: str = "action") -> Conversion | None:
     """The conversion of one trigger, condition or action, or None if it names no device."""
     if not isinstance(item, Mapping):
         return None
-    if section == "trigger":
-        return convert_trigger(hass, item) if "device_id" in item else None
-    if section == "condition":
-        return convert_condition(hass, item) if "device_id" in item else None
-    if "device_id" in item and "domain" in item:
-        return convert_action(hass, item, service_key=service_key)
-    target = item.get("target")
-    if isinstance(target, Mapping) and "device_id" in target:
+    reference = device_reference(role, item)
+    if reference is None:
+        return None
+    if role == "trigger":
+        return convert_trigger(hass, item)
+    if role == "condition":
+        return convert_condition(hass, item)
+    if reference == "target":
         return convert_device_target(hass, item)
-    return None
+    return convert_action(hass, item, service_key=service_key) if "domain" in item else None
+
+
+# -- Where the device blocks are ----------------------------------------------
+#
+# A path runs from the automation down to one block and reads as its location:
+# ("action", 2, "choose", 0, "conditions", 1) is `action[2].choose[0].conditions[1]`.
+# A slot Home Assistant reads through `ensure_list` may hold one block instead
+# of a list; that block is index 0 all the same, so every location has one shape.
+
+_ROLES = ("trigger", "condition", "action")
+
+# Action kind, as HA's `determine_script_action` names it -> its plain slots.
+# `choose:` options, `repeat:` and `parallel:` branches are walked apart.
+_ACTION_SLOTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "choose": (("default", "action"),),
+    "if": (("if", "condition"), ("then", "action"), ("else", "action")),
+    "sequence": (("sequence", "action"),),
+    "wait_for_trigger": (("wait_for_trigger", "trigger"),),
+}
+
+
+class Block(NamedTuple):
+    """A trigger, condition or action of an automation, at any depth."""
+
+    path: tuple[str | int, ...]
+    role: str
+    config: Mapping
+
+
+def iter_blocks(automation: Mapping) -> Iterator[Block]:
+    """Every trigger, condition and action, parents before what they hold.
+
+    Down through `choose:`, `if:`, `repeat:`, `parallel:`, `sequence:`,
+    `wait_for_trigger:`, the `and` / `or` / `not` conditions and their
+    shorthands, and a `triggers:` sublist -- read as HA's config_validation
+    reads them, so a condition used as an action step is a condition.
+    """
+    for role in _ROLES:
+        yield from _slot(automation.get(_section_key(automation, role)), role, (role,))
+
+
+def find(
+    hass: Any, automation: Mapping, *, service_key: str, scope: tuple | None = None
+) -> list[tuple[Block, Conversion]]:
+    """Every device block at or under *scope* (the whole automation if None), converted."""
+    found = []
+    for block in iter_blocks(automation):
+        if scope and block.path[:len(scope)] != scope:
+            continue
+        conversion = convert(hass, block.role, block.config, service_key=service_key)
+        if conversion is not None:
+            found.append((block, conversion))
+    return found
+
+
+def replace(automation: MutableMapping, path: tuple, new: Mapping) -> bool:
+    """Put *new* in place of the device block *path* leads to.
+
+    False, with nothing changed, when the path no longer leads to a block
+    naming a device: the automation changed since the path was taken.
+    """
+    if not path or path[0] not in _ROLES:
+        return False
+    holder: Any = automation
+    key: str | int = _section_key(automation, path[0])
+    if key not in holder:
+        return False
+    for step in path[1:]:
+        slot = holder[key]
+        if isinstance(step, int):
+            if isinstance(slot, list):
+                if not 0 <= step < len(slot):
+                    return False
+                holder, key = slot, step
+            elif step != 0:  # one block in place of a list is index 0
+                return False
+        elif isinstance(slot, MutableMapping) and step in slot:
+            holder, key = slot, step
+        else:
+            return False
+    node = holder[key]
+    # "action" looks for both forms, the block's own device_id and a target's.
+    if not isinstance(node, Mapping) or device_reference("action", node) is None:
+        return False
+    holder[key] = new
+    return True
+
+
+def location(path: tuple) -> str:
+    """`action[2].choose[0].conditions[1]` -- the form an issue's location takes."""
+    text = ""
+    for step in path:
+        text += f"[{step}]" if isinstance(step, int) else f".{step}" if text else step
+    return text
+
+
+_STEP = re.compile(r"\.?([A-Za-z_]+)|\[(\d+)\]")
+
+
+def parse_location(text: str) -> tuple[str | int, ...] | None:
+    """The path a location names, or None if it names no trigger, condition or action.
+
+    A trailing `.target`, the device_id-in-target issue's, names the action itself.
+    """
+    path: list[str | int] = []
+    pos = 0
+    while pos < len(text):
+        step = _STEP.match(text, pos)
+        if step is None:
+            return None
+        path.append(step[1] if step[1] else int(step[2]))
+        pos = step.end()
+    if path and path[-1] == "target":
+        path.pop()
+    if len(path) < 2 or path[0] not in _ROLES or not isinstance(path[1], int):
+        return None
+    return tuple(path)
+
+
+def label(path: tuple) -> str:
+    """`Action 2`, or `Action 2 › choose[0].conditions[1]` for a nested block."""
+    head = f"{str(path[0]).capitalize()} {path[1]}"
+    return f"{head} › {location(path[2:])}" if len(path) > 2 else head
+
+
+def _section_key(automation: Mapping, role: str) -> str:
+    """`actions:` since HA 2024.10, `action:` before -- both still load."""
+    return f"{role}s" if f"{role}s" in automation else role
+
+
+def _as_list(node: Any) -> list:
+    """What HA's `ensure_list` makes of a slot."""
+    return node if isinstance(node, list) else [] if node is None else [node]
+
+
+def _slot(node: Any, role: str, path: tuple) -> Iterator[Block]:
+    for index, item in enumerate(_as_list(node)):
+        if isinstance(item, Mapping):  # a template string is a condition too
+            yield from _block(item, role, (*path, index))
+
+
+def _block(item: Mapping, role: str, path: tuple) -> Iterator[Block]:
+    if role == "trigger":
+        if "triggers" in item and len(item) == 1:  # a sublist HA flattens
+            yield from _slot(item["triggers"], "trigger", (*path, "triggers"))
+        else:
+            yield Block(path, "trigger", item)
+        return
+
+    kind = _action_kind(item) if role == "action" else "condition"
+    if kind == "condition":
+        yield Block(path, "condition", item)
+        key = _nested_conditions_key(item)
+        if key:
+            yield from _slot(item[key], "condition", (*path, key))
+        return
+
+    yield Block(path, "action", item)
+    if kind == "choose":
+        for index, option in enumerate(_as_list(item.get("choose"))):
+            if isinstance(option, Mapping):
+                at = (*path, "choose", index)
+                yield from _slot(option.get("conditions"), "condition", (*at, "conditions"))
+                yield from _slot(option.get("sequence"), "action", (*at, "sequence"))
+    elif kind == "repeat" and isinstance(item.get("repeat"), Mapping):
+        for key, sub in (("while", "condition"), ("until", "condition"), ("sequence", "action")):
+            yield from _slot(item["repeat"].get(key), sub, (*path, "repeat", key))
+    elif kind == "parallel":
+        # A branch is one action, or a list of them run in sequence.
+        for index, branch in enumerate(_as_list(item.get("parallel"))):
+            if isinstance(branch, list):
+                yield from _slot(branch, "action", (*path, "parallel", index))
+            elif isinstance(branch, Mapping):
+                yield from _block(branch, "action", (*path, "parallel", index))
+    for key, sub in _ACTION_SLOTS.get(kind or "", ()):
+        yield from _slot(item.get(key), sub, (*path, key))
+
+
+def _action_kind(item: Mapping) -> str | None:
+    try:
+        return determine_script_action(item)
+    except ValueError:
+        return None
+
+
+def _nested_conditions_key(item: Mapping) -> str | None:
+    """Where an and / or / not condition holds its own, in any of its spellings."""
+    if "conditions" in item:
+        return "conditions"
+    for shorthand in ("and", "or", "not"):
+        if shorthand in item:
+            return shorthand
+    return "condition" if isinstance(item.get("condition"), list) else None
 
 
 # -- Shared -------------------------------------------------------------------

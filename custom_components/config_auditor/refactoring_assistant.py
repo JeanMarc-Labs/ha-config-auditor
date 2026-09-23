@@ -200,35 +200,31 @@ class RefactoringAssistant:
     async def preview_device_id_fix(self, automation_id: str, location: str | None = None) -> dict[str, Any]:
         """Preview device_id to entity_id conversion without applying.
 
-        When *location* is provided (e.g. ``"action[0]"`` or ``"trigger[2]"``),
-        only the matching section/index is inspected so the preview stays
-        scoped to the single reported issue instead of fixing the whole automation.
+        When *location* is provided (e.g. ``"action[0]"``, or
+        ``"action[2].choose[0].conditions[1]"`` for a nested block), only the
+        blocks at or under it are inspected, so the preview stays scoped to the
+        single reported issue instead of fixing the whole automation.
+
+        Device blocks are found at any depth -- in a ``choose:`` option, an
+        ``if:``, a ``repeat:``, a ``parallel:`` branch -- and each change carries
+        the ``location`` it is written back to.
 
         Only what :mod:`device_conversion` can rewrite the way Home Assistant
         runs it is changed. The rest -- an integration's own trigger, an unknown
         type, an entity gone from the registry -- is listed in ``skipped`` with
         the reason, rather than guessed.
         """
-        import re as _re
-
-        # Parse optional location filter → (section, index)
-        _loc_section: str | None = None
-        _loc_index: int | None = None
-        if location:
-            m = _re.match(r'^(trigger|condition|action)\[(\d+)\]', location)
-            if m:
-                _loc_section = m.group(1)
-                _loc_index = int(m.group(2))
-        
-        # Load automation config
         automation_config = await self._load_automation_by_id(automation_id)
-        
+
         if not automation_config:
             return {
                 "success": False,
                 "error": f"Automation {automation_id} not found"
             }
-        
+
+        # A location naming no trigger, condition or action ("root") scopes nothing.
+        scope = device_conversion.parse_location(location) if location else None
+
         # `action:` names the service since HA 2024.8; `service:` loads everywhere.
         actions = automation_config.get("actions", automation_config.get("action")) or []
         uses_action = "actions" in automation_config or any(
@@ -240,46 +236,28 @@ class RefactoringAssistant:
         # one that cannot be rewritten faithfully stays, with the reason.
         changes: list[dict] = []
         skipped: list[dict] = []
-        keys: dict[str, str] = {}
-        for section in ("trigger", "condition", "action"):
-            key = keys[section] = f"{section}s" if f"{section}s" in automation_config else section
-            if _loc_section and _loc_section != section:
-                continue
-            items = automation_config.get(key, [])
-            if not isinstance(items, list):
-                items = [items] if items else []
-            for idx, item in enumerate(items):
-                if _loc_index is not None and idx != _loc_index:
-                    continue
-                conversion = device_conversion.convert(
-                    self.hass, section, item, service_key=service_key
-                )
-                if conversion is None:
-                    continue
-                note = f"{section.capitalize()} {idx}: {conversion.note}"
-                if conversion.new is None:
-                    skipped.append({"section": section, "index": idx, "reason": note})
-                else:
-                    changes.append({
-                        "section": section, "index": idx,
-                        "to": conversion.new, "description": note,
-                    })
+        replacements: list[tuple[tuple, dict]] = []
+        for block, conversion in device_conversion.find(
+            self.hass, automation_config, service_key=service_key, scope=scope
+        ):
+            where = {
+                "section": block.path[0], "index": block.path[1],
+                "location": device_conversion.location(block.path),
+            }
+            note = f"{device_conversion.label(block.path)}: {conversion.note}"
+            if conversion.new is None:
+                skipped.append({**where, "reason": note})
+            else:
+                changes.append({**where, "to": conversion.new, "description": note})
+                replacements.append((block.path, conversion.new))
 
         # --- Generate YAML previews ---
         import copy
         current_yaml = _as_yaml(automation_config)
 
         new_config = copy.deepcopy(automation_config)
-
-        # Apply all changes to the deep copy
-        for change in changes:
-            key = keys[change["section"]]
-            items = new_config.get(key, [])
-            if not isinstance(items, list):
-                items = [items] if items else []
-            if change["index"] < len(items):
-                items[change["index"]] = change["to"]
-            new_config[key] = items
+        for path, new in replacements:
+            device_conversion.replace(new_config, path, new)
 
         new_yaml = _as_yaml(new_config)
 
@@ -335,27 +313,16 @@ class RefactoringAssistant:
         try:
             automation = scan.entry
 
-            # Apply changes per section
+            # Each change goes back where the preview found its block, nested
+            # or not. One that no longer leads to a device block means the
+            # file changed since: nothing is written.
             for change in preview["changes"]:
-                section = change["section"]
-                idx = change["index"]
-
-                # Detect correct key for each section
-                if section == "trigger":
-                    key = "triggers" if "triggers" in automation else "trigger"
-                elif section == "condition":
-                    key = "conditions" if "conditions" in automation else "condition"
-                elif section == "action":
-                    key = "actions" if "actions" in automation else "action"
-                else:
-                    continue
-
-                items = automation.get(key, [])
-                if not isinstance(items, list):
-                    items = [items] if items else []
-                if idx < len(items):
-                    items[idx] = change["to"]
-                automation[key] = items
+                path = device_conversion.parse_location(change.get("location", ""))
+                if path is None or not device_conversion.replace(automation, path, change["to"]):
+                    return {
+                        "success": False,
+                        "error": f"Automation {automation_id} changed since the preview; nothing was written",
+                    }
 
             # No reload here, so HA would only disable a broken conversion at
             # the user's next one — a device condition with no state mapping
