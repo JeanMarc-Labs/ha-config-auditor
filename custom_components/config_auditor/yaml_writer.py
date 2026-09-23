@@ -18,6 +18,9 @@ Everything that edits an existing config file now goes through this module:
 * :func:`write_back` snapshots the file into ``.haca_backups`` and writes
   **atomically** (sibling temp file + ``os.replace``), so a crash mid-write
   cannot leave Home Assistant with half a config;
+* the shared ruamel instance quotes a new string Home Assistant would read back
+  as something else (``off`` as ``False``, ``22:00:00`` as a number), and
+  leaves the bare ones already in the file exactly as they are;
 * the domain scanners locate an entry across every file a domain key resolves
   to -- a split config keeps its entries in several files -- and hand back the
   matched node *still attached to its document*, so the caller mutates it and
@@ -30,6 +33,7 @@ the write side, and the only one.
 from __future__ import annotations
 
 from datetime import datetime
+import functools
 import logging
 import os
 import re
@@ -144,16 +148,81 @@ def contains_ha_tag(node: Any) -> bool:
     return False
 
 
+_YAML_STR = "tag:yaml.org,2002:str"
+
+
+@functools.lru_cache(maxsize=None)
+def _home_assistant_scalars():
+    """``(Constructor, Representer)`` that write a string back as HA will read it.
+
+    ruamel writes YAML 1.2; Home Assistant reads with PyYAML, which is YAML 1.1.
+    ruamel quotes a string that would read back as a number or a date, but where
+    the two specs disagree it leaves the string bare and HA converts it: ``off``
+    comes back ``False``, ``22:00:00`` comes back ``79200`` (base 60). A trigger
+    ``to: off`` is then rejected and the automation disabled; ``hvac_mode: off``
+    passes validation and the call silently does nothing.
+
+    The question "would HA misread this?" goes to PyYAML's own resolver, the one
+    HA's loader uses, rather than to a list of words -- a list had already
+    missed the times.
+
+    * The **representer** single-quotes such a string, the way HA's own dumper
+      does. It only sees exact ``str``: a new value, from an MCP call or the
+      panel -- JSON tells ``"off"`` apart from ``false``, so it is a string.
+    * The **constructor** turns such a string already bare in the file into a
+      ``PlainScalarString``, which is written back bare. An untouched
+      ``flag: off`` keeps its bytes and the ``False`` HA has always read there;
+      quoting it would hand a template the truthy string ``"off"``.
+    """
+    from ruamel.yaml.constructor import RoundTripConstructor
+    from ruamel.yaml.representer import RoundTripRepresenter
+    from ruamel.yaml.scalarstring import PlainScalarString
+    import yaml as pyyaml
+
+    resolver = pyyaml.resolver.Resolver()
+
+    def misread(value: str) -> bool:
+        return resolver.resolve(pyyaml.ScalarNode, value, (True, False)) != _YAML_STR
+
+    class Constructor(RoundTripConstructor):
+        def construct_yaml_str(self, node):
+            value = super().construct_yaml_str(node)
+            # Quoted scalars come back as ScalarString subclasses
+            # (preserve_quotes), `!!str` as a TaggedScalar: only a bare one is
+            # an exact str.
+            if type(value) is str and misread(value):
+                return PlainScalarString(value)
+            return value
+
+    Constructor.add_constructor(_YAML_STR, Constructor.construct_yaml_str)
+
+    class Representer(RoundTripRepresenter):
+        pass
+
+    def represent_str(representer, data):
+        if misread(data):
+            return representer.represent_scalar(_YAML_STR, data, style="'")
+        return representer.represent_str(data)
+
+    # Dispatch is on the exact type, so the ScalarString subclasses -- the
+    # pinned PlainScalarString included -- keep their own representers.
+    Representer.add_representer(str, represent_str)
+    return Constructor, Representer
+
+
 def roundtrip_yaml():
     """The configured ruamel instance every read and write in HACA shares.
 
     These settings are what produce a minimal diff: without them a rewritten
     file comes back re-indented from top to bottom and the user's ``git diff``
-    is the whole file.
+    is the whole file. Its scalar handling is what keeps a new string a string
+    once Home Assistant reads the file back -- see
+    :func:`_home_assistant_scalars`.
     """
     from ruamel.yaml import YAML
 
     yaml = YAML()  # default = round-trip
+    yaml.Constructor, yaml.Representer = _home_assistant_scalars()
     yaml.preserve_quotes = True
     # Home Assistant's own 2-space indent, so an edited file still looks
     # hand-written next to the parts we did not touch.

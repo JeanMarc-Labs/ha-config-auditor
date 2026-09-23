@@ -475,3 +475,183 @@ class TestEveryWritePathPreservesComments:
         backup = await optimizer._create_backup("automation.a1")
 
         assert yw.backup_stem(backup.name) == "automations"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Home Assistant reads back what HACA meant to write
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ruamel writes YAML 1.2 and Home Assistant reads YAML 1.1, so a string ruamel
+# left bare could come back as something else: a trigger `to: off` read as
+# False got the automation disabled on reload. Every assertion below reads the
+# file through HA's own loader, not through PyYAML or ruamel.
+
+def _ha_reads(path):
+    loader = pytest.importorskip("homeassistant.util.yaml.loader")
+    return loader.load_yaml(str(path))
+
+
+# Strings ruamel used to write bare and HA read back as a bool or a base-60 int.
+MISREAD = ["on", "off", "yes", "no", "On", "OFF", "22:00:00", "12:00", "7:30", "1:20.5"]
+
+# Bare values a user wrote by hand. HA reads `flag` as False and `at` as 37800;
+# that is theirs to change, not a side effect of editing the entry below.
+HAND_WRITTEN = """\
+- id: 'a1'
+  alias: Hand-written
+  variables:
+    flag: off
+  triggers:
+    - trigger: state
+      entity_id: light.x
+      to: 'on'
+      from: "off"
+    - trigger: time
+      at: 10:30:00
+  actions: []
+- id: 'a2'
+  alias: Sibling
+  triggers: []
+  actions: []
+"""
+
+
+class TestHomeAssistantReadsBackAString:
+    @pytest.mark.parametrize("value", MISREAD)
+    def test_a_new_value_comes_back_a_string(self, tmp_path, value):
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+
+        target = yw.read_for_edit(str(path), list)
+        target.document[1]["value"] = value
+        yw.write_back(target)
+
+        assert _ha_reads(path)[1]["value"] == value
+
+    def test_a_new_key_comes_back_a_string(self, tmp_path):
+        path = tmp_path / "scripts.yaml"
+        target = yw.open_or_create(str(path), dict)
+        target.document["s"] = {"data": {"on": "heat"}}
+        yw.write_back(target)
+
+        assert _ha_reads(path)["s"]["data"] == {"on": "heat"}
+
+    @pytest.mark.parametrize(
+        "value", ["light.kitchen", "heat", "y", "n", "07:30", "00:05:00"]
+    )
+    def test_an_ordinary_string_stays_bare(self, tmp_path, value):
+        path = tmp_path / "scripts.yaml"
+        target = yw.open_or_create(str(path), dict)
+        target.document["s"] = {"value": value}
+        yw.write_back(target)
+
+        assert f"value: {value}\n" in path.read_text(encoding="utf-8")
+
+    def test_what_the_file_already_holds_keeps_its_bytes_and_its_meaning(self, tmp_path):
+        """Quoting the bare `off` would hand a template the truthy string "off"."""
+        path = tmp_path / "automations.yaml"
+        path.write_text(HAND_WRITTEN, encoding="utf-8")
+        before = _ha_reads(path)[0]
+
+        target = yw.read_for_edit(str(path), list)
+        target.document[1]["alias"] = "Edited"
+        yw.write_back(target)
+
+        written = path.read_text(encoding="utf-8")
+        for line in ("flag: off\n", "at: 10:30:00\n", "to: 'on'\n", 'from: "off"\n'):
+            assert line in written
+        assert _ha_reads(path)[0] == before
+
+    def test_a_preview_shows_what_will_be_written(self, tmp_path):
+        """The panel and the optimizer dump an entry to show it before writing."""
+        import io
+
+        path = tmp_path / "automations.yaml"
+        path.write_text(COMMENTED, encoding="utf-8")
+        target = yw.read_for_edit(str(path), list)
+        target.document[0]["triggers"] = [{"trigger": "state", "to": "off"}]
+
+        buffer = io.StringIO()
+        target.yaml.dump(target.document[0], buffer)
+        assert "to: 'off'" in buffer.getvalue()
+
+
+class TestMcpWritesReadBackAsSent:
+    """The three repros of the report, through the real tools."""
+
+    @pytest.mark.asyncio
+    async def test_update_automation(self, tmp_path):
+        tools_automation = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_automation")
+        hass = _hass(tmp_path, FLAT)
+        triggers = [
+            {"trigger": "state", "entity_id": "binary_sensor.presence",
+             "from": "on", "to": "off", "for": {"minutes": 2}},
+            {"trigger": "time", "at": "22:00:00"},
+        ]
+        actions = [{
+            "action": "climate.set_hvac_mode",
+            "data": {"hvac_mode": "off"},
+            "target": {"entity_id": "climate.living"},
+        }]
+
+        result = await tools_automation._tool_ha_update_automation(hass, {
+            "entity_id": "automation.clima", "triggers": triggers, "actions": actions,
+        })
+
+        assert result.get("success") is True, result
+        clima = _ha_reads(tmp_path / "automations.yaml")[0]
+        assert clima["triggers"] == triggers
+        assert clima["actions"] == actions
+
+    @pytest.mark.asyncio
+    async def test_create_automation(self, tmp_path):
+        tools_automation = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_automation")
+        hass = _hass(tmp_path, FLAT)
+        conditions = [{"condition": "state", "entity_id": "input_boolean.away", "state": "off"}]
+
+        result = await tools_automation._tool_ha_create_automation(hass, {
+            "alias": "Brand new",
+            "triggers": [{"trigger": "state", "entity_id": "light.x", "to": "on"}],
+            "conditions": conditions,
+            "actions": [{"action": "light.turn_off"}],
+        })
+
+        assert result.get("success") is True, result
+        new = next(
+            a for a in _ha_reads(tmp_path / "automations.yaml") if a["alias"] == "Brand new"
+        )
+        assert new["conditions"] == conditions
+        assert new["triggers"][0]["to"] == "on"
+
+    @pytest.mark.asyncio
+    async def test_update_script(self, tmp_path):
+        tools_script_scene = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_script_scene")
+        hass = _hass(tmp_path, {
+            "configuration.yaml": "script: !include scripts.yaml\n",
+            "scripts.yaml": "morning:\n  alias: Morning\n  sequence: []\n",
+        })
+        variables = {"heating": "off", "wake_at": "7:30"}
+
+        result = await tools_script_scene._tool_ha_update_script(
+            hass, {"entity_id": "script.morning", "variables": variables}
+        )
+
+        assert result.get("success") is True, result
+        assert _ha_reads(tmp_path / "scripts.yaml")["morning"]["variables"] == variables
+
+    @pytest.mark.asyncio
+    async def test_create_scene(self, tmp_path):
+        tools_script_scene = pytest.importorskip("custom_components.config_auditor.mcp_server.tools_script_scene")
+        hass = _hass(tmp_path, {
+            "configuration.yaml": "scene: !include scenes.yaml\n",
+            "scenes.yaml": "- id: soir\n  name: Evening\n  entities: {}\n",
+        })
+        entities = {"light.kitchen": "off", "switch.fan": {"state": "on"}}
+
+        result = await tools_script_scene._tool_ha_create_scene(
+            hass, {"name": "Night", "entities": entities}
+        )
+
+        assert result.get("success") is True, result
+        night = next(s for s in _ha_reads(tmp_path / "scenes.yaml") if s["name"] == "Night")
+        assert night["entities"] == entities
