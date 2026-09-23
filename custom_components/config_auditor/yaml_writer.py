@@ -25,7 +25,11 @@ Everything that edits an existing config file now goes through this module:
 * the domain scanners locate an entry across every file a domain key resolves
   to -- a split config keeps its entries in several files -- and hand back the
   matched node *still attached to its document*, so the caller mutates it and
-  calls :func:`write_back` on the one file that holds it.
+  calls :func:`write_back` on the one file that holds it;
+* :func:`async_write_and_reload` checks an automation, script or scene the
+  way Home Assistant's own editor does before writing it, then reloads and
+  puts the file back if the reload fails -- a reload that disables an invalid
+  entry still succeeds, so the check has to come first.
 
 :mod:`yaml_sources` stays the authority on *where* a domain's files are, and
 keeps the plain-PyYAML readers the read-only audit paths use. This module is
@@ -36,6 +40,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 import functools
+import io
 import logging
 import os
 import re
@@ -577,6 +582,138 @@ def _discard(tmp: str) -> None:
         os.unlink(tmp)
     except OSError:
         pass
+
+
+# -- Writing an entry Home Assistant reloads ----------------------------------
+
+
+class RejectedByHomeAssistant(Exception):
+    """Home Assistant would not load this entry, so it was not written."""
+
+
+def _as_home_assistant_reads(yaml: Any, entry: Any) -> Any:
+    """*entry* dumped the way it will be written, then read by HA's own loader."""
+    from homeassistant.util.yaml.loader import parse_yaml
+
+    buffer = io.StringIO()
+    yaml.dump(entry, buffer)
+    return parse_yaml(buffer.getvalue())
+
+
+async def async_validation_error(
+    hass: Any, domain: str, yaml: Any, entry: Any, key: str | None
+) -> str | None:
+    """What Home Assistant's own editor says about *entry*, or None if it accepts it.
+
+    The editor runs these validators before it saves an automation, a script or
+    a scene, and the reload runs the same ones -- but where the editor refuses,
+    the reload keeps going: it disables the entry, logs, and succeeds. The entry
+    is checked as HA will read it back from the file, not as HACA holds it, so a
+    value the YAML round trip would turn into something else is caught too.
+
+    Only a validation error counts. A validator that cannot run -- an older
+    Home Assistant without it, or one that fails outright -- leaves the write
+    to the reload and its rollback, as before.
+    """
+    # Home Assistant before voluptuous: it installs the `voluptuous` its
+    # validators raise from, and a `vol.Invalid` taken elsewhere misses them.
+    from homeassistant.exceptions import HomeAssistantError
+    import voluptuous as vol
+
+    try:
+        config = await hass.async_add_executor_job(_as_home_assistant_reads, yaml, entry)
+        if domain == "automation":
+            from homeassistant.components.automation.config import (
+                async_validate_config_item,
+            )
+
+            await async_validate_config_item(hass, str(key or ""), config)
+        elif domain == "script":
+            from homeassistant.components.script.config import (
+                async_validate_config_item,
+            )
+
+            await async_validate_config_item(hass, str(key or ""), config)
+        elif domain == "scene":
+            from homeassistant.components.scene import PLATFORM_SCHEMA
+
+            PLATFORM_SCHEMA(config)
+    except (vol.Invalid, HomeAssistantError) as err:
+        return str(err)
+    except Exception as err:  # noqa: BLE001 -- see the docstring
+        _LOGGER.debug("Could not validate the %s before writing it: %s", domain, err)
+    return None
+
+
+async def async_write_and_reload(
+    hass: Any,
+    target: EditTarget,
+    domain: str,
+    *,
+    entry: Any = None,
+    key: str | None = None,
+    context: Any = None,
+) -> str | None:
+    """Validate, round-trip write, reload -- rolling the file back if the reload fails.
+
+    For every path that edits a file the user maintains and reloads it: the
+    MCP write tools and the panel's zombie-entity fix. The tree goes back
+    through :func:`write_back`, so the comments and formatting around the entry
+    survive, and the snapshot it takes in ``.haca_backups`` is what the
+    rollback restores — the same snapshot the panel offers to restore by hand.
+
+    The rollback alone cannot catch an invalid entry: the reload succeeds and
+    Home Assistant disables it. So *entry* -- the automation, script or scene
+    being created or updated, with its *key* (automation id, script id) -- is
+    first checked the way Home Assistant's own editor checks it, and one it
+    would reject raises :class:`RejectedByHomeAssistant` before anything is
+    written. A removal passes no entry. Both reloads run under *context*, so
+    Home Assistant's logbook names who asked.
+
+    Returns the backup path, or None when this call created the file.
+    """
+    if entry is not None:
+        error = await async_validation_error(hass, domain, target.yaml, entry, key)
+        if error is not None:
+            raise RejectedByHomeAssistant(
+                f"Home Assistant rejects this {domain}, so nothing was "
+                f"written: {error}"
+            )
+
+    backup = await hass.async_add_executor_job(
+        write_back, target, hass.config.config_dir
+    )
+    try:
+        await hass.services.async_call(
+            domain, "reload", blocking=True, context=context
+        )
+    except Exception as reload_exc:
+        name = os.path.basename(target.path)
+        if backup is None:
+            # The file did not exist before this call, so there is no earlier
+            # state to put back. It is left on disk for the user to inspect —
+            # deleting it would throw away what they asked to create.
+            raise RuntimeError(
+                f"Reload failed after creating {name}, which was left in place "
+                f"for inspection. Error: {reload_exc}"
+            ) from reload_exc
+
+        def _rollback() -> None:
+            with open(backup, encoding="utf-8") as fh:
+                atomic_write(target.path, fh.read())
+
+        await hass.async_add_executor_job(_rollback)
+        try:
+            await hass.services.async_call(
+                domain, "reload", blocking=True, context=context
+            )
+        except Exception:
+            pass  # Best-effort rollback reload
+        raise RuntimeError(
+            f"Reload failed after writing {name} — file restored to original. "
+            f"Error: {reload_exc}"
+        ) from reload_exc
+    return backup
 
 
 # -- Locating an entry, with its file open for editing -----------------------

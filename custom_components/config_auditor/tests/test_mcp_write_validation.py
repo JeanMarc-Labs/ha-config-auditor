@@ -6,6 +6,9 @@ succeeds. The tool then reported success on an automation that was offline. An
 entry is now validated first -- as Home Assistant will read it back from the
 file -- and one it would reject is not written.
 
+The panel's zombie-entity fix writes and reloads too, and goes through the same
+`yaml_writer.async_write_and_reload`: it had neither the check nor the rollback.
+
     pytest custom_components/config_auditor/tests/test_mcp_write_validation.py -v
 """
 from __future__ import annotations
@@ -24,7 +27,7 @@ from custom_components.config_auditor import yaml_writer as yw
 from custom_components.config_auditor.tests.conftest import MockHass
 
 pytest.importorskip("ruamel.yaml", reason="the write path round-trips through ruamel")
-common = pytest.importorskip("custom_components.config_auditor.mcp_server.common")
+pytest.importorskip("homeassistant", reason="the validators are Home Assistant's own")
 
 import voluptuous as vol  # after Home Assistant, which may alias it
 
@@ -81,7 +84,7 @@ class TestHomeAssistantsVerdict:
     async def test_a_valid_entry_is_accepted(self, tmp_path, domain, key, source):
         yaml, entry = source(tmp_path)
         async with _real_hass(tmp_path) as hass:
-            assert await common._async_validation_error(hass, domain, yaml, entry, key) is None
+            assert await yw.async_validation_error(hass, domain, yaml, entry, key) is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("domain, key, source, expected", [
@@ -105,7 +108,7 @@ class TestHomeAssistantsVerdict:
         yaml, document = source(tmp_path)
         entry = document[0] if isinstance(document, list) else document
         async with _real_hass(tmp_path) as hass:
-            error = await common._async_validation_error(hass, domain, yaml, entry, key)
+            error = await yw.async_validation_error(hass, domain, yaml, entry, key)
         assert error is not None and expected in error, error
 
     @pytest.mark.asyncio
@@ -116,7 +119,7 @@ class TestHomeAssistantsVerdict:
             "homeassistant.components.automation.config.async_validate_config_item",
             AsyncMock(side_effect=RuntimeError("no integrations loaded")),
         ):
-            error = await common._async_validation_error(
+            error = await yw.async_validation_error(
                 hass, "automation", yw.roundtrip_yaml(), {"id": "a"}, "a"
             )
         assert error is None
@@ -238,3 +241,107 @@ class TestToolsDoNotWriteWhatHomeAssistantRejects:
 
         assert result.get("success") is True, result
         assert "Clima" not in (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The panel's zombie-entity fix goes through the same check and rollback
+# ═══════════════════════════════════════════════════════════════════════════
+
+EVIER = (
+    "# mine\n"
+    "- id: evier\n"
+    "  alias: Evier\n"
+    "  triggers:\n"
+    "    - trigger: state\n"
+    "      entity_id: light.evier\n"
+    "  actions:\n"
+    "    - action: light.turn_on\n"
+    "      target:\n"
+    "        entity_id: light.cuisine\n"
+)
+EVIER_FILES = {
+    "configuration.yaml": "automation: !include automations.yaml\n",
+    "automations.yaml": EVIER,
+}
+
+
+def _assistant(hass):
+    from custom_components.config_auditor.refactoring_assistant import RefactoringAssistant
+
+    return RefactoringAssistant(hass)
+
+
+def _backups(tmp_path) -> list[str]:
+    folder = tmp_path / ".haca_backups"
+    return sorted(os.listdir(folder)) if folder.is_dir() else []
+
+
+@contextlib.asynccontextmanager
+async def _real_hass_with_reload(tmp_path):
+    """HA's real validators, and an `automation.reload` that records its calls."""
+    for name, text in EVIER_FILES.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    async with _real_hass(tmp_path) as hass:
+        reloads = []
+
+        async def _reload(call):
+            reloads.append(call)
+
+        hass.services.async_register("automation", "reload", _reload)
+        yield hass, reloads
+
+
+class TestZombieFix:
+    @pytest.mark.asyncio
+    async def test_removing_the_only_entity_of_a_trigger_is_refused(self, tmp_path):
+        """A state trigger left with no entity is one HA disables on a reload that succeeds."""
+        async with _real_hass_with_reload(tmp_path) as (hass, reloads):
+            result = await _assistant(hass).apply_zombie_entity_fix("evier", "light.evier", "")
+
+        assert result["success"] is False, result
+        assert "Home Assistant rejects this automation" in result["error"]
+        assert "entity_id" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == EVIER
+        assert not reloads
+        assert _backups(tmp_path) == []
+
+    @pytest.mark.asyncio
+    async def test_a_replacement_is_written_and_reloaded(self, tmp_path):
+        async with _real_hass_with_reload(tmp_path) as (hass, reloads):
+            result = await _assistant(hass).apply_zombie_entity_fix("evier", "light.evier", "light.salon")
+
+        assert result["success"] is True, result
+        text = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "entity_id: light.salon" in text and "light.evier" not in text
+        assert text.startswith("# mine\n")
+        assert len(reloads) == 1
+        assert Path(result["backup_path"]).read_text(encoding="utf-8") == EVIER
+
+    @pytest.mark.asyncio
+    async def test_a_failed_reload_puts_the_file_back(self, tmp_path):
+        from homeassistant.exceptions import HomeAssistantError
+
+        hass = _hass(tmp_path, EVIER_FILES)
+        hass.services.async_call = AsyncMock(side_effect=[HomeAssistantError("boom"), None])
+        with patch(
+            "homeassistant.components.automation.config.async_validate_config_item",
+            AsyncMock(return_value=None),
+        ):
+            result = await _assistant(hass).apply_zombie_entity_fix("evier", "light.evier", "light.salon")
+
+        assert result["success"] is False, result
+        assert "file restored to original" in result["error"] and "boom" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == EVIER
+        assert hass.services.async_call.await_count == 2, "the restored file is reloaded too"
+
+    @pytest.mark.asyncio
+    async def test_nothing_to_replace_writes_nothing(self, tmp_path):
+        """No backup either: one used to be taken before looking for the entity."""
+        hass = _hass(tmp_path, EVIER_FILES)
+        result = await _assistant(hass).apply_zombie_entity_fix("evier", "light.absent", "light.salon")
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == EVIER
+        assert not _reloaded(hass)
+        assert _backups(tmp_path) == []
