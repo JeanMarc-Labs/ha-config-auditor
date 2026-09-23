@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Scan interval (minutes)",
           "auto_fix_enabled": "Enable automatic fixes",
-          "backup_enabled": "Enable automatic backups",
           "startup_delay_seconds": "Startup scan: max wait (seconds)",
           "event_monitoring_enabled": "Continuous monitoring (auto-scan on events)",
           "event_debounce_seconds": "Event monitoring debounce delay (seconds)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Active monitoring",
-      "auto_backup": "Auto-backup before fix",
       "auto_fixable": "✓ Auto-fixable",
       "auto_rescan_after_changes": "Auto-rescan after changes",
       "automatic_scan": "Automatic scan",
@@ -718,7 +716,6 @@
       "persist_hint": "To persist across restarts, add to",
       "proactive_agent_enabled": "Proactive AI agent",
       "proactive_agent_enabled_hint": "Analyses your configuration on its own and sends you a weekly report. Calls the AI service configured in Home Assistant.",
-      "recommended": "Recommended",
       "reset": "Reset",
       "resetting": "Resetting…",
       "save": "Save",

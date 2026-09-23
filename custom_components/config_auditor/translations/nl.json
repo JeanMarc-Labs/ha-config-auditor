@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Scaninterval (minuten)",
           "auto_fix_enabled": "Automatische correcties inschakelen",
-          "backup_enabled": "Automatische back-ups inschakelen",
           "startup_delay_seconds": "Scan bij opstarten: maximale wachttijd (seconden)",
           "event_monitoring_enabled": "Continue monitoring (auto-scan bij gebeurtenissen)",
           "event_debounce_seconds": "Debounce vertraging gebeurtenismonitoring (seconden)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Actieve bewaking",
-      "auto_backup": "Automatische back-up vóór oplossing",
       "auto_fixable": "✓ Automatisch oplosbaar",
       "auto_rescan_after_changes": "Automatisch opnieuw scannen na wijzigingen",
       "automatic_scan": "Automatische scan",
@@ -718,7 +716,6 @@
       "persist_hint": "Om te behouden na herstart, voeg toe aan",
       "proactive_agent_enabled": "Proactieve AI-agent",
       "proactive_agent_enabled_hint": "Analyseert uw configuratie uit zichzelf en stuurt u een wekelijks rapport. Roept de in Home Assistant ingestelde AI-dienst aan.",
-      "recommended": "Aanbevolen",
       "reset": "Standaard",
       "resetting": "Bezig met resetten…",
       "save": "Opslaan",

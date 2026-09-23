@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Scanintervall (Minuten)",
           "auto_fix_enabled": "Automatische Korrekturen aktivieren",
-          "backup_enabled": "Automatische Backups aktivieren",
           "startup_delay_seconds": "Start-Scan: maximale Wartezeit (Sekunden)",
           "event_monitoring_enabled": "Kontinuierliche Überwachung (Autoscan bei Ereignissen)",
           "event_debounce_seconds": "Entprellverzögerung für Ereignisüberwachung (Sekunden)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Aktive Überwachung",
-      "auto_backup": "Automatisches Backup vor Korrektur",
       "auto_fixable": "✓ Automatisch behebbar",
       "auto_rescan_after_changes": "Autoscan nach Änderungen",
       "automatic_scan": "Automatischer Scan",
@@ -718,7 +716,6 @@
       "persist_hint": "Zum dauerhaften Aktivieren beim Neustart hinzufügen zu",
       "proactive_agent_enabled": "Proaktiver KI-Agent",
       "proactive_agent_enabled_hint": "Analysiert Ihre Konfiguration von sich aus und schickt Ihnen einen Wochenbericht. Ruft den in Home Assistant eingerichteten KI-Dienst auf.",
-      "recommended": "Empfohlen",
       "reset": "Zurücksetzen",
       "resetting": "Wird zurückgesetzt…",
       "save": "Speichern",

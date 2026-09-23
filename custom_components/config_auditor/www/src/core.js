@@ -2946,8 +2946,23 @@
     async restoreBackup(path) {
       if (!confirm(this.t('backup.confirm_restore'))) return;
       try {
-        await this.hass.callService('config_auditor', 'restore_backup', { backup_path: path });
-        this.showHANotification(this.t('notifications.report_generated'), this.t('notifications.backup_restored_success'), 'haca_restore');
+        // The service answers a restore it could not do with success: false,
+        // which a bare callService never reads, and showed as restored.
+        const result = await this.hass.callWS({
+          type: 'call_service',
+          domain: 'config_auditor',
+          service: 'restore_backup',
+          service_data: { backup_path: path },
+          return_response: true
+        });
+        const response = result.response || result;
+        if (response.success) {
+          this.showHANotification(this.t('notifications.report_generated'), this.t('notifications.backup_restored_success'), 'haca_restore');
+          // The snapshot of what the restore replaced is in the list now.
+          this.loadBackups();
+        } else {
+          this.showHANotification(this.t('notifications.error'), response.error || this.t('fix.error_unknown'), 'haca_error');
+        }
       } catch (error) {
         this.showHANotification(this.t('notifications.error'), error.message, 'haca_error');
       }

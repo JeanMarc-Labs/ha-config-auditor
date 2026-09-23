@@ -360,9 +360,11 @@ automation:
 ```
 /config/
 ├── custom_components/config_auditor/   # Code de l'intégration
-├── .haca_backups/                      # Sauvegardes YAML avant corrections
-│   ├── automations_20260314_143022.yaml
-│   └── scripts_20260314_091500.yaml
+├── .haca_backups/files/                # copie de chaque fichier avant que HACA le modifie
+│   ├── automations.yaml/               #   un dossier par fichier, à son chemin
+│   │   └── 20260314_143022.yaml
+│   └── scripts.yaml/
+│       └── 20260314_091500.yaml
 └── .haca_reports/                      # Rapports générés
     ├── haca_report_20260314.pdf
     ├── haca_report_20260314.md

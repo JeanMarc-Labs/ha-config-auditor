@@ -1828,7 +1828,7 @@ Authorization: Bearer &lt;your-haca-token&gt;</pre></div>
 <span class="c-key">data</span>: { <span class="c-key">automation_id</span>: <span class="c-str">"abc123"</span>, <span class="c-key">dry_run</span>: <span class="c-kw">false</span> }
 
 <span class="c-key">service</span>: <span class="c-str">config_auditor.restore_backup</span>
-<span class="c-key">data</span>: { <span class="c-key">backup_path</span>: <span class="c-str">".haca_backups/automations_20260314.yaml"</span> }
+<span class="c-key">data</span>: { <span class="c-key">backup_path</span>: <span class="c-str">".haca_backups/files/automations.yaml/20260314_143022.yaml"</span> }
 
 <span class="c-cm"># Rapport</span>
 <span class="c-key">service</span>: <span class="c-str">config_auditor.generate_report</span>
@@ -1877,8 +1877,9 @@ Authorization: Bearer &lt;your-haca-token&gt;</pre></div>
     <div class="code-wrap"><div class="code-header"><div class="code-dots"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div></div><span class="code-lang">structure</span></div>
     <pre>/config/
 ├── custom_components/config_auditor/
-├── .haca_backups/
-│   └── automations_20260314_143022.yaml
+├── .haca_backups/files/
+│   └── automations.yaml/
+│       └── 20260314_143022.yaml
 └── .haca_reports/
     ├── haca_report_20260314.pdf
     ├── haca_report_20260314.md

@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Skanningsinterval (minutter)",
           "auto_fix_enabled": "Aktivér automatiske rettelser",
-          "backup_enabled": "Aktivér automatiske sikkerhedskopier",
           "startup_delay_seconds": "Opstartsskanning: maksimal ventetid (sekunder)",
           "event_monitoring_enabled": "Kontinuerlig overvågning (automatisk skanning ved hændelser)",
           "event_debounce_seconds": "Debounce-forsinkelse for hændelsesovervågning (sekunder)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Aktiv overvågning",
-      "auto_backup": "Automatisk sikkerhedskopi inden rettelse",
       "auto_fixable": "✓ Automatisk rettelig",
       "auto_rescan_after_changes": "Automatisk genskanning efter ændringer",
       "automatic_scan": "Automatisk skanning",
@@ -718,7 +716,6 @@
       "persist_hint": "For at bevare ved genstart, tilføj til",
       "proactive_agent_enabled": "Proaktiv AI-agent",
       "proactive_agent_enabled_hint": "Analyserer din konfiguration af sig selv og sender dig en ugentlig rapport. Kalder den AI-tjeneste, der er sat op i Home Assistant.",
-      "recommended": "Anbefalet",
       "reset": "Nulstil",
       "resetting": "Nulstiller…",
       "save": "Gem",

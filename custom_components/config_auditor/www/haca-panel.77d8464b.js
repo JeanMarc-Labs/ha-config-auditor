@@ -1,4 +1,4 @@
-// HACA-BUILD: 80c6cd34  2026-09-23T16:30:23Z
+// HACA-BUILD: 77d8464b  2026-09-23T18:50:00Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -273,10 +273,6 @@ function renderConfigTab(options, lang, t) {
     '<input type="number" id="cfg-history-retention" class="cfg-input" min="30" max="730" value="' + (options.history_retention_days || 365) + '">' +
     '</div>' +
     '<div class="cfg-row">' +
-    '<div class="cfg-row-label"><span>' + t('config.auto_backup') + '</span><span class="cfg-row-hint">' + t('config.recommended') + '</span></div>' +
-    '<label class="cfg-toggle"><input type="checkbox" id="cfg-backup-enabled"' + (options.backup_enabled !== false ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
-    '</div>' +
-    '<div class="cfg-row">' +
     '<div class="cfg-row-label"><span>' + t('config.ha_repairs') + '</span><span class="cfg-row-hint">' + t('config.ha_repairs_hint') + '</span></div>' +
     '<label class="cfg-toggle"><input type="checkbox" id="cfg-repairs-enabled"' + (options.repairs_enabled !== false ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
     '</div>' +
@@ -515,7 +511,6 @@ var DEFAULT_OPTIONS = {
   battery_low: 15,
   battery_warning: 25,
   history_retention_days: 365,
-  backup_enabled: true,
   repairs_enabled: true,
   battery_notifications_enabled: true,
   notify_high_severity: true,
@@ -554,7 +549,6 @@ function collectFormOptions(root) {
     battery_low: num('#cfg-battery-low', 15),
     battery_warning: num('#cfg-battery-warning', 25),
     history_retention_days: num('#cfg-history-retention', 365),
-    backup_enabled: bool('#cfg-backup-enabled', true),
     repairs_enabled: bool('#cfg-repairs-enabled', true),
     battery_notifications_enabled: bool('#cfg-battery-notif', true),
     notify_high_severity: bool('#cfg-notify-high', true),
@@ -3541,8 +3535,23 @@ function _updateTypeCounts(el) {
     async restoreBackup(path) {
       if (!confirm(this.t('backup.confirm_restore'))) return;
       try {
-        await this.hass.callService('config_auditor', 'restore_backup', { backup_path: path });
-        this.showHANotification(this.t('notifications.report_generated'), this.t('notifications.backup_restored_success'), 'haca_restore');
+        // The service answers a restore it could not do with success: false,
+        // which a bare callService never reads, and showed as restored.
+        const result = await this.hass.callWS({
+          type: 'call_service',
+          domain: 'config_auditor',
+          service: 'restore_backup',
+          service_data: { backup_path: path },
+          return_response: true
+        });
+        const response = result.response || result;
+        if (response.success) {
+          this.showHANotification(this.t('notifications.report_generated'), this.t('notifications.backup_restored_success'), 'haca_restore');
+          // The snapshot of what the restore replaced is in the list now.
+          this.loadBackups();
+        } else {
+          this.showHANotification(this.t('notifications.error'), response.error || this.t('fix.error_unknown'), 'haca_error');
+        }
       } catch (error) {
         this.showHANotification(this.t('notifications.error'), error.message, 'haca_error');
       }

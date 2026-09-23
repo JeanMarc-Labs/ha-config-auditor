@@ -189,14 +189,69 @@ class TestWriteBack:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestBackups:
-    def test_named_after_the_file_it_copies(self, tmp_path):
+    def test_kept_in_a_folder_at_the_path_of_the_file_it_copies(self, tmp_path):
         source = tmp_path / "automations" / "clima.yaml"
         _write(tmp_path, {"automations/clima.yaml": COMMENTED})
 
         backup = Path(yw.create_backup(str(tmp_path), str(source)))
-        assert backup.parent.name == ".haca_backups"
-        assert backup.name.startswith("clima_")
-        assert yw.backup_stem(backup.name) == "clima"
+        assert backup.parent == tmp_path / ".haca_backups" / "files" / "automations" / "clima.yaml"
+        assert yw.backup_source(str(tmp_path), str(backup)) == str(source)
+
+    def test_two_files_of_one_name_keep_apart(self, tmp_path):
+        """Named by stem, a script file's backup read as the automation file's."""
+        _write(tmp_path, {"automations/lights.yaml": "- id: a\n", "scripts/lights.yaml": "s: {}\n"})
+        auto = yw.create_backup(str(tmp_path), str(tmp_path / "automations/lights.yaml"))
+        script = yw.create_backup(str(tmp_path), str(tmp_path / "scripts/lights.yaml"))
+
+        assert yw.backup_source(str(tmp_path), auto) == str(tmp_path / "automations" / "lights.yaml")
+        assert yw.backup_source(str(tmp_path), script) == str(tmp_path / "scripts" / "lights.yaml")
+
+    def test_pruning_orders_the_sequence_as_a_number(self, tmp_path):
+        """Twelve in one second: by name `_10` sorted before `_2`, so the newest
+        snapshots were the ones pruned."""
+        folder = tmp_path / ".haca_backups" / "files" / "automations.yaml"
+        folder.mkdir(parents=True)
+        names = ["20260901_000000.yaml"] + [f"20260901_000000_{n}.yaml" for n in range(2, 13)]
+        for name in names:
+            (folder / name).write_text("x", encoding="utf-8")
+
+        yw.prune_backups(str(tmp_path))
+
+        kept = {p.name for p in folder.iterdir()}
+        assert kept == set(names[-yw.BACKUP_KEEP:])
+
+    def test_restoring_the_oldest_survives_the_pruning_it_triggers(self, tmp_path):
+        """The restore snapshots the current file first, which prunes -- and the
+        snapshot being restored is the first one to go."""
+        _write(tmp_path, {"automations.yaml": "- id: oldest\n"})
+        source = str(tmp_path / "automations.yaml")
+        oldest = yw.create_backup(str(tmp_path), source)
+        for n in range(yw.BACKUP_KEEP - 1):
+            Path(source).write_text(f"- id: v{n}\n", encoding="utf-8")
+            yw.create_backup(str(tmp_path), source)
+
+        replaced = yw.restore_snapshot(str(tmp_path), oldest, source)
+
+        assert Path(source).read_text(encoding="utf-8") == "- id: oldest\n"
+        assert Path(replaced).read_text(encoding="utf-8") == f"- id: v{yw.BACKUP_KEEP - 2}\n"
+
+    def test_a_folder_that_restores_outside_the_config_is_not_a_snapshot(self, tmp_path):
+        files = tmp_path / ".haca_backups" / "files"
+        for folder in (".storage/core.yaml", "custom_components/x/__init__.py", "automations.yaml"):
+            (files / folder).mkdir(parents=True)
+            (files / folder / "20260101_000000.yaml").write_text("x", encoding="utf-8")
+
+        sources = {b.source for b in yw.list_backup_files(str(tmp_path))}
+        assert sources == {"automations.yaml"}
+
+    def test_a_flat_backup_from_before_1_8_1_is_still_listed(self, tmp_path):
+        backups = tmp_path / ".haca_backups"
+        backups.mkdir()
+        (backups / "clima_20260101_000000.yaml").write_text("x", encoding="utf-8")
+
+        [flat] = yw.list_backup_files(str(tmp_path))
+        assert (flat.source, flat.stem) == (None, "clima")
+        assert yw.backup_source(str(tmp_path), flat.path) is None
 
     def test_same_second_does_not_overwrite_the_previous_backup(self, tmp_path):
         _write(tmp_path, {"automations.yaml": COMMENTED})
@@ -486,7 +541,8 @@ class TestEveryWritePathPreservesComments:
                 "automation.a1", "id: a1\nalias: Clima split\ntriggers: []\nactions: []\n"
             )
 
-        assert yw.backup_stem(Path(result["backup_path"]).name) == "automations"
+        assert yw.backup_source(str(tmp_path), result["backup_path"]) == \
+            str(tmp_path / "automations.yaml")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
