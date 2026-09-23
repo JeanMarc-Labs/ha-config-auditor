@@ -261,7 +261,8 @@
       "open_editor": "Open Editor",
       "automation": "Automation",
       "problem": "Problem",
-      "unknown_device_id": "unknown device_id"
+      "unknown_device_id": "unknown device_id",
+      "left_unchanged": "Left as they are"
     },
     "notifications": {
       "copy_failed": "Copy failed",
@@ -339,7 +340,7 @@
       "success": "Fix Applied Successfully!",
       "error_unknown": "Unknown error",
       "cannot_find_automation": "Cannot find automation ID",
-      "cannot_resolve_entity": "The entity referenced by this device could not be resolved automatically. The device may have been re-added with a new ID. Please fix this manually using the editor."
+      "not_convertible": "None of the device references here has an entity-based equivalent that behaves exactly the same, so each one stays as it is. The reason is given below; edit the automation by hand if needed."
     },
     "instructions": {
       "open_yaml_editor": "Open the automation in the YAML editor",

@@ -23,11 +23,12 @@ from .const import (
 from .yaml_sources import skipped_note
 from .yaml_writer import (
     EditScan,
+    RejectedByHomeAssistant,
+    async_write_and_reload,
     list_entries,
     named_entries,
     open_domain_for_edit,
     scan_in_passes,
-    write_back,
 )
 
 # Issue categories the panel can ask for, and the coordinator key each one holds.
@@ -1319,7 +1320,9 @@ async def handle_apply_field_fix(
     guillemets et ancres du fichier survivent à l'édition. Une sauvegarde est
     prise avant toute écriture, dans le même dossier que celles du module de
     refactoring — donc restaurable depuis le panneau.
-    Recharge les automations/scripts après modification.
+    L'entrée est d'abord vérifiée comme l'éditeur de HA la vérifie ; recharge
+    ensuite les automations/scripts, et remet le fichier si le rechargement
+    échoue (yaml_writer.async_write_and_reload).
     """
     # Rate-limit: prevent spamming YAML writes
     user_id = connection.user.id if connection.user else "anon"
@@ -1351,17 +1354,18 @@ async def handle_apply_field_fix(
             )
             return
 
-        # `write_back` snapshots the file into .haca_backups before it writes —
-        # this rewrites a file the user maintains by hand — under the same
-        # naming the panel's restore list reads.
-        def _write() -> str:
-            match.entry[field] = value
-            return write_back(match.target, hass.config.config_dir)
-
-        backup_path = await hass.async_add_executor_job(_write)
-
-        # Recharger pour que HA prenne en compte
-        await hass.services.async_call(domain, "reload", {}, blocking=True)
+        # Checked the way HA's editor checks it, then written with a snapshot
+        # in .haca_backups — the one the panel's restore list reads — and
+        # reloaded; a failed reload puts the file back. A reload that disables
+        # an invalid entry succeeds, so the check has to come first: an alias
+        # on an automation already broken elsewhere is refused with HA's reason.
+        match.entry[field] = value
+        backup_path = await async_write_and_reload(
+            hass, match.target, domain,
+            entry=match.entry,
+            key=match.key if domain == "script" else match.entry.get("id"),
+            context=connection.context(msg),
+        )
         connection.send_result(msg["id"], {
             "success": True,
             "field": field,
@@ -1369,6 +1373,9 @@ async def handle_apply_field_fix(
             "file": Path(match.path).name,
             "backup": Path(backup_path).name,
         })
+    except RejectedByHomeAssistant as exc:
+        _LOGGER.info("[HACA apply_field_fix] %s not applied: %s", entity_id, exc)
+        connection.send_error(msg["id"], "rejected", str(exc))
     except Exception as exc:
         _LOGGER.error("[HACA apply_field_fix] %s: %s", entity_id, exc)
         connection.send_error(msg["id"], "apply_error", str(exc))

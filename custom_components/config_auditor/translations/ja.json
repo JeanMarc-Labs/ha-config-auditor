@@ -261,7 +261,8 @@
       "open_editor": "エディターを開く",
       "automation": "オートメーション",
       "problem": "問題",
-      "unknown_device_id": "不明な device_id"
+      "unknown_device_id": "不明な device_id",
+      "left_unchanged": "変更せずに残した項目"
     },
     "notifications": {
       "copy_failed": "コピーに失敗しました",
@@ -339,7 +340,7 @@
       "success": "修正が正常に適用されました！",
       "error_unknown": "不明なエラー",
       "cannot_find_automation": "オートメーションIDが見つかりません",
-      "cannot_resolve_entity": "このデバイスが参照するエンティティを自動的に解決できませんでした。デバイスが新しいIDで再追加された可能性があります。エディターを使用して手動で修正してください。"
+      "not_convertible": "ここにあるデバイス参照には、まったく同じように動作するエンティティベースの代替がないため、それぞれそのまま残します。理由は下に表示しています。必要に応じてオートメーションを手動で編集してください。"
     },
     "instructions": {
       "open_yaml_editor": "YAMLエディターでオートメーションを開く",

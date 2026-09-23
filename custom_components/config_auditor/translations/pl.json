@@ -261,7 +261,8 @@
       "open_editor": "Otwórz edytor",
       "automation": "Automatyzacja",
       "problem": "Problem",
-      "unknown_device_id": "nieznany device_id"
+      "unknown_device_id": "nieznany device_id",
+      "left_unchanged": "Pozostawione bez zmian"
     },
     "notifications": {
       "copy_failed": "Nie udało się skopiować",
@@ -339,7 +340,7 @@
       "success": "Poprawka zastosowana pomyślnie!",
       "error_unknown": "Nieznany błąd",
       "cannot_find_automation": "Nie można znaleźć ID automatyzacji",
-      "cannot_resolve_entity": "Jednostka, do której odwołuje się to urządzenie, nie mogła zostać automatycznie rozwiązana. Urządzenie mogło zostać ponownie dodane z nowym identyfikatorem. Napraw to ręcznie za pomocą edytora."
+      "not_convertible": "Żadne z odwołań do urządzeń nie ma tu odpowiednika opartego na encji, który działałby dokładnie tak samo, więc każde pozostaje bez zmian. Powód podano poniżej; w razie potrzeby edytuj automatyzację ręcznie."
     },
     "instructions": {
       "open_yaml_editor": "Otwórz automatyzację w edytorze YAML",

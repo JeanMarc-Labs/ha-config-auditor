@@ -261,7 +261,8 @@
       "open_editor": "Editor öffnen",
       "automation": "Automatisierung",
       "problem": "Problem",
-      "unknown_device_id": "unbekannte device_id"
+      "unknown_device_id": "unbekannte device_id",
+      "left_unchanged": "Unverändert gelassen"
     },
     "notifications": {
       "copy_failed": "Kopieren fehlgeschlagen",
@@ -339,7 +340,7 @@
       "success": "Korrektur erfolgreich angewendet!",
       "error_unknown": "Unbekannter Fehler",
       "cannot_find_automation": "Automatisierungs-ID kann nicht gefunden werden",
-      "cannot_resolve_entity": "Die von diesem Gerät referenzierte Entität konnte nicht automatisch aufgelöst werden. Das Gerät wurde möglicherweise mit einer neuen ID erneut hinzugefügt. Bitte korrigieren Sie dies manuell mit dem Editor."
+      "not_convertible": "Keiner der Gerätebezüge hier hat eine entitätsbasierte Entsprechung, die sich genau gleich verhält, daher bleibt jeder unverändert. Der Grund steht unten; bearbeite die Automatisierung bei Bedarf von Hand."
     },
     "instructions": {
       "open_yaml_editor": "Öffne die Automatisierung im YAML-Editor",

@@ -261,7 +261,8 @@
       "open_editor": "Åbn editor",
       "automation": "Automatisering",
       "problem": "Problem",
-      "unknown_device_id": "ukendt device_id"
+      "unknown_device_id": "ukendt device_id",
+      "left_unchanged": "Efterladt uændret"
     },
     "notifications": {
       "copy_failed": "Kopiering mislykkedes",
@@ -339,7 +340,7 @@
       "success": "Rettelse anvendt succesfuldt!",
       "error_unknown": "Ukendt fejl",
       "cannot_find_automation": "Kan ikke finde automatiserings-ID",
-      "cannot_resolve_entity": "Den enhed, der refereres til af denne enhed, kunne ikke løses automatisk. Enheden er muligvis blevet tilføjet igen med et nyt ID. Ret dette manuelt ved hjælp af editoren."
+      "not_convertible": "Ingen af enhedsreferencerne her har en entitetsbaseret modpart, der opfører sig nøjagtigt ens, så hver af dem forbliver som den er. Årsagen står nedenfor; rediger automatiseringen manuelt om nødvendigt."
     },
     "instructions": {
       "open_yaml_editor": "Åbn automatiseringen i YAML-editoren",

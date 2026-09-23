@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -309,6 +309,14 @@ FLAT = {
 }
 
 
+def _home_assistant_accepts():
+    """Validation is test_write_validation.py's subject; here, only the file matters."""
+    return patch(
+        "homeassistant.components.automation.config.async_validate_config_item",
+        AsyncMock(return_value=None),
+    )
+
+
 class TestEveryWritePathPreservesComments:
     @pytest.mark.asyncio
     async def test_refactoring_assistant_mode_fix(self, tmp_path):
@@ -453,11 +461,12 @@ class TestEveryWritePathPreservesComments:
 
         _write(tmp_path, FLAT)
         optimizer = AutomationOptimizer(MockHass(config_dir=str(tmp_path)))
-        await optimizer.hass.async_add_executor_job(
-            optimizer._write_automations, "automation.a1",
-            [{"id": "a1", "alias": "Clima split", "triggers": [], "actions": []}],
-        )
+        with _home_assistant_accepts():
+            result = await optimizer.apply(
+                "automation.a1", "id: a1\nalias: Clima split\ntriggers: []\nactions: []\n"
+            )
 
+        assert result["success"] is True, result
         written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
         assert "alias: Clima split" in written
         assert "alias: General" in written, "the sibling entry must survive"
@@ -472,9 +481,12 @@ class TestEveryWritePathPreservesComments:
 
         _write(tmp_path, FLAT)
         optimizer = AutomationOptimizer(MockHass(config_dir=str(tmp_path)))
-        backup = await optimizer._create_backup("automation.a1")
+        with _home_assistant_accepts():
+            result = await optimizer.apply(
+                "automation.a1", "id: a1\nalias: Clima split\ntriggers: []\nactions: []\n"
+            )
 
-        assert yw.backup_stem(backup.name) == "automations"
+        assert yw.backup_stem(Path(result["backup_path"]).name) == "automations"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -189,10 +189,10 @@ class TestApplyFieldFix:
         """YAML must be written atomically (tmp file + os.replace).
 
         The write itself lives in yaml_writer.write_back, which is what
-        apply_field_fix calls.
+        apply_field_fix reaches through async_write_and_reload.
         """
-        assert "write_back(" in CONTENT, \
-            "apply_field_fix must write through yaml_writer.write_back"
+        assert "async_write_and_reload(" in CONTENT, \
+            "apply_field_fix must write through yaml_writer.async_write_and_reload"
         assert "os.replace(tmp, target.path)" in YAML_WRITER_CONTENT, \
             "write_back must use atomic write (os.replace)"
 
@@ -207,8 +207,10 @@ class TestApplyFieldFix:
         """A backup must be taken before the YAML is rewritten."""
         fn_start = CONTENT.find("async def handle_apply_field_fix(")
         body = CONTENT[fn_start:fn_start + 3000]
-        assert "write_back(match.target, hass.config.config_dir)" in body, \
-            "apply_field_fix must write through the backup-taking form of write_back"
+        assert "async_write_and_reload(" in body, \
+            "apply_field_fix must write through async_write_and_reload"
+        assert "write_back, target, hass.config.config_dir" in YAML_WRITER_CONTENT, \
+            "async_write_checked must use the backup-taking form of write_back"
         # …and that form must be the one that snapshots. What it actually does
         # with the snapshot is pinned by test_yaml_writer.py.
         assert "create_backup(config_dir, target.path)" in YAML_WRITER_CONTENT, \

@@ -20,10 +20,10 @@ from homeassistant.core import HomeAssistant
 
 from .const import BACKUP_DIR
 from .translation_utils import notification_ts as _ts
-from .yaml_sources import iter_domain_files
 from .yaml_writer import (
     EditScan,
-    create_backup,
+    RejectedByHomeAssistant,
+    async_check_entry,
     scan_list_domain_for_edit,
     write_back,
 )
@@ -63,8 +63,8 @@ class AutomationOptimizer:
         With a split config the entry lives in one of several files, so writes
         must land on that file rather than on <config>/automations.yaml, which
         HA may not even read. The file comes back open for editing, so
-        :meth:`_write_automations` can replace the entry without flattening the
-        comments around the automations that share the file.
+        :meth:`apply` can replace the entry without flattening the comments
+        around the automations that share the file.
 
         A file carrying HA tags (``!secret``, ``!include``) is skipped rather
         than rewritten with those tags lost — see :mod:`yaml_writer`.
@@ -209,11 +209,38 @@ class AutomationOptimizer:
                     ),
                 }
 
-        backup_path = await self._create_backup(entity_id)
+        scan = await self.hass.async_add_executor_job(self._find_owning_file, entity_id)
+        if not scan.found:
+            return {
+                "success": False,
+                "error": (
+                    f"Automation '{entity_id}' not found in any file the "
+                    f"'automation:' key resolves to"
+                ),
+            }
 
         try:
-            await self.hass.async_add_executor_job(
-                self._write_automations, entity_id, docs
+            # 3. Home Assistant's verdict. The structural check above passes
+            #    anything with a trigger key; a split hands back several
+            #    automations, and HA disables each bad one on its own at the
+            #    next reload. All are checked, as HA's editor checks them, and a
+            #    single rejection writes none.
+            for number, doc in enumerate(docs, 1):
+                try:
+                    await async_check_entry(
+                        self.hass, "automation", scan.target.yaml, doc, doc.get("id")
+                    )
+                except RejectedByHomeAssistant as exc:
+                    label = doc.get("alias") or f"#{number}"
+                    raise RejectedByHomeAssistant(f"{label}: {exc}") from None
+
+            # 4. Replace the entry in its own file: every other automation
+            #    there keeps its comments and formatting; `write_back` takes the
+            #    backup the panel can restore.
+            del scan.document[scan.index]
+            scan.document.extend(docs)
+            backup_path = await self.hass.async_add_executor_job(
+                write_back, scan.target, self._config_dir
             )
             return {
                 "success":     True,
@@ -221,6 +248,9 @@ class AutomationOptimizer:
                 "backup_path": str(backup_path),
                 "count":       len(docs),
             }
+        except RejectedByHomeAssistant as e:
+            _LOGGER.info("AutomationOptimizer.apply on %s not applied: %s", entity_id, e)
+            return {"success": False, "error": str(e)}
         except Exception as e:
             _LOGGER.error("AutomationOptimizer.apply failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -372,46 +402,3 @@ class AutomationOptimizer:
             result["optimised_yaml"] = result["split_automations"]
 
         return result
-
-    def _write_automations(self, entity_id: str, new_docs: list[dict]) -> None:
-        """Replace one automation with new docs, in the file that holds it.
-
-        The entry is deleted from the round-trip document and the replacements
-        appended to it, so every other automation in the file keeps its
-        comments and its formatting. The backup was taken by the caller.
-        """
-        scan = self._find_owning_file(entity_id)
-        if not scan.found:
-            raise ValueError(
-                f"Automation '{entity_id}' not found in any file the "
-                f"'automation:' key resolves to"
-            )
-
-        del scan.document[scan.index]
-        scan.document.extend(new_docs)
-        write_back(scan.target)
-
-    async def _create_backup(self, entity_id: str | None = None) -> Path:
-        """Backup the file about to be written, before any write.
-
-        Through the shared :func:`yaml_writer.create_backup`, so the snapshot is
-        named like every other one HACA takes and the panel can restore it. It
-        used to be written as ``<stem>_optim_<ts>.yaml``, which the restore path
-        could not resolve back to a source file: the listing offered it and the
-        restore then refused it.
-        """
-        def _do() -> Path:
-            source: Path | None = None
-            if entity_id:
-                scan = self._find_owning_file(entity_id)
-                source = Path(scan.path) if scan.found else None
-            if source is None:
-                files = iter_domain_files(
-                    self._config_dir, "automation", "automations.yaml"
-                )
-                source = Path(files[0]) if files else None
-            if source is None:
-                raise FileNotFoundError("no automation YAML file to back up")
-            return Path(create_backup(self._config_dir, str(source)))
-
-        return await self.hass.async_add_executor_job(_do)

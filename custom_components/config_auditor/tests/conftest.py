@@ -122,8 +122,11 @@ class MockRegistryEntry:
         unique_id: str | None = None,
         config_entry_id: str | None = None,
         area_id: str | None = None,
+        registry_id: str | None = None,
     ):
         self.entity_id = entity_id
+        # The registry's own UUID: what a device trigger's `entity_id` holds.
+        self.id = registry_id or f"uuid-{entity_id}"
         self.labels: set = labels or set()
         self.disabled_by = disabled_by
         self.device_id = device_id
@@ -139,6 +142,10 @@ class _MockEntityItems(dict):
 
     def get_entries_for_device_id(self, device_id: str) -> list:
         return [e for e in self.values() if getattr(e, "device_id", None) == device_id]
+
+    def get_entry(self, entry_id: str):
+        """By registry UUID -- what er.async_resolve_entity_id looks up."""
+        return next((e for e in self.values() if getattr(e, "id", None) == entry_id), None)
 
 
 class MockEntityRegistry:
