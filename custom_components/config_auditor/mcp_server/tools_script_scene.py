@@ -72,7 +72,9 @@ async def _tool_ha_create_script(hass: HomeAssistant, params: dict) -> dict:
         )
         action = "updated" if script_id in target.document else "created"
         target.document[script_id] = script_def
-        await _safe_edit_and_reload(hass, target, "script")
+        await _safe_edit_and_reload(
+            hass, target, "script", entry=script_def, key=script_id
+        )
 
         return {
             "success": True,
@@ -182,7 +184,9 @@ async def _tool_ha_update_script(hass: HomeAssistant, params: dict) -> dict:
         current["variables"] = params["variables"]
 
     try:
-        await _safe_edit_and_reload(hass, scan.target, "script")
+        await _safe_edit_and_reload(
+            hass, scan.target, "script", entry=current, key=scan.key
+        )
     except Exception as exc:
         return {"error": f"Failed to write {scripts_path}: {exc}"}
 
@@ -324,7 +328,7 @@ async def _tool_ha_create_scene(hass: HomeAssistant, params: dict) -> dict:
             open_or_create, scenes_path, list
         )
         target.document.append(new_scene)
-        await _safe_edit_and_reload(hass, target, "scene")
+        await _safe_edit_and_reload(hass, target, "scene", entry=new_scene)
     except Exception as exc:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 
@@ -369,7 +373,7 @@ async def _tool_ha_update_scene(hass: HomeAssistant, params: dict) -> dict:
         scene["entities"] = params["entities"]
 
     try:
-        await _safe_edit_and_reload(hass, scan.target, "scene")
+        await _safe_edit_and_reload(hass, scan.target, "scene", entry=scene)
     except Exception as exc:
         return {"error": f"Failed to write {scenes_path}: {exc}"}
 

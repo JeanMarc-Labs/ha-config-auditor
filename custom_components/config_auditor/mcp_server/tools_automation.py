@@ -86,7 +86,9 @@ async def _tool_ha_create_automation(hass: HomeAssistant, params: dict) -> dict:
             open_or_create, str(auto_file), list
         )
         target.document.append(new_auto)
-        await _safe_edit_and_reload(hass, target, "automation")
+        await _safe_edit_and_reload(
+            hass, target, "automation", entry=new_auto, key=new_auto["id"]
+        )
 
         return {
             "success": True,
@@ -176,7 +178,9 @@ async def _tool_ha_update_automation(hass: HomeAssistant, params: dict) -> dict:
             auto["mode"] = params["mode"]
 
         # `auto` is the node inside the round-trip document, mutated in place.
-        await _safe_edit_and_reload(hass, scan.target, "automation")
+        await _safe_edit_and_reload(
+            hass, scan.target, "automation", entry=auto, key=auto.get("id")
+        )
 
         return {
             "success": True,
