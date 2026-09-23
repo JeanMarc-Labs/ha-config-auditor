@@ -7,6 +7,7 @@ tool module builds on. Nothing here answers a tool call.
 from __future__ import annotations
 
 import contextvars
+import io
 import json
 import logging
 from datetime import date, datetime, time, timedelta
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+import voluptuous as vol
 
 from ..const import DOMAIN
 from ..yaml_sources import (
@@ -152,18 +155,91 @@ def _atomic_write(path, content: str, encoding: str = "utf-8") -> None:
     atomic_write(str(path), content, encoding)
 
 
+class RejectedByHomeAssistant(Exception):
+    """Home Assistant would not load this entry, so it was not written."""
+
+
+def _as_home_assistant_reads(yaml: Any, entry: Any) -> Any:
+    """*entry* dumped the way it will be written, then read by HA's own loader."""
+    from homeassistant.util.yaml.loader import parse_yaml
+
+    buffer = io.StringIO()
+    yaml.dump(entry, buffer)
+    return parse_yaml(buffer.getvalue())
+
+
+async def _async_validation_error(
+    hass: "HomeAssistant", domain: str, yaml: Any, entry: Any, key: str | None
+) -> str | None:
+    """What Home Assistant's own editor says about *entry*, or None if it accepts it.
+
+    The editor runs these validators before it saves an automation, a script or
+    a scene, and the reload runs the same ones -- but where the editor refuses,
+    the reload keeps going: it disables the entry, logs, and succeeds. The entry
+    is checked as HA will read it back from the file, not as HACA holds it, so a
+    value the YAML round trip would turn into something else is caught too.
+
+    Only a validation error counts. A validator that cannot run -- an older
+    Home Assistant without it, or one that fails outright -- leaves the write
+    to the reload and its rollback, as before.
+    """
+    try:
+        config = await hass.async_add_executor_job(_as_home_assistant_reads, yaml, entry)
+        if domain == "automation":
+            from homeassistant.components.automation.config import (
+                async_validate_config_item,
+            )
+
+            await async_validate_config_item(hass, str(key or ""), config)
+        elif domain == "script":
+            from homeassistant.components.script.config import (
+                async_validate_config_item,
+            )
+
+            await async_validate_config_item(hass, str(key or ""), config)
+        elif domain == "scene":
+            from homeassistant.components.scene import PLATFORM_SCHEMA
+
+            PLATFORM_SCHEMA(config)
+    except (vol.Invalid, HomeAssistantError) as err:
+        return str(err)
+    except Exception as err:  # noqa: BLE001 -- see the docstring
+        _LOGGER.debug("Could not validate the %s before writing it: %s", domain, err)
+    return None
+
+
 async def _safe_edit_and_reload(
-    hass: "HomeAssistant", target: EditTarget, reload_domain: str
+    hass: "HomeAssistant",
+    target: EditTarget,
+    reload_domain: str,
+    *,
+    entry: Any = None,
+    key: str | None = None,
 ) -> str:
-    """Round-trip write + reload, rolling the file back if the reload fails.
+    """Validate, round-trip write, reload -- rolling the file back if the reload fails.
 
     For the paths that edit a file the user maintains: the tree goes back through
     ``yaml_writer.write_back``, so the comments and formatting around the entry
     survive, and the snapshot it takes in ``.haca_backups`` is what the rollback
     restores — the same snapshot the panel offers to restore by hand.
 
+    The rollback alone cannot catch an invalid entry: the reload succeeds and
+    Home Assistant disables it. So *entry* -- the automation, script or scene
+    being created or updated, with its *key* (automation id, script id) -- is
+    first checked the way Home Assistant's own editor checks it, and one it
+    would reject raises :class:`RejectedByHomeAssistant` before anything is
+    written. A removal passes no entry.
+
     Returns the backup path.
     """
+    if entry is not None:
+        error = await _async_validation_error(hass, reload_domain, target.yaml, entry, key)
+        if error is not None:
+            raise RejectedByHomeAssistant(
+                f"Home Assistant rejects this {reload_domain}, so nothing was "
+                f"written: {error}"
+            )
+
     backup = await hass.async_add_executor_job(
         write_back, target, hass.config.config_dir
     )
