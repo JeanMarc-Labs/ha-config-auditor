@@ -198,7 +198,7 @@ class TestApplyFieldFix:
 
     def test_roundtrip_write_preserves_comments(self):
         """The field fix must not flatten the user's file (ruamel round-trip)."""
-        assert "yaml.preserve_quotes = True" in YAML_WRITER_CONTENT, \
+        assert "preserve_quotes = True" in YAML_WRITER_CONTENT, \
             "write path must use ruamel round-trip, not yaml.safe_load/dump"
         assert "_yaml.dump(data" not in CONTENT, \
             "apply_field_fix must no longer re-dump the whole file with PyYAML"

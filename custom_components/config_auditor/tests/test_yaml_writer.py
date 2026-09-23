@@ -655,3 +655,172 @@ class TestMcpWritesReadBackAsSent:
         assert result.get("success") is True, result
         night = next(s for s in _ha_reads(tmp_path / "scenes.yaml") if s["name"] == "Night")
         assert night["entities"] == entities
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# A file is written back in its own layout
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The indent used to be one setting for every file: a file from Home
+# Assistant's editor (lists flush with their key) came back in the docs style,
+# a root list came back indented by two, and a long value was re-wrapped -- the
+# diff of a one-line edit was the whole file.
+
+def _ha_dump(data) -> str:
+    """What Home Assistant's own editor writes."""
+    return pytest.importorskip("homeassistant.util.yaml").dump(data)
+
+
+LONG_TEXT = (
+    "Turns the hall light on when the door opens after sunset, unless somebody "
+    "already switched it on by hand in the last ten minutes"
+)
+
+
+def _ha_editor_files() -> dict:
+    automation = {
+        "id": "1700000000000",
+        "alias": "Entrée",
+        "description": LONG_TEXT,
+        "triggers": [{"trigger": "state", "entity_id": ["binary_sensor.door"], "to": "on"}],
+        "conditions": [{"condition": "template", "value_template": "{{ " + LONG_TEXT + " }}"}],
+        "actions": [
+            {"choose": [{
+                "conditions": [{"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"}],
+                "sequence": [{"action": "notify.phone", "data": {"message": "Line one\nLine two\n"}}],
+            }]},
+        ],
+        "mode": "single",
+    }
+    return {
+        "automations.yaml": _ha_dump([automation, {**automation, "id": "1700000000001", "alias": "Hall"}]),
+        "scripts.yaml": _ha_dump({"morning": {"alias": "Morning", "sequence": [
+            {"action": "light.turn_on", "target": {"entity_id": ["light.a", "light.b"]}},
+        ]}}),
+        # No nested list to measure: the default layout, so the root list is
+        # shifted while written. A space at column 80 tells whether the wrap
+        # width was widened by as much.
+        "scenes.yaml": _ha_dump([{"id": "1", "name": LONG_TEXT.replace("somebody", "someone"), "entities": {
+            "light.a": {"state": "on", "brightness": 120},
+        }}]),
+    }
+
+
+DOCS_STYLE = {
+    "automations.yaml": """\
+# Hand-written, docs style
+- id: kitchen
+  alias: Kitchen light   # aligned comment
+  # comment inside the entry
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.motion   # the PIR
+      to: 'on'
+  actions:
+    - action: notify.phone
+      data:
+        message: |
+          Two lines
+            and an indented one
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: sun.sun
+              state: below_horizon
+          sequence: []
+
+# Second one
+- id: hall
+  alias: Hall
+  triggers: []
+  actions: []
+""",
+    "scripts.yaml": """\
+morning:
+  alias: Morning
+  sequence:
+    - action: light.turn_on
+      target:
+        entity_id:
+          - light.a
+          - light.b
+""",
+    "configuration.yaml": """\
+homeassistant:
+  name: Home
+recorder:
+  purge_keep_days: 5
+  exclude:
+    entities:
+      - sensor.a   # noisy
+      - sensor.b
+""",
+}
+
+
+def _rewrite(path, edit=None) -> str:
+    target = yw.read_for_edit(str(path))
+    if edit:
+        edit(target.document)
+    yw.write_back(target)
+    return path.read_text(encoding="utf-8")
+
+
+def _changed_lines(before: str, after: str) -> list[str]:
+    import difflib
+
+    return [
+        line for line in difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
+        if line[:1] in "+-" and not line.startswith(("+++", "---"))
+    ]
+
+
+class TestAFileKeepsItsLayout:
+    @pytest.mark.parametrize("name", ["automations.yaml", "scripts.yaml", "scenes.yaml"])
+    def test_a_file_from_the_ha_editor_comes_back_byte_for_byte(self, tmp_path, name):
+        text = _ha_editor_files()[name]
+        path = tmp_path / name
+        path.write_text(text, encoding="utf-8")
+
+        assert _rewrite(path) == text
+
+    @pytest.mark.parametrize("name", list(DOCS_STYLE))
+    def test_a_hand_written_file_comes_back_byte_for_byte(self, tmp_path, name):
+        path = tmp_path / name
+        path.write_text(DOCS_STYLE[name], encoding="utf-8")
+
+        assert _rewrite(path) == DOCS_STYLE[name]
+
+    @pytest.mark.parametrize("files, nested_list", [
+        (_ha_editor_files, "  triggers:\n  - trigger: state\n"),
+        (lambda: DOCS_STYLE, "  triggers:\n    - trigger: state\n"),
+    ])
+    def test_an_added_entry_follows_the_file_and_nothing_else_moves(self, tmp_path, files, nested_list):
+        text = files()["automations.yaml"]
+        path = tmp_path / "automations.yaml"
+        path.write_text(text, encoding="utf-8")
+
+        written = _rewrite(path, lambda doc: doc.append(
+            {"id": "new", "alias": "New", "triggers": [{"trigger": "state", "entity_id": "light.x"}]}
+        ))
+
+        changed = _changed_lines(text, written)
+        assert all(line.startswith("+") for line in changed), changed
+        assert "- id: new\n  alias: New\n" + nested_list in written
+
+    def test_long_lines_written_by_hand_are_not_wrapped(self, tmp_path):
+        text = f"- id: a\n  description: {LONG_TEXT}\n  triggers:\n    - trigger: state\n"
+        path = tmp_path / "automations.yaml"
+        path.write_text(text, encoding="utf-8")
+
+        assert _rewrite(path, lambda doc: doc[0].update(alias="A")).endswith(
+            f"  description: {LONG_TEXT}\n  triggers:\n    - trigger: state\n  alias: A\n"
+        )
+
+    def test_a_new_file_starts_its_list_at_column_zero(self, tmp_path):
+        path = tmp_path / "automations.yaml"
+        target = yw.open_or_create(str(path), list)
+        target.document.append({"id": "a", "triggers": [{"trigger": "state"}]})
+        yw.write_back(target)
+
+        assert path.read_text(encoding="utf-8") == "- id: a\n  triggers:\n    - trigger: state\n"
