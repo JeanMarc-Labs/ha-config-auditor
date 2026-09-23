@@ -1,15 +1,18 @@
-"""The MCP write tools check an entry the way Home Assistant's editor does.
+"""Every write of an automation, script or scene is checked the way HA's editor checks it.
 
 `_safe_edit_and_reload` rolls a file back when the reload fails, but a reload
 does not fail on one invalid automation: Home Assistant disables it, logs, and
-succeeds. The tool then reported success on an automation that was offline. An
-entry is now validated first -- as Home Assistant will read it back from the
+succeeds. The MCP tool then reported success on an automation that was offline.
+An entry is now validated first -- as Home Assistant will read it back from the
 file -- and one it would reject is not written.
 
 The panel's zombie-entity fix writes and reloads too, and goes through the same
 `yaml_writer.async_write_and_reload`: it had neither the check nor the rollback.
+The device_id, mode, template and description fixes leave the reload to the
+user, so HA disabled a broken result only then; they go through
+`yaml_writer.async_write_checked`.
 
-    pytest custom_components/config_auditor/tests/test_mcp_write_validation.py -v
+    pytest custom_components/config_auditor/tests/test_write_validation.py -v
 """
 from __future__ import annotations
 
@@ -345,3 +348,117 @@ class TestZombieFix:
         assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == EVIER
         assert not _reloaded(hass)
         assert _backups(tmp_path) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The panel's fixes that leave the reload to the user are checked too
+# ═══════════════════════════════════════════════════════════════════════════
+
+# One automation every fix has something to do on: a device action (with a
+# real entity_id, so no registry is needed), an is_state() template, no
+# description, mode single.
+CLIMA = (
+    "# mine\n"
+    "- id: clima\n"
+    "  alias: Clima\n"
+    "  triggers:\n"
+    "    - trigger: state\n"
+    "      entity_id: binary_sensor.door\n"
+    "  conditions:\n"
+    "    - condition: template\n"
+    "      value_template: \"{{ is_state('input_boolean.away', 'on') }}\"\n"
+    "  actions:\n"
+    "    - device_id: abc123\n"
+    "      domain: light\n"
+    "      type: turn_on\n"
+    "      entity_id: light.kitchen\n"
+)
+CLIMA_FILES = {
+    "configuration.yaml": "automation: !include automations.yaml\n",
+    "automations.yaml": CLIMA,
+}
+
+FIXES = {
+    "device_id": lambda ra: ra.apply_device_id_fix("clima"),
+    "mode": lambda ra: ra.apply_mode_fix("clima", "restart"),
+    "template": lambda ra: ra.apply_template_fix("clima"),
+    "description": lambda ra: ra.apply_description_fix("clima", "Keeps it warm"),
+}
+
+
+class TestFixesWithoutReload:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fix", list(FIXES))
+    async def test_a_rejected_fix_writes_nothing(self, tmp_path, fix):
+        hass = _hass(tmp_path, CLIMA_FILES)
+        with _rejects("expected str at 'to'"):
+            result = await FIXES[fix](_assistant(hass))
+
+        assert result["success"] is False, result
+        assert "Home Assistant rejects this automation" in result["error"]
+        assert "expected str at 'to'" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == CLIMA
+        assert _backups(tmp_path) == []
+        assert not _reloaded(hass)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fix", list(FIXES))
+    async def test_an_accepted_fix_is_written_under_its_id(self, tmp_path, fix):
+        hass = _hass(tmp_path, CLIMA_FILES)
+        with patch(
+            "homeassistant.components.automation.config.async_validate_config_item",
+            AsyncMock(return_value=None),
+        ) as validator:
+            result = await FIXES[fix](_assistant(hass))
+
+        assert result["success"] is True, result
+        validator.assert_awaited_once()
+        assert validator.await_args.args[1] == "clima"
+        text = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert text != CLIMA and text.startswith("# mine\n")
+        assert Path(result["backup_path"]).read_text(encoding="utf-8") == CLIMA
+
+    @pytest.mark.asyncio
+    async def test_a_device_condition_converted_without_its_state_is_refused(self, tmp_path):
+        """HA's real validator. `is_open` has no state mapping, so the conversion
+        wrote a state condition with no `state:` -- disabled at the next reload."""
+        porte = (
+            "- id: porte\n"
+            "  triggers:\n"
+            "    - trigger: state\n"
+            "      entity_id: binary_sensor.door\n"
+            "  conditions:\n"
+            "    - condition: device\n"
+            "      device_id: abc123\n"
+            "      domain: binary_sensor\n"
+            "      type: is_open\n"
+            "      entity_id: binary_sensor.door\n"
+            "  actions:\n"
+            "    - action: light.turn_on\n"
+        )
+        (tmp_path / "configuration.yaml").write_text(
+            "automation: !include automations.yaml\n", encoding="utf-8"
+        )
+        (tmp_path / "automations.yaml").write_text(porte, encoding="utf-8")
+        async with _real_hass(tmp_path) as hass:
+            result = await _assistant(hass).apply_device_id_fix("porte")
+
+        assert result["success"] is False, result
+        assert "Home Assistant rejects this automation" in result["error"]
+        assert "conditions[0].state" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == porte
+        assert _backups(tmp_path) == []
+
+    @pytest.mark.asyncio
+    async def test_a_script_description_is_checked_as_a_script(self, tmp_path):
+        """HA's real validator: checked as an automation, a script has no triggers."""
+        scripts = "morning:\n  alias: Morning\n  sequence:\n    - delay: '00:05:00'\n"
+        (tmp_path / "configuration.yaml").write_text(
+            "script: !include scripts.yaml\n", encoding="utf-8"
+        )
+        (tmp_path / "scripts.yaml").write_text(scripts, encoding="utf-8")
+        async with _real_hass(tmp_path) as hass:
+            result = await _assistant(hass).apply_description_fix("script.morning", "Wake up")
+
+        assert result["success"] is True, result
+        assert "description: Wake up" in (tmp_path / "scripts.yaml").read_text(encoding="utf-8")

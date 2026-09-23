@@ -26,10 +26,11 @@ Everything that edits an existing config file now goes through this module:
   to -- a split config keeps its entries in several files -- and hand back the
   matched node *still attached to its document*, so the caller mutates it and
   calls :func:`write_back` on the one file that holds it;
-* :func:`async_write_and_reload` checks an automation, script or scene the
-  way Home Assistant's own editor does before writing it, then reloads and
-  puts the file back if the reload fails -- a reload that disables an invalid
-  entry still succeeds, so the check has to come first.
+* :func:`async_write_checked` checks an automation, script or scene the way
+  Home Assistant's own editor does before writing it -- a reload that
+  disables an invalid entry still succeeds, so the check has to come first --
+  and :func:`async_write_and_reload` adds the reload, putting the file back
+  if it fails.
 
 :mod:`yaml_sources` stays the authority on *where* a domain's files are, and
 keeps the plain-PyYAML readers the read-only audit paths use. This module is
@@ -645,6 +646,43 @@ async def async_validation_error(
     return None
 
 
+async def async_write_checked(
+    hass: Any,
+    target: EditTarget,
+    domain: str,
+    *,
+    entry: Any = None,
+    key: str | None = None,
+) -> str | None:
+    """Round-trip write, once Home Assistant's own editor would accept *entry*.
+
+    *entry* -- the automation, script or scene being created or updated, with
+    its *key* (automation id, script id) -- is checked the way the editor
+    checks it before it saves, and one it would reject raises
+    :class:`RejectedByHomeAssistant` with nothing written. A removal passes no
+    entry: removing cannot make an entry invalid, and must work on a broken one.
+
+    The tree goes back through :func:`write_back`, so the comments and
+    formatting around the entry survive, and a snapshot lands in
+    ``.haca_backups`` first. Called directly by the panel's fixes that leave
+    the reload to the user: Home Assistant would disable a rejected entry at
+    that reload, long after the fix reported success.
+
+    Returns the backup path, or None when this call created the file.
+    """
+    if entry is not None:
+        error = await async_validation_error(hass, domain, target.yaml, entry, key)
+        if error is not None:
+            raise RejectedByHomeAssistant(
+                f"Home Assistant rejects this {domain}, so nothing was "
+                f"written: {error}"
+            )
+
+    return await hass.async_add_executor_job(
+        write_back, target, hass.config.config_dir
+    )
+
+
 async def async_write_and_reload(
     hass: Any,
     target: EditTarget,
@@ -657,32 +695,18 @@ async def async_write_and_reload(
     """Validate, round-trip write, reload -- rolling the file back if the reload fails.
 
     For every path that edits a file the user maintains and reloads it: the
-    MCP write tools and the panel's zombie-entity fix. The tree goes back
-    through :func:`write_back`, so the comments and formatting around the entry
-    survive, and the snapshot it takes in ``.haca_backups`` is what the
-    rollback restores — the same snapshot the panel offers to restore by hand.
+    MCP write tools and the panel's zombie-entity fix. The write is
+    :func:`async_write_checked`, and the snapshot it takes is what the rollback
+    restores — the same snapshot the panel offers to restore by hand.
 
     The rollback alone cannot catch an invalid entry: the reload succeeds and
-    Home Assistant disables it. So *entry* -- the automation, script or scene
-    being created or updated, with its *key* (automation id, script id) -- is
-    first checked the way Home Assistant's own editor checks it, and one it
-    would reject raises :class:`RejectedByHomeAssistant` before anything is
-    written. A removal passes no entry. Both reloads run under *context*, so
-    Home Assistant's logbook names who asked.
+    Home Assistant disables it. That is what the check before the write is for.
+    Both reloads run under *context*, so Home Assistant's logbook names who
+    asked.
 
     Returns the backup path, or None when this call created the file.
     """
-    if entry is not None:
-        error = await async_validation_error(hass, domain, target.yaml, entry, key)
-        if error is not None:
-            raise RejectedByHomeAssistant(
-                f"Home Assistant rejects this {domain}, so nothing was "
-                f"written: {error}"
-            )
-
-    backup = await hass.async_add_executor_job(
-        write_back, target, hass.config.config_dir
-    )
+    backup = await async_write_checked(hass, target, domain, entry=entry, key=key)
     try:
         await hass.services.async_call(
             domain, "reload", blocking=True, context=context
