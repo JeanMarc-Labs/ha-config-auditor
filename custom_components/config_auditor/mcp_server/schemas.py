@@ -238,7 +238,7 @@ HA_CONTROL_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_create_automation",
-        "description": "Create a new HA automation. ALWAYS call ha_backup_create first. Config must include: alias, triggers, actions. Call ha_reload_core after.",
+        "description": "Create a new HA automation. Config must include: alias, triggers, actions. Call ha_reload_core after. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
         "inputSchema": {
             "type": "object",
             "required": ["alias"],
@@ -278,7 +278,7 @@ HA_CONTROL_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_update_automation",
-        "description": "Update an existing automation. ALWAYS call haca_get_automation first to read current config, then ha_backup_create before modifying.",
+        "description": "Update an existing automation. ALWAYS call haca_get_automation first to read current config. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
         "inputSchema": {
             "type": "object",
             "required": ["entity_id"],
@@ -368,7 +368,7 @@ HA_CONTROL_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_create_script",
-        "description": "Create or update a script, in whichever file the config `script:` key resolves to. ALWAYS call ha_backup_create first. Provide: alias, sequence. Call ha_reload_core after.",
+        "description": "Create or update a script, in whichever file the config `script:` key resolves to. Provide: alias, sequence. Call ha_reload_core after. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
         "inputSchema": {
             "type": "object",
             "required": ["script_id", "alias", "sequence"],
@@ -399,7 +399,7 @@ HA_CONTROL_TOOLS: list[dict[str, Any]] = [
 HA_EXTENDED_TOOLS: list[dict[str, Any]] = [
     {
         "name": "ha_backup_create",
-        "description": "Start a backup before any modification. ALWAYS call this before create/update/remove operations. Returns as soon as the backup is STARTED (started: true, completed: false) — never report the backup as finished, tell the user to check Settings → System → Backups.",
+        "description": "Start a full Home Assistant backup: configuration and database, plus add-ons and folders on a Supervisor install. Use it when the user asks for one, or before a large change across many files — not before each edit: the automation, script, scene, blueprint and config-file tools already copy the file they change into /config/.haca_backups/ and return that copy's path as 'backup'. Returns as soon as the backup is STARTED (started: true, completed: false) — never report the backup as finished, tell the user to check Settings → System → Backups.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -421,8 +421,9 @@ HA_EXTENDED_TOOLS: list[dict[str, Any]] = [
         "description": (
             "Permanently delete an automation from the file that holds it. "
             "The automation is reloaded immediately after deletion. "
-            "IMPORTANT: call ha_backup_create first if this is a destructive operation. "
-            "Use haca_get_automation to inspect the automation before deleting."
+            "Use haca_get_automation to inspect the automation before deleting. "
+            "The file is copied into /config/.haca_backups/ before it changes; "
+            "the copy's path comes back as 'backup'."
         ),
         "inputSchema": {
             "type": "object",
@@ -458,7 +459,7 @@ HA_EXTENDED_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_rename_entity",
-        "description": "Change an entity_id. ALWAYS call ha_backup_create first. WARNING: may break automations/dashboards referencing the old ID.",
+        "description": "Change an entity_id. WARNING: may break automations/dashboards referencing the old ID.",
         "inputSchema": {
             "type": "object",
             "required": ["entity_id"],
@@ -495,7 +496,8 @@ HA_EXTENDED_TOOLS: list[dict[str, Any]] = [
             "Reads the actual automation YAML, extracts entity references as blueprint inputs, "
             "then writes a fully valid blueprint file and reloads blueprints. "
             "IMPORTANT: This tool does NOT modify or delete the original automation. "
-            "A backup is created automatically — do NOT call ha_backup_create before this tool. "
+            "A blueprint of the same name is overwritten, after a copy into /config/.haca_backups/ "
+            "whose path comes back as 'backup'. "
             "Call this tool directly with the automation entity_id."
         ),
         "inputSchema": {
@@ -733,7 +735,7 @@ HA_MEDIUM_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_config_remove_helper",
-        "description": "Delete a helper. ALWAYS call ha_backup_create first. Check if referenced in automations before deleting.",
+        "description": "Delete a helper. Irreversible and not covered by the file copies in .haca_backups: ask the user to confirm, and offer a full backup (ha_backup_create) before deleting. Check if referenced in automations before deleting.",
         "inputSchema": {
             "type": "object",
             "required": ["entity_id"],
@@ -855,29 +857,29 @@ NEW_TOOLS_V151: list[dict[str, Any]] = [
     {"name": "ha_get_script", "description": "Read a script's full YAML config. Use BEFORE ha_update_script. Accepts entity_id or alias.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string", "description": "script entity_id or alias"}}}},
-    {"name": "ha_update_script", "description": "Update a script, writing back to the file that holds it. ALWAYS call ha_get_script first, then ha_backup_create before modifying.",
+    {"name": "ha_update_script", "description": "Update a script, writing back to the file that holds it. ALWAYS call ha_get_script first. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string"}, "alias": {"type": "string"},
                      "description": {"type": "string"}, "mode": {"type": "string"},
                      "sequence": {"type": "array"}, "variables": {"type": "object"},
                      "icon": {"type": "string"}}}},
-    {"name": "ha_remove_script", "description": "Delete a script from the file that holds it. ALWAYS call ha_backup_create first. Ask user confirmation.",
+    {"name": "ha_remove_script", "description": "Delete a script from the file that holds it. Ask user confirmation. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string"}}}},
     # ── Scenes ─────────────────────────────────────────────────────────────
     {"name": "ha_get_scene", "description": "Read a scene's YAML and entity states. Use BEFORE ha_update_scene.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string", "description": "scene entity_id or name, e.g. 'scene.soiree'"}}}},
-    {"name": "ha_create_scene", "description": "Create a new scene. ALWAYS call ha_backup_create first. Provide: name, entities dict. Use ha_get_entities to find entity_ids.",
+    {"name": "ha_create_scene", "description": "Create a new scene. Provide: name, entities dict. Use ha_get_entities to find entity_ids. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["name", "entities"],
       "properties": {"name": {"type": "string"}, "icon": {"type": "string"},
                      "entities": {"type": "object",
                        "description": "e.g. {'light.salon': {'state': 'on', 'brightness': 200}}"}}}},
-    {"name": "ha_update_scene", "description": "Update a scene. ALWAYS call ha_get_scene first, then ha_backup_create before modifying.",
+    {"name": "ha_update_scene", "description": "Update a scene. ALWAYS call ha_get_scene first. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string"}, "name": {"type": "string"},
                      "icon": {"type": "string"}, "entities": {"type": "object"}}}},
-    {"name": "ha_remove_scene", "description": "Delete a scene. ALWAYS call ha_backup_create first. Ask user confirmation.",
+    {"name": "ha_remove_scene", "description": "Delete a scene. Ask user confirmation. The file is copied into /config/.haca_backups/ before it changes; the copy's path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["entity_id"],
       "properties": {"entity_id": {"type": "string"}}}},
     # ── Blueprints ─────────────────────────────────────────────────────────
@@ -894,18 +896,20 @@ NEW_TOOLS_V151: list[dict[str, Any]] = [
      "description": (
          "Replace an existing blueprint file with new YAML, written verbatim. "
          "Read the current text with ha_get_blueprint(path), edit it, send it back as 'yaml'. "
-         "Field-level patching is not available: HA's !input tags do not survive a YAML round-trip."
+         "Field-level patching is not available: HA's !input tags do not survive a YAML round-trip. "
+         "The file is copied into /config/.haca_backups/ before it changes; "
+         "the copy's path comes back as 'backup'."
      ),
      "inputSchema": {"type": "object", "required": ["path", "yaml"],
       "properties": {"path": {"type": "string"},
                      "yaml": {"type": "string",
                               "description": "Full blueprint YAML, including the top-level 'blueprint:' key"}}}},
     {"name": "ha_remove_blueprint",
-     "description": "Delete a blueprint YAML file from /config/blueprints/. Irreversible — call ha_backup_create first.",
+     "description": "Delete a blueprint YAML file from /config/blueprints/. Ask user confirmation. The file is copied into /config/.haca_backups/ first; the copy's path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["path"],
       "properties": {"path": {"type": "string"}}}},
     {"name": "ha_import_blueprint",
-     "description": "Import a blueprint from a URL (GitHub, HA community).",
+     "description": "Import a blueprint from a URL (GitHub, HA community). Re-importing one of the same name overwrites it, after a copy into /config/.haca_backups/ whose path comes back as 'backup'.",
      "inputSchema": {"type": "object", "required": ["url"],
       "properties": {"url": {"type": "string",
         "description": "Direct raw YAML URL, e.g. 'https://raw.githubusercontent.com/.../blueprint.yaml'"}}}},
@@ -997,7 +1001,9 @@ NEW_TOOLS_V151: list[dict[str, Any]] = [
          "Write to a HA config file. mode='replace' (full overwrite), "
          "'append' (add to end), or 'patch_line' (replace first occurrence of old_text). "
          "Allowed files: automations.yaml, scripts.yaml, scenes.yaml, secrets.yaml, "
-         "groups.yaml, customize.yaml, configuration.yaml, ui-lovelace.yaml."
+         "groups.yaml, customize.yaml, configuration.yaml, ui-lovelace.yaml. "
+         "The file is copied into /config/.haca_backups/ before it changes; "
+         "the copy's path comes back as 'backup'."
      ),
      "inputSchema": {"type": "object", "required": ["filename", "content"],
       "properties": {

@@ -1776,7 +1776,7 @@
     "no_issues": "Inga problem hittades.",
     "context_unavailable": "(kontext inte tillgänglig)",
     "rules_title": "Viktiga regler:",
-    "rule_backup": "Anropa ha_backup_create före varje ändring (skapa, redigera, ta bort).",
+    "rule_backup": "Verktyg som ändrar en fil kopierar den först till /config/.haca_backups/ och returnerar sökvägen till kopian som 'backup': berätta det för användaren. Anropa ha_backup_create (fullständig Home Assistant-säkerhetskopia) bara när användaren ber om det, eller före en ändring över många filer eller en borttagning som ingen filkopia täcker (hjälpare, entitet).",
     "rule_explain": "Förklara vad du tänker göra INNAN du gör det.",
     "rule_confirm": "Be användaren bekräfta vid destruktiva åtgärder.",
     "rule_use_tools": "Använd de tillgängliga verktygen för att läsa, analysera och ändra HA-konfigurationen.",

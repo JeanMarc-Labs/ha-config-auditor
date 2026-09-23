@@ -69,21 +69,6 @@ def _read(tmp_path, rel: str) -> str:
     return (tmp_path / rel).read_text(encoding="utf-8")
 
 
-@pytest.fixture(autouse=True)
-def _no_backup(monkeypatch):
-    """The tools snapshot the config before destructive ops; not under test here.
-
-    _auto_backup lives in tools_system but is imported by name into each tool
-    module, so the stub has to go on every module holding a reference —
-    patching tools_system alone would leave the others on the real one.
-    """
-    async def _noop(hass, reason):
-        return None
-
-    for module in (tools_automation, tools_blueprint, tools_script_scene):
-        monkeypatch.setattr(module, "_auto_backup", _noop)
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Automations
 # ═══════════════════════════════════════════════════════════════════════════

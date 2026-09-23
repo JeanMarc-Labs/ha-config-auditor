@@ -242,7 +242,7 @@ class MockHass:
         return func(*args)
 
     def async_create_task(self, coro):
-        """No-op in tests — swallows background tasks like _auto_backup."""
+        """No-op in tests — swallows background tasks."""
         import asyncio
         try:
             coro.close()

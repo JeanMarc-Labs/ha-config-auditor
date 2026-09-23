@@ -4,7 +4,6 @@ Guards against:
   - HacaLLMAPI not registered / unregistered correctly
   - HacaTool.async_call routing to TOOL_HANDLERS
   - JSON Schema → voluptuous conversion
-  - _auto_backup delegates to _tool_ha_backup_create (no duplication)
   - _safe_edit_and_reload exists, and the shared write it delegates to rolls
     the file back on a failed reload
 """
@@ -159,22 +158,10 @@ class TestHacaToolRouting:
             )
 
 
-# ── _auto_backup delegates to _tool_ha_backup_create ─────────────────────────
+# ── _safe_edit_and_reload ────────────────────────────────────────────────────
 
-class TestAutoBackupDelegation:
-    """_auto_backup must delegate to _tool_ha_backup_create (no duplication)."""
-
-    def test_auto_backup_calls_tool(self):
-        mcp_src = mcp_package_source()
-        # Find _auto_backup function body
-        start = mcp_src.find("async def _auto_backup(")
-        end   = mcp_src.find("\nasync def ", start + 1)
-        fn_body = mcp_src[start:end]
-        assert "_tool_ha_backup_create" in fn_body, \
-            "_auto_backup must delegate to _tool_ha_backup_create"
-        # Must NOT contain DATA_MANAGER (that would be duplication)
-        assert "DATA_MANAGER" not in fn_body, \
-            "_auto_backup must not duplicate BackupManager logic"
+class TestSafeEditAndReload:
+    """The MCP write path goes through the shared validate/write/reload."""
 
     def test_safe_edit_and_reload_exists(self):
         mcp_src = mcp_package_source()

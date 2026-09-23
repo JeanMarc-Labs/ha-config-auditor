@@ -243,41 +243,15 @@ class TestApplyFieldFix:
             "apply_field_fix must match an automation by its numeric id first"
 
 
-# ── MCP tools: backup before destructive ops ─────────────────────────────────
+# ── MCP tools: atomic writes ─────────────────────────────────────────────────
+# The snapshot each write takes first is exercised in test_mcp_backups.py.
 
-class TestAutoBackup:
-    """Destructive MCP tools must trigger automatic backup."""
-
-    DESTRUCTIVE_TOOLS = [
-        "_tool_ha_remove_automation",
-        "_tool_ha_update_automation",
-        "_tool_ha_create_automation",
-        "_tool_ha_remove_script",
-        "_tool_ha_update_script",
-        "_tool_ha_remove_scene",
-        "_tool_ha_update_scene",
-    ]
-
-    def test_auto_backup_helper_exists(self):
-        assert "async def _auto_backup(" in MCP_CONTENT, \
-            "_auto_backup helper function missing from mcp_server.py"
+class TestMcpAtomicWrites:
+    """MCP tools write through the atomic helper."""
 
     def test_atomic_write_helper_exists(self):
         assert "def _atomic_write(" in MCP_CONTENT, \
             "_atomic_write helper function missing from mcp_server.py"
-
-    def test_destructive_tools_call_auto_backup(self):
-        missing = []
-        for tool in self.DESTRUCTIVE_TOOLS:
-            fn_start = MCP_CONTENT.find(f"async def {tool}(")
-            if fn_start == -1:
-                missing.append(f"{tool} (not found)")
-                continue
-            # Check within next 3000 chars
-            fn_body = MCP_CONTENT[fn_start:fn_start + 3000]
-            if "_auto_backup" not in fn_body:
-                missing.append(tool)
-        assert not missing, f"Missing _auto_backup call in: {missing}"
 
     def test_no_unsafe_write_text(self):
         """No direct write_text() on YAML files — must use _atomic_write."""
