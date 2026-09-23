@@ -16,6 +16,8 @@ from .const import BACKUP_DIR
 from .yaml_sources import iter_domain_files
 from .yaml_writer import (
     EditScan,
+    RejectedByHomeAssistant,
+    async_write_and_reload,
     create_backup,
     list_entries,
     open_domain_for_edit,
@@ -1130,6 +1132,11 @@ class RefactoringAssistant:
             The non-existent entity to remove/replace (e.g. "light.evier").
         new_entity_id:
             Replacement entity. Empty string = remove the reference.
+
+        The edited automation is checked the way Home Assistant's editor checks
+        it before anything is written: removing the only entity of a state
+        trigger leaves a trigger HA disables on reload, and the reload itself
+        succeeds. A reload that fails puts the file back.
         """
         try:
             scan = await self._async_locate_automation(automation_id)
@@ -1137,21 +1144,16 @@ class RefactoringAssistant:
                 return {"success": False, "error": f"Automation not found: {automation_id}"}
             config = scan.entry
 
-            backup_path = await self._create_backup(Path(scan.path))
-            _LOGGER.info("Backup created before zombie fix: %s", backup_path)
-
             changed = self._replace_entity_in_config(config, old_entity_id, new_entity_id)
             if not changed:
                 return {"success": False, "error": f"{old_entity_id} not found in automation config"}
 
             # The entry was mutated in place inside the document of the file
             # that holds it — no second lookup, no risk of matching a namesake.
-            await self.hass.async_add_executor_job(write_back, scan.target)
-
-            # Reload automations so the change takes effect in HA
-            await self.hass.services.async_call(
-                "automation", "reload", blocking=True
+            backup_path = await async_write_and_reload(
+                self.hass, scan.target, "automation", entry=config, key=config.get("id")
             )
+            _LOGGER.info("Backup created before zombie fix: %s", backup_path)
 
             action = f"replaced with {new_entity_id}" if new_entity_id else "removed"
             return {
@@ -1160,6 +1162,10 @@ class RefactoringAssistant:
                 "backup_path": str(backup_path),
             }
 
+        except RejectedByHomeAssistant as exc:
+            # Nothing was written: Home Assistant's own verdict, not a fault here.
+            _LOGGER.info("Zombie fix on %s not applied: %s", automation_id, exc)
+            return {"success": False, "error": str(exc)}
         except Exception as exc:
             _LOGGER.error("apply_zombie_entity_fix error: %s", exc)
             return {"success": False, "error": str(exc)}

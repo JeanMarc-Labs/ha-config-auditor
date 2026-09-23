@@ -5,7 +5,8 @@ Guards against:
   - HacaTool.async_call routing to TOOL_HANDLERS
   - JSON Schema → voluptuous conversion
   - _auto_backup delegates to _tool_ha_backup_create (no duplication)
-  - _safe_edit_and_reload exists and rolls the file back on a failed reload
+  - _safe_edit_and_reload exists, and the shared write it delegates to rolls
+    the file back on a failed reload
 """
 from __future__ import annotations
 
@@ -180,30 +181,41 @@ class TestAutoBackupDelegation:
         assert "async def _safe_edit_and_reload(" in mcp_src, \
             "_safe_edit_and_reload helper not found in the mcp_server package"
 
-    def test_safe_edit_and_reload_has_rollback(self):
+    def test_safe_edit_and_reload_goes_through_the_shared_write(self):
+        """The MCP tools and the panel's zombie fix share one validate/write/reload."""
+        mcp_src = mcp_package_source()
+        start = mcp_src.find("async def _safe_edit_and_reload(")
+        end   = mcp_src.find("\nasync def ", start + 1)
+        code = mcp_src[start:end].split('"""', 2)[-1]
+        assert "async_write_and_reload(" in code, \
+            "_safe_edit_and_reload must delegate to yaml_writer.async_write_and_reload"
+
+    def test_write_and_reload_has_rollback(self):
         """A failed reload must put the file back, not leave HA on a bad config.
 
         The rollback source changed with the 1.8.0 YAML unification: it used to
         be the original text held in memory, it is now the .haca_backups
-        snapshot taken just before the write.
+        snapshot taken just before the write. It moved out of the MCP package
+        in 1.8.1, when the panel's zombie fix started using it too.
         """
-        mcp_src = mcp_package_source()
-        start = mcp_src.find("async def _safe_edit_and_reload(")
-        end   = mcp_src.find("\nasync def ", start + 1)
+        src = (Path(__file__).parent.parent / "yaml_writer.py").read_text(encoding="utf-8")
+        start = src.find("async def async_write_and_reload(")
+        assert start != -1, "yaml_writer.async_write_and_reload not found"
+        end = src.find("\ndef ", start + 1)
         # Past the docstring: it names write_back and the rollback itself, so
         # asserting over the whole function would pass on the prose alone.
-        code = mcp_src[start:end].split('"""', 2)[-1]
+        code = src[start:end].split('"""', 2)[-1]
         assert "write_back" in code, \
-            "_safe_edit_and_reload must go through yaml_writer.write_back, which is "\
+            "async_write_and_reload must go through write_back, which is "\
             "what takes the snapshot the rollback restores"
         assert "_rollback" in code, \
-            "_safe_edit_and_reload must restore the file when the reload fails"
+            "async_write_and_reload must restore the file when the reload fails"
         # Not just "a RuntimeError somewhere": the function already raises one on
         # the no-snapshot branch, so the raise has to be looked for after the
         # rollback — otherwise a silent `return` there would pass.
         after_rollback = code.rsplit("_rollback)", 1)[-1]
         assert "raise RuntimeError" in after_rollback, \
-            "_safe_edit_and_reload must raise after rolling back, not report success"
+            "async_write_and_reload must raise after rolling back, not report success"
 
 
 # ── _tool_ha_deep_search timeout ─────────────────────────────────────────────

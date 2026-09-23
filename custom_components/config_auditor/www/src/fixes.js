@@ -334,7 +334,10 @@
       if (errors.length === 0) {
         this.showToastNotification({ title: this.t('zombie.fix_success_title'), message: this.t('zombie.fix_success_msg', {entity: zombieId, count: successCount}), type: 'success' });
       } else {
-        this.showToastNotification({ title: this.t('zombie.errors_partial_title'), message: this.t('misc.errors_partial', {ok: successCount, errors: errors.length}), type: 'warning' });
+        // The reasons, not just a count: a fix Home Assistant would refuse —
+        // removing the only entity of a trigger — comes back with its message.
+        const reasons = [...new Set(errors)].join(' · ');
+        this.showToastNotification({ title: this.t('zombie.errors_partial_title'), message: `${this.t('misc.errors_partial', {ok: successCount, errors: errors.length})} — ${reasons}`, type: 'warning', autoDismiss: 15000 });
       }
       setTimeout(() => this.loadData(), 1500);
     };
