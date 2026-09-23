@@ -9,6 +9,7 @@ import hashlib as _hashlib
 
 from homeassistant.core import HomeAssistant
 
+from .. import device_conversion
 from ..const import DOMAIN
 from .common import (
     _async_scan_list_domain,
@@ -50,13 +51,21 @@ _CATEGORY_NAME_TO_CODE: dict[str, str] = {
 
 
 def _issue_stable_id(issue: dict, category_code: str = "") -> str:
-    """Generate a human-readable unique ID for an issue.
+    """The issue's ID: the `haca_id` the scan gave it, the one the panel shows.
 
-    Format: HACA-{CATEGORY}-{TYPE}-{HASH6}
-    Example: HACA-PERF-MISSING_STATE_CLASS-a3f2c1
+    Format: HACA-{CATEGORY}-{TYPE}-{HASH8}, hashed on the entity, the type and
+    the location -- so two device blocks of one automation are two issues. A
+    list the scan does not tag (compliance, redundancy) falls back to
+    :func:`_issue_entity_id`.
+    """
+    return issue.get("haca_id") or _issue_entity_id(issue, category_code)
 
-    The 6-char hash is derived from the entity_id to guarantee uniqueness
-    when multiple entities share the same issue type.
+
+def _issue_entity_id(issue: dict, category_code: str = "") -> str:
+    """HACA-{CATEGORY}-{TYPE}-{HASH6}, hashed on the entity alone.
+
+    The ID every issue had before 1.8.1, still accepted: the same for every
+    issue of one type on one entity, so it names the first of them.
     """
     cat = category_code or issue.get("_category", "UNK")
     itype = (issue.get("type") or "unknown").upper()
@@ -76,14 +85,17 @@ def _find_issue_by_id(cdata: dict, issue_id: str) -> dict | None:
     """Find an issue by its stable ID, legacy ID, entity_id, or alias.
 
     Supports:
-    - New format:   HACA-AUTO-NO_ALIAS-a3f2c1
-    - Legacy format: automation.xxx|no_alias
-    - Raw entity_id: automation.xxx
-    - Alias:         'My Automation'
+    - Current format: HACA-AUTO-NO_ALIAS-a3f2c1d4
+    - Entity format:  HACA-AUTO-NO_ALIAS-a3f2c1 (before 1.8.1)
+    - Legacy format:  automation.xxx|no_alias
+    - Raw entity_id:  automation.xxx
+    - Alias:          'My Automation'
     """
     for lst_key, cat_code in _LIST_KEY_TO_CATEGORY.items():
         for issue in cdata.get(lst_key, []):
             if _issue_stable_id(issue, cat_code) == issue_id:
+                return issue
+            if _issue_entity_id(issue, cat_code) == issue_id:
                 return issue
             if _issue_legacy_id(issue) == issue_id:
                 return issue
@@ -164,8 +176,9 @@ async def _tool_get_issues(hass: HomeAssistant, params: dict) -> dict:
                 "severity": issue.get("severity", "low"),
                 "type": issue.get("type", ""),
                 "entity_id": issue.get("entity_id", issue.get("alias", "")),
+                "location": issue.get("location", ""),
                 "message": issue.get("message", ""),
-                "fixable": issue.get("fix_available", False),
+                "fixable": _can_fix(issue),
             }
             for issue, cat_code in limited
         ],
@@ -288,7 +301,7 @@ async def _tool_fix_suggestion(hass: HomeAssistant, params: dict) -> dict:
     if not issue:
         return {"error": f"Issue '{issue_id}' not found"}
 
-    if not issue.get("fix_available", False):
+    if not _can_fix(issue):
         return {
             "issue_id": issue_id,
             "fixable": False,
@@ -307,6 +320,63 @@ async def _tool_fix_suggestion(hass: HomeAssistant, params: dict) -> dict:
     }
 
 
+# ─── Applying a fix ───────────────────────────────────────────────────────
+
+_DEVICE_ID_TYPES = (
+    "device_id_in_trigger", "device_id_in_condition", "device_id_in_action",
+    "device_id_in_target", "device_trigger_platform", "device_condition_platform",
+)
+
+# Issue type -> the HACA service fixing it, and what it takes besides the
+# automation. `restart` is the mode the panel's fix sets.
+_FIX_SERVICES: dict[str, tuple[str, dict]] = {
+    **{issue_type: ("fix_device_id", {}) for issue_type in _DEVICE_ID_TYPES},
+    "incorrect_mode_motion_single": ("fix_mode", {"mode": "restart"}),
+    "template_simple_state": ("fix_template", {}),
+}
+
+
+def _fix_call(issue: dict) -> tuple[str, dict] | None:
+    """The service call that fixes *issue*, as the service's schema takes it.
+
+    Each fix service takes `automation_id` -- an entity_id resolves too -- and
+    was sent `entity_id`, which its schema refuses: no fix ever ran. The
+    device_id fix also gets the issue's location, so it converts that block
+    rather than every device block of the automation.
+    """
+    found = _FIX_SERVICES.get(issue.get("type", ""))
+    if found is None:
+        return None
+    service, extra = found
+    data = {"automation_id": issue.get("entity_id") or issue.get("automation_id", ""), **extra}
+    path = device_conversion.parse_location(issue.get("location") or "")
+    if service == "fix_device_id" and path:
+        data["location"] = device_conversion.location(path)  # `action[0].target` is `action[0]`
+    return service, data
+
+
+def _can_fix(issue: dict) -> bool:
+    """Fixable by these tools: the panel fixes a few more types (alias,
+    description, zombie entity) through its own dialogs."""
+    return bool(issue.get("fix_available", False)) and _fix_call(issue) is not None
+
+
+async def _async_fix(hass: HomeAssistant, service: str, data: dict) -> dict:
+    """Run a fix service and return its answer.
+
+    A fix that writes nothing -- Home Assistant would reject the result, or
+    there is nothing left to convert -- answers `success: False`, which was
+    never read: it was reported as applied.
+    """
+    response = await hass.services.async_call(
+        DOMAIN, service, data, blocking=True,
+        context=_caller_context(), return_response=True,
+    )
+    if isinstance(response, dict):
+        return response
+    return {"success": False, "error": f"{service} gave no answer"}
+
+
 async def _tool_apply_fix(hass: HomeAssistant, params: dict) -> dict:
     issue_id = params.get("issue_id", "")
     dry_run = params.get("dry_run", True)
@@ -318,8 +388,9 @@ async def _tool_apply_fix(hass: HomeAssistant, params: dict) -> dict:
     if not issue:
         return {"error": f"Issue '{issue_id}' not found"}
 
-    if not issue.get("fix_available", False):
+    if not _can_fix(issue):
         return {"error": "This issue cannot be fixed automatically"}
+    call = _fix_call(issue)
 
     if dry_run:
         return {
@@ -331,33 +402,24 @@ async def _tool_apply_fix(hass: HomeAssistant, params: dict) -> dict:
             "preview": issue.get("recommendation", ""),
         }
 
-    # Appliquer via le service HA
+    entity_id = issue.get("entity_id", "")
     try:
-        fix_type = issue.get("type", "")
-        entity_id = issue.get("entity_id", "")
-
-        if fix_type in ("device_id_in_trigger", "device_id_in_action"):
-            service = "fix_device_id"
-        elif fix_type == "incorrect_mode_for_pattern":
-            service = "fix_mode"
-        elif fix_type in ("template_simple_state", "template_numeric_comparison"):
-            service = "fix_template"
-        else:
-            return {"error": f"No fix service for issue type '{fix_type}'"}
-
-        await hass.services.async_call(
-            DOMAIN, service, {"entity_id": entity_id}, blocking=True,
-            context=_caller_context(),
-        )
-        return {
-            "dry_run": False,
-            "issue_id": issue_id,
-            "entity_id": entity_id,
-            "status": "applied",
-            "message": f"Fix applied for {entity_id}",
-        }
+        result = await _async_fix(hass, *call)
     except Exception as exc:
         return {"error": f"Error applying fix: {exc}"}
+    if not result.get("success"):
+        return {
+            "error": f"Fix not applied: {result.get('error', 'no reason given')}",
+            "issue_id": issue_id,
+            "entity_id": entity_id,
+        }
+    return {
+        "dry_run": False,
+        "issue_id": issue_id,
+        "entity_id": entity_id,
+        "status": "applied",
+        "message": result.get("message") or f"Fix applied for {entity_id}",
+    }
 
 
 async def _tool_list_issue_catalog(hass: HomeAssistant, params: dict) -> dict:
@@ -380,10 +442,10 @@ async def _tool_list_issue_catalog(hass: HomeAssistant, params: dict) -> dict:
             {"type": "unknown_service",            "severity": "high",   "fixable": False, "description": "Uses an unknown/invalid service"},
             {"type": "device_id_in_trigger",       "severity": "medium", "fixable": True, "description": "Uses device_id in trigger instead of entity_id"},
             {"type": "device_id_in_action",        "severity": "medium", "fixable": True, "description": "Uses device_id in action instead of entity_id"},
-            {"type": "device_id_in_condition",     "severity": "medium", "fixable": False, "description": "Uses device_id in condition"},
-            {"type": "device_id_in_target",        "severity": "medium", "fixable": False, "description": "Uses device_id in target"},
-            {"type": "device_trigger_platform",    "severity": "low",    "fixable": False, "description": "Uses device trigger platform"},
-            {"type": "device_condition_platform",  "severity": "low",    "fixable": False, "description": "Uses device condition platform"},
+            {"type": "device_id_in_condition",     "severity": "medium", "fixable": True, "description": "Uses device_id in condition"},
+            {"type": "device_id_in_target",        "severity": "medium", "fixable": True, "description": "Uses device_id in target"},
+            {"type": "device_trigger_platform",    "severity": "low",    "fixable": True, "description": "Uses device trigger platform"},
+            {"type": "device_condition_platform",  "severity": "low",    "fixable": True, "description": "Uses device condition platform"},
             {"type": "broken_device_reference",    "severity": "high",   "fixable": False, "description": "References a device that no longer exists"},
         ],
         "SCRIPT": [
@@ -443,7 +505,7 @@ async def _tool_list_issue_catalog(hass: HomeAssistant, params: dict) -> dict:
             {"type": "template_now_without_trigger",  "severity": "low",  "fixable": False, "description": "Template uses now() without time_pattern trigger"},
             {"type": "template_sensor_cycle",       "severity": "high",   "fixable": False, "description": "Template sensors reference each other cyclically"},
             {"type": "template_simple_state",       "severity": "low",    "fixable": True,  "description": "Template can be replaced by a simpler native construct"},
-            {"type": "template_numeric_comparison", "severity": "low",    "fixable": True,  "description": "Template numeric comparison can use numeric_state"},
+            {"type": "template_numeric_comparison", "severity": "low",    "fixable": False, "description": "Template numeric comparison can use numeric_state"},
             {"type": "template_time_check",         "severity": "low",    "fixable": False, "description": "Template time check can use time condition"},
             {"type": "expensive_template_selectattr", "severity": "medium", "fixable": False, "description": "Template uses selectattr on all states (expensive)"},
             {"type": "expensive_template_states_all", "severity": "medium", "fixable": False, "description": "Template enumerates all entity states (expensive)"},
@@ -546,28 +608,20 @@ async def _tool_fix_batch(hass: HomeAssistant, params: dict) -> dict:
         return {"error": "Provide issue_id for a single fix, or category/type/severity filters for batch fix."}
 
     # ── Separate fixable from non-fixable ─────────────────────────────────
-    fixable = [(i, c) for i, c in targets if i.get("fix_available", False)]
-    not_fixable = [(i, c) for i, c in targets if not i.get("fix_available", False)]
-
-    # ── Map fix_type → HA service ─────────────────────────────────────────
-    _FIX_SERVICE_MAP = {
-        "device_id_in_trigger": "fix_device_id",
-        "device_id_in_action": "fix_device_id",
-        "incorrect_mode_for_pattern": "fix_mode",
-        "incorrect_mode_motion_single": "fix_mode",
-        "template_simple_state": "fix_template",
-        "template_numeric_comparison": "fix_template",
-    }
+    fixable = [(i, c) for i, c in targets if _can_fix(i)]
+    not_fixable = [(i, c) for i, c in targets if not _can_fix(i)]
 
     if dry_run:
         # ── Preview mode ──────────────────────────────────────────────────
         preview = []
         for issue, cat_code in fixable:
+            service, data = _fix_call(issue)
             preview.append({
                 "id": _issue_stable_id(issue, cat_code),
                 "entity_id": issue.get("entity_id", ""),
                 "type": issue.get("type", ""),
-                "fix_service": _FIX_SERVICE_MAP.get(issue.get("type", ""), "unknown"),
+                "location": data.get("location", ""),
+                "fix_service": service,
                 "recommendation": issue.get("recommendation", ""),
             })
         return {
@@ -587,26 +641,27 @@ async def _tool_fix_batch(hass: HomeAssistant, params: dict) -> dict:
     # ── Apply mode ────────────────────────────────────────────────────────
     applied = []
     errors = []
+    # One call per fix, however many issues name it: a device trigger is both
+    # device_id_in_trigger and device_trigger_platform, and fix_template
+    # converts every template of an automation at once. A second call would
+    # find nothing left to do and report a failure.
+    outcomes: dict[tuple, dict] = {}
     for issue, cat_code in fixable:
         fix_type = issue.get("type", "")
         entity_id = issue.get("entity_id", "")
-        service = _FIX_SERVICE_MAP.get(fix_type)
-        if not service:
-            errors.append({"entity_id": entity_id, "type": fix_type, "error": f"No fix service for '{fix_type}'"})
-            continue
-        try:
-            await hass.services.async_call(
-                DOMAIN, service, {"entity_id": entity_id}, blocking=True,
-                context=_caller_context(),
-            )
-            applied.append({
-                "id": _issue_stable_id(issue, cat_code),
-                "entity_id": entity_id,
-                "type": fix_type,
-                "status": "applied",
-            })
-        except Exception as exc:
-            errors.append({"entity_id": entity_id, "type": fix_type, "error": str(exc)})
+        service, data = _fix_call(issue)
+        key = (service, *sorted(data.items()))
+        if key not in outcomes:
+            try:
+                outcomes[key] = await _async_fix(hass, service, data)
+            except Exception as exc:
+                outcomes[key] = {"success": False, "error": str(exc)}
+        outcome = outcomes[key]
+        entry = {"id": _issue_stable_id(issue, cat_code), "entity_id": entity_id, "type": fix_type}
+        if outcome.get("success"):
+            applied.append({**entry, "status": "applied"})
+        else:
+            errors.append({**entry, "error": outcome.get("error", "no reason given")})
 
     return {
         "dry_run": False,
