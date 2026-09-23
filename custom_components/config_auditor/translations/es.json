@@ -607,6 +607,8 @@
       "ai_suggestion": "Sugerencia IA",
       "apply_ai": "Aplicar con IA",
       "applied": "¡Aplicado!",
+      "description_updated": "Descripción actualizada correctamente.",
+      "alias_updated": "Alias actualizado correctamente.",
       "last_scan": "Último escaneo"
     },
     "history": {

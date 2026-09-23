@@ -607,6 +607,8 @@
       "ai_suggestion": "AI-forslag",
       "apply_ai": "Anvend med AI",
       "applied": "Anvendt!",
+      "description_updated": "Beskrivelsen er opdateret.",
+      "alias_updated": "Aliaset er opdateret.",
       "last_scan": "Sidste scanning"
     },
     "history": {

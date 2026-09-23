@@ -607,6 +607,8 @@
       "ai_suggestion": "AI提案",
       "apply_ai": "AIで適用",
       "applied": "適用済み！",
+      "description_updated": "説明を更新しました。",
+      "alias_updated": "エイリアスを更新しました。",
       "last_scan": "最終スキャン"
     },
     "history": {

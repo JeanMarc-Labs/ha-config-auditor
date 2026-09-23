@@ -607,6 +607,8 @@
       "ai_suggestion": "AI-suggestie",
       "apply_ai": "Toepassen met AI",
       "applied": "Toegepast!",
+      "description_updated": "Beschrijving succesvol bijgewerkt.",
+      "alias_updated": "Alias succesvol bijgewerkt.",
       "last_scan": "Laatste scan"
     },
     "history": {
