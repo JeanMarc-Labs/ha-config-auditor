@@ -1,4 +1,4 @@
-// HACA-BUILD: 688e3260  2026-09-23T12:51:47Z
+// HACA-BUILD: 845da90c  2026-09-23T13:30:55Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -8039,7 +8039,8 @@ function _updateTypeCounts(el) {
 
       if (response.success) {
         if (!response.changes_count) {
-          // Entity could not be resolved — show informative message instead of empty diff
+          // Nothing the backend can rewrite so it behaves the same — say why, per
+          // item, instead of an empty diff (a ZHA button event, an unknown type…)
           modal._updateContent(`
             <div style="padding:24px;">
               <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;border-bottom:1px solid var(--divider-color);padding-bottom:16px;">
@@ -8050,7 +8051,8 @@ function _updateTypeCounts(el) {
                 </div>
               </div>
               <div style="background:rgba(255,167,38,0.1);padding:16px;border-radius:10px;border-left:4px solid var(--warning-color,#ffa726);margin-bottom:20px;font-size:14px;line-height:1.6;">
-                ${this.t('fix.cannot_resolve_entity')}
+                ${this.t('fix.not_convertible')}
+                ${this._skippedList(response.skipped)}
               </div>
               <div style="display:flex;justify-content:flex-end;gap:12px;">
                 <button style="background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:8px;padding:8px 18px;cursor:pointer;"
@@ -8348,6 +8350,14 @@ function _updateTypeCounts(el) {
     }
   }
 
+  // What the device_id fix leaves as it is, one line per item with the reason.
+  _skippedList(skipped) {
+    if (!skipped?.length) return '';
+    return `<ul style="margin: 8px 0 0; padding-left: 24px; line-height: 1.6; font-size: 13px;">
+        ${skipped.map(s => `<li style="margin-bottom: 4px;">${this.escapeHtml(s.reason)}</li>`).join('')}
+      </ul>`;
+  }
+
   renderDiffModal(card, result, issue, previewService, serviceData) {
     card._updateContent(`
         <div class="section-header" style="background: var(--secondary-background-color); border-bottom: 1px solid var(--divider-color); padding: 20px 24px; padding-right: 48px; flex-shrink: 0;">
@@ -8391,6 +8401,14 @@ function _updateTypeCounts(el) {
                     ${result.changes.map(c => `<li style="margin-bottom: 4px;">${this.escapeHtml(c.description)}</li>`).join('')}
                 </ul>
             </div>
+            ${result.skipped?.length ? `
+            <div style="margin-top: 16px; background: rgba(255,167,38,0.08); padding: 20px; border-radius: 12px; border: 1px solid var(--divider-color);">
+                <div style="font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 10px;">
+                    ${_icon("alert-circle-outline")}
+                    ${this.t('modals.left_unchanged')} (${result.skipped.length}):
+                </div>
+                ${this._skippedList(result.skipped)}
+            </div>` : ''}
         </div>
         <div style="padding: 20px 24px; border-top: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; background: var(--secondary-background-color); flex-shrink: 0;">
             <div id="edit-btn-container"></div>

@@ -261,7 +261,8 @@
       "open_editor": "Abrir Editor",
       "automation": "Automação",
       "problem": "Problema",
-      "unknown_device_id": "device_id desconhecido"
+      "unknown_device_id": "device_id desconhecido",
+      "left_unchanged": "Deixados como estão"
     },
     "notifications": {
       "copy_failed": "Falha ao copiar",
@@ -339,7 +340,7 @@
       "success": "Correção aplicada com sucesso!",
       "error_unknown": "Erro desconhecido",
       "cannot_find_automation": "Não foi possível encontrar o ID da automação",
-      "cannot_resolve_entity": "A entidade referenciada por este dispositivo não pôde ser resolvida automaticamente. O dispositivo pode ter sido adicionado novamente com um novo ID. Corrija manualmente usando o editor."
+      "not_convertible": "Nenhuma das referências a dispositivos aqui tem um equivalente baseado em entidades que se comporte exatamente da mesma forma, por isso cada uma fica como está. O motivo é indicado abaixo; edite a automação manualmente se necessário."
     },
     "instructions": {
       "open_yaml_editor": "Abra a automação no editor YAML",

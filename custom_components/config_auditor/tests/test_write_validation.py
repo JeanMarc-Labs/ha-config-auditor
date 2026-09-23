@@ -419,35 +419,66 @@ class TestFixesWithoutReload:
         assert Path(result["backup_path"]).read_text(encoding="utf-8") == CLIMA
 
     @pytest.mark.asyncio
-    async def test_a_device_condition_converted_without_its_state_is_refused(self, tmp_path):
-        """HA's real validator. `is_open` has no state mapping, so the conversion
-        wrote a state condition with no `state:` -- disabled at the next reload."""
+    async def test_every_converted_device_block_is_one_home_assistant_loads(self, tmp_path):
+        """HA's real validator on the whole conversion, one of each shape it writes.
+
+        `is_open` used to come out as a state condition without `state:` and be
+        refused; `to: null`, a `from:` list, a numeric_state on an attribute, a
+        zone trigger, a `not` condition and a list of states must all load too.
+        No device block is left: one would need the device registry and its
+        integration loaded to validate, which a bare Home Assistant has not.
+        """
         porte = (
             "- id: porte\n"
             "  triggers:\n"
-            "    - trigger: state\n"
-            "      entity_id: binary_sensor.door\n"
-            "  conditions:\n"
-            "    - condition: device\n"
-            "      device_id: abc123\n"
+            "    - trigger: device\n"
+            "      device_id: d1\n"
             "      domain: binary_sensor\n"
-            "      type: is_open\n"
+            "      type: opened\n"
             "      entity_id: binary_sensor.door\n"
+            "      id: door_open\n"
+            "      for:\n"
+            "        minutes: 2\n"
+            "    - {trigger: device, device_id: d1, domain: switch, type: changed_states, entity_id: switch.pump}\n"
+            "    - {trigger: device, device_id: d1, domain: climate, type: hvac_mode_changed, entity_id: climate.salon, to: heat}\n"
+            "    - {trigger: device, device_id: d1, domain: cover, type: position, entity_id: cover.garage, above: 50}\n"
+            "    - {trigger: device, device_id: d1, domain: device_tracker, type: enters, entity_id: device_tracker.phone, zone: zone.home}\n"
+            "  conditions:\n"
+            "    - {condition: device, device_id: d1, domain: binary_sensor, type: is_open, entity_id: binary_sensor.door}\n"
+            "    - {condition: device, device_id: d1, domain: vacuum, type: is_cleaning, entity_id: vacuum.robot}\n"
+            "    - {condition: device, device_id: d1, domain: device_tracker, type: is_not_home, entity_id: device_tracker.phone}\n"
+            "    - {condition: device, device_id: d1, domain: climate, type: is_preset_mode, entity_id: climate.salon, preset_mode: eco}\n"
+            "    - {condition: device, device_id: d1, domain: cover, type: is_position, entity_id: cover.garage, below: 30}\n"
             "  actions:\n"
-            "    - action: light.turn_on\n"
+            "    - {device_id: d1, domain: light, type: brightness_increase, entity_id: light.kitchen, metadata: {}}\n"
+            "    - {device_id: d1, domain: cover, type: set_tilt_position, entity_id: cover.blind, position: 40}\n"
+            "    - {device_id: d1, domain: alarm_control_panel, type: arm_away, entity_id: alarm_control_panel.home, code: '1234'}\n"
         )
         (tmp_path / "configuration.yaml").write_text(
             "automation: !include automations.yaml\n", encoding="utf-8"
         )
         (tmp_path / "automations.yaml").write_text(porte, encoding="utf-8")
         async with _real_hass(tmp_path) as hass:
-            result = await _assistant(hass).apply_device_id_fix("porte")
+            from homeassistant.helpers import entity_registry as er
 
-        assert result["success"] is False, result
-        assert "Home Assistant rejects this automation" in result["error"]
-        assert "conditions[0].state" in result["error"]
-        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == porte
-        assert _backups(tmp_path) == []
+            from custom_components.config_auditor.tests.conftest import MockEntityRegistry
+
+            # Empty: every entity_id here is already one, nothing to resolve.
+            hass.data[er.DATA_REGISTRY] = MockEntityRegistry()
+            preview = await _assistant(hass).preview_device_id_fix("porte")
+            # A validator that crashes is let through on purpose; here it must
+            # have run, or this test proves nothing.
+            with patch.object(yw._LOGGER, "debug") as debug:
+                result = await _assistant(hass).apply_device_id_fix("porte")
+
+        assert result["success"] is True, result
+        assert not [c for c in debug.call_args_list if "Could not validate" in str(c)]
+        assert preview["changes_count"] == 13 and preview["skipped"] == []
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "device_id" not in written
+        assert "id: door_open" in written
+        assert "metadata" not in written
+        assert "brightness_step_pct: 10" in written
 
     @pytest.mark.asyncio
     async def test_a_script_description_is_checked_as_a_script(self, tmp_path):
@@ -462,3 +493,160 @@ class TestFixesWithoutReload:
 
         assert result["success"] is True, result
         assert "description: Wake up" in (tmp_path / "scripts.yaml").read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_the_preview_lists_what_stays_and_why(self, tmp_path):
+        """With nothing converted, the panel said the device had been re-added -- of a ZHA button."""
+        remote = (
+            "- id: remote\n"
+            "  triggers:\n"
+            "    - {trigger: device, device_id: d1, domain: zha, type: remote_button_short_press, subtype: turn_on}\n"
+            "    - {trigger: device, device_id: d1, domain: light, type: turned_on, entity_id: light.kitchen}\n"
+            "  actions:\n"
+            "    - {device_id: d1, domain: light, type: toggle, entity_id: light.kitchen}\n"
+        )
+        hass = _hass(tmp_path, {
+            "configuration.yaml": "automation: !include automations.yaml\n",
+            "automations.yaml": remote,
+        })
+        assistant = _assistant(hass)
+        preview = await assistant.preview_device_id_fix("remote")
+
+        assert [c["description"] for c in preview["changes"]] == [
+            "Trigger 1: light.turned_on → state trigger on light.kitchen (to: on)",
+            "Action 0: light.toggle → light.toggle on light.kitchen",
+        ]
+        assert [s["reason"] for s in preview["skipped"]] == [
+            "Trigger 0: zha.remote_button_short_press: an event of the zha "
+            "integration itself, with no entity equivalent"
+        ]
+        # PyYAML printed the round-trip nodes as python objects.
+        assert "!!python" not in preview["current_yaml"] + preview["new_yaml"]
+        assert "trigger: state" in preview["new_yaml"]
+
+        scoped = await assistant.preview_device_id_fix("remote", location="action[0]")
+        assert [c["section"] for c in scoped["changes"]] == ["action"]
+        assert scoped["skipped"] == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The panel's alias / description fix (websocket) and the AI optimizer
+# ═══════════════════════════════════════════════════════════════════════════
+
+CONFIG = {"configuration.yaml": "automation: !include automations.yaml\n"}
+
+
+def _field_fix():
+    """The coroutine under HA's websocket decorators."""
+    import inspect
+
+    ws = pytest.importorskip("custom_components.config_auditor.websocket")
+    return inspect.unwrap(ws.handle_apply_field_fix)
+
+
+def _connection(tmp_path):
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    connection.user.id = f"user-{tmp_path.name}"  # its own rate-limit slot
+    return connection
+
+
+def _alias_msg(value: str) -> dict:
+    return {
+        "id": 7, "type": "haca/apply_field_fix",
+        "entity_id": "automation.clima", "field": "alias", "value": value,
+    }
+
+
+class TestFieldFix:
+    @pytest.mark.asyncio
+    async def test_a_rejected_entry_writes_nothing(self, tmp_path):
+        hass = _hass(tmp_path, {**CONFIG, "automations.yaml": AUTOMATIONS})
+        connection = _connection(tmp_path)
+        with _rejects("expected str at 'to'"):
+            await _field_fix()(hass, connection, _alias_msg("Warm"))
+
+        code, message = connection.send_error.call_args.args[1:]
+        assert code == "rejected"
+        assert "Home Assistant rejects this automation" in message and "expected str at 'to'" in message
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == AUTOMATIONS
+        assert not _reloaded(hass)
+        assert _backups(tmp_path) == []
+
+    @pytest.mark.asyncio
+    async def test_an_accepted_alias_is_written_and_reloaded_as_the_user(self, tmp_path):
+        hass = _hass(tmp_path, {**CONFIG, "automations.yaml": AUTOMATIONS})
+        connection = _connection(tmp_path)
+        with patch(
+            "homeassistant.components.automation.config.async_validate_config_item",
+            AsyncMock(return_value=None),
+        ) as validator:
+            await _field_fix()(hass, connection, _alias_msg("Warm"))
+
+        connection.send_result.assert_called_once()
+        assert validator.await_args.args[1] == "clima"
+        assert "alias: Warm" in (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        reload = hass.services.async_call.await_args
+        assert reload.args[:2] == ("automation", "reload")
+        assert reload.kwargs["context"] is connection.context.return_value
+
+    @pytest.mark.asyncio
+    async def test_a_failed_reload_puts_the_file_back(self, tmp_path):
+        from homeassistant.exceptions import HomeAssistantError
+
+        hass = _hass(tmp_path, {**CONFIG, "automations.yaml": AUTOMATIONS})
+        hass.services.async_call = AsyncMock(side_effect=[HomeAssistantError("boom"), None])
+        connection = _connection(tmp_path)
+        with patch(
+            "homeassistant.components.automation.config.async_validate_config_item",
+            AsyncMock(return_value=None),
+        ):
+            await _field_fix()(hass, connection, _alias_msg("Warm"))
+
+        code, message = connection.send_error.call_args.args[1:]
+        assert code == "apply_error" and "file restored to original" in message
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == AUTOMATIONS
+
+
+class TestOptimizer:
+    @pytest.mark.asyncio
+    async def test_one_rejected_automation_of_a_split_writes_none(self, tmp_path):
+        """A split hands back several automations; HA would disable each bad one alone."""
+        from custom_components.config_auditor.automation_optimizer import AutomationOptimizer
+
+        hass = _hass(tmp_path, {**CONFIG, "automations.yaml": AUTOMATIONS})
+        split = (
+            "alias: Heat\ntriggers: []\nactions: []\n"
+            "---\n"
+            "alias: Cool\ntriggers: []\nactions: []\n"
+        )
+        with patch(
+            "homeassistant.components.automation.config.async_validate_config_item",
+            AsyncMock(side_effect=[None, vol.Invalid("expected str at 'to'")]),
+        ):
+            result = await AutomationOptimizer(hass).apply("automation.clima", split)
+
+        assert result["success"] is False, result
+        assert result["error"].startswith("Cool: Home Assistant rejects this automation")
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == AUTOMATIONS
+        assert _backups(tmp_path) == []
+
+    @pytest.mark.asyncio
+    async def test_a_bare_off_written_by_the_ai_is_refused(self, tmp_path):
+        """HA's real validator. The AI's YAML is read as YAML 1.1, so `to: off` is False."""
+        from custom_components.config_auditor.automation_optimizer import AutomationOptimizer
+
+        for name, text in {**CONFIG, "automations.yaml": AUTOMATIONS}.items():
+            (tmp_path / name).write_text(text, encoding="utf-8")
+        rewritten = (
+            "id: clima\nalias: Clima\n"
+            "triggers:\n  - trigger: state\n    entity_id: light.x\n    to: off\n"
+            "actions: []\n"
+        )
+        async with _real_hass(tmp_path) as hass:
+            result = await AutomationOptimizer(hass).apply("automation.clima", rewritten)
+
+        assert result["success"] is False, result
+        assert "expected str at 'to'" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == AUTOMATIONS

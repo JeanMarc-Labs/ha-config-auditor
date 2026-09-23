@@ -3,15 +3,16 @@ from __future__ import annotations
 
 from datetime import datetime
 import difflib
+import io
 import logging
 import re
 from pathlib import Path
 from typing import Any
-import yaml
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from . import device_conversion
 from .const import BACKUP_DIR
 from .yaml_sources import iter_domain_files
 from .yaml_writer import (
@@ -24,6 +25,7 @@ from .yaml_writer import (
     open_domain_for_edit,
     parse_backup_name,
     prune_backups,
+    roundtrip_yaml,
     scan_in_passes,
     scan_named_domain_for_edit,
 )
@@ -39,6 +41,19 @@ def _backup_stem(path: Path) -> str | None:
     """
     parsed = parse_backup_name(path.name)
     return parsed[0] if parsed else None
+
+
+def _as_yaml(node: Any) -> str:
+    """An entry, or part of one, in YAML -- dumped by ruamel, as HACA writes it.
+
+    The entries come off the round-trip reader as ruamel nodes, which PyYAML's
+    `yaml.dump` cannot represent: the preview's before/after panes, and the
+    prompt of the AI description, showed
+    `!!python/object/apply:ruamel.yaml.comments.CommentedMap` instead.
+    """
+    buffer = io.StringIO()
+    roundtrip_yaml().dump(node, buffer)
+    return buffer.getvalue()
 
 
 def _match_automation(
@@ -188,6 +203,11 @@ class RefactoringAssistant:
         When *location* is provided (e.g. ``"action[0]"`` or ``"trigger[2]"``),
         only the matching section/index is inspected so the preview stays
         scoped to the single reported issue instead of fixing the whole automation.
+
+        Only what :mod:`device_conversion` can rewrite the way Home Assistant
+        runs it is changed. The rest -- an integration's own trigger, an unknown
+        type, an entity gone from the registry -- is listed in ``skipped`` with
+        the reason, rather than guessed.
         """
         import re as _re
 
@@ -209,251 +229,67 @@ class RefactoringAssistant:
                 "error": f"Automation {automation_id} not found"
             }
         
-        changes = []
-        
-        # --- TRIGGERS ---
-        trigger_key = "triggers" if "triggers" in automation_config else "trigger"
-        triggers = automation_config.get(trigger_key, [])
-        if not isinstance(triggers, list):
-            triggers = [triggers] if triggers else []
-        
-        for idx, trigger in enumerate(triggers):
-            if not isinstance(trigger, dict):
-                continue
-            # Location filter: skip if we're scoped to a different section/index
-            if _loc_section and _loc_section != 'trigger':
-                continue
-            if _loc_index is not None and idx != _loc_index:
-                continue
-            if "device_id" not in trigger:
-                continue
-                
-            device_id = trigger["device_id"]
-            domain = trigger.get("domain", "")
-            trigger_type = trigger.get("type", "")
-            _LOGGER.info("Trigger %d: device_id=%s, domain=%s, type=%s", idx, device_id, domain, trigger_type)
-            
-            # Resolve entity_id (HA stores UUID registry IDs, not actual entity_id strings)
-            resolved_entity = await self._resolve_entity_id(
-                device_id, trigger.get("entity_id"), domain
-            )
-            
-            if resolved_entity:
-                # Build native state trigger
-                new_trigger = {
-                    "platform": "state",
-                    "entity_id": resolved_entity,
-                }
-                
-                # Map device trigger types to state values
-                type_to_state = {
-                    "turned_on": "on", "turned on": "on",
-                    "turned_off": "off", "turned off": "off",
-                    "motion": "on", "occupied": "on", "not_occupied": "off",
-                    "opened": "on", "closed": "off",
-                    "detected": "on", "not_detected": "off",
-                    "connected": "on", "disconnected": "off",
-                }
-                if trigger_type in type_to_state:
-                    new_trigger["to"] = type_to_state[trigger_type]
-                
-                changes.append({
-                    "section": "trigger",
-                    "index": idx,
-                    "to": new_trigger,
-                    "description": f"Trigger {idx}: {domain}.{trigger_type} → platform: state, entity_id: {resolved_entity}"
-                })
-            else:
-                _LOGGER.debug("Cannot resolve entity for trigger %d (device_id=%s)", idx, device_id)
-        
-        # --- CONDITIONS ---
-        condition_key = "conditions" if "conditions" in automation_config else "condition"
-        conditions = automation_config.get(condition_key, [])
-        if not isinstance(conditions, list):
-            conditions = [conditions] if conditions else []
-        
-        for idx, condition in enumerate(conditions):
-            if not isinstance(condition, dict):
-                continue
-            # Location filter
-            if _loc_section and _loc_section != 'condition':
-                continue
-            if _loc_index is not None and idx != _loc_index:
-                continue
-            if "device_id" not in condition:
-                continue
-                
-            device_id = condition["device_id"]
-            domain = condition.get("domain", "")
-            cond_type = condition.get("type", "")
-            _LOGGER.info("Condition %d: device_id=%s, domain=%s, type=%s", idx, device_id, domain, cond_type)
-            
-            resolved_entity = await self._resolve_entity_id(
-                device_id, condition.get("entity_id"), domain
-            )
-            
-            if resolved_entity:
-                # Map device condition types to native conditions
-                if cond_type.startswith("is_") and domain == "sensor":
-                    # is_illuminance, is_temperature, is_humidity → numeric_state
-                    new_condition = {
-                        "condition": "numeric_state",
-                        "entity_id": resolved_entity,
-                    }
-                    # Preserve threshold values
-                    if "below" in condition:
-                        new_condition["below"] = condition["below"]
-                    if "above" in condition:
-                        new_condition["above"] = condition["above"]
-                else:
-                    # Generic device condition → state condition
-                    new_condition = {
-                        "condition": "state",
-                        "entity_id": resolved_entity,
-                    }
-                    # Map type to expected state
-                    if cond_type in ("is_on",):
-                        new_condition["state"] = "on"
-                    elif cond_type in ("is_off",):
-                        new_condition["state"] = "off"
-                
-                changes.append({
-                    "section": "condition",
-                    "index": idx,
-                    "to": new_condition,
-                    "description": f"Condition {idx}: {domain}.{cond_type} → {new_condition['condition']}, entity_id: {resolved_entity}"
-                })
-            else:
-                _LOGGER.debug("Cannot resolve entity for condition %d (device_id=%s)", idx, device_id)
-        
-        # --- ACTIONS ---
-        action_key = "actions" if "actions" in automation_config else "action"
-        actions = automation_config.get(action_key, [])
-        if not isinstance(actions, list):
-            actions = [actions] if actions else []
-        
-        for idx, action in enumerate(actions):
-            if not isinstance(action, dict):
-                continue
-            # Location filter
-            if _loc_section and _loc_section != 'action':
-                continue
-            if _loc_index is not None and idx != _loc_index:
-                continue
+        # `action:` names the service since HA 2024.8; `service:` loads everywhere.
+        actions = automation_config.get("actions", automation_config.get("action")) or []
+        uses_action = "actions" in automation_config or any(
+            isinstance(a, dict) and "action" in a for a in (actions if isinstance(actions, list) else [actions])
+        )
+        service_key = "action" if uses_action else "service"
 
-            # Case 1 : device_id directly on the action (device_action platform)
-            if "device_id" in action:
-                device_id = action["device_id"]
-                domain = action.get("domain", "homeassistant")
-                action_type = action.get("type", "toggle")
-                _LOGGER.info("Action %d: device_id=%s, domain=%s, type=%s", idx, device_id, domain, action_type)
-                
-                resolved_entity = await self._resolve_entity_id(
-                    device_id, action.get("entity_id"), domain
+        # Each device block is rewritten the way HA runs it (device_conversion);
+        # one that cannot be rewritten faithfully stays, with the reason.
+        changes: list[dict] = []
+        skipped: list[dict] = []
+        keys: dict[str, str] = {}
+        for section in ("trigger", "condition", "action"):
+            key = keys[section] = f"{section}s" if f"{section}s" in automation_config else section
+            if _loc_section and _loc_section != section:
+                continue
+            items = automation_config.get(key, [])
+            if not isinstance(items, list):
+                items = [items] if items else []
+            for idx, item in enumerate(items):
+                if _loc_index is not None and idx != _loc_index:
+                    continue
+                conversion = device_conversion.convert(
+                    self.hass, section, item, service_key=service_key
                 )
-                
-                if resolved_entity:
-                    service = f"{domain}.{action_type}"
-                    new_action = {
-                        "action": service,
-                        "target": {"entity_id": resolved_entity}
-                    }
-                    # Merge explicit data dict + any extra top-level fields that are not
-                    # device-action metadata (device_id, domain, entity_id UUID, type, id)
-                    _DEVICE_META = {"device_id", "domain", "entity_id", "type", "id"}
-                    _CONTROL_FIELDS = {"continue_on_error", "enabled", "alias"}
-                    extra_data = {k: v for k, v in action.items()
-                                  if k not in _DEVICE_META and k not in _CONTROL_FIELDS and k != "data"}
-                    merged_data = {**(action.get("data") or {}), **extra_data}
-                    if merged_data:
-                        new_action["data"] = merged_data
-                    # Preserve action-level control fields
-                    for _field in _CONTROL_FIELDS:
-                        if _field in action:
-                            new_action[_field] = action[_field]
-
-                    changes.append({
-                        "section": "action",
-                        "index": idx,
-                        "to": new_action,
-                        "description": f"Action {idx}: {service} → entity_id: {resolved_entity}"
-                    })
+                if conversion is None:
+                    continue
+                note = f"{section.capitalize()} {idx}: {conversion.note}"
+                if conversion.new is None:
+                    skipped.append({"section": section, "index": idx, "reason": note})
                 else:
-                    _LOGGER.debug("Cannot resolve entity for action %d (device_id=%s)", idx, device_id)
-
-            # Case 2 : device_id inside action["target"]["device_id"]  (device_id_in_target)
-            elif isinstance(action.get("target"), dict) and "device_id" in action["target"]:
-                device_id = action["target"]["device_id"]
-                # Infer domain from the service/action field if available
-                svc = action.get("service") or action.get("action", "")
-                domain = svc.split(".")[0] if "." in svc else ""
-                _LOGGER.info("Action %d target: device_id=%s, service=%s", idx, device_id, svc)
-                
-                resolved_entity = await self._resolve_entity_id(
-                    device_id, action["target"].get("entity_id"), domain
-                )
-                
-                if resolved_entity:
-                    # Replace target.device_id with target.entity_id, keep everything else
-                    import copy as _copy
-                    new_action = _copy.deepcopy(action)
-                    new_target = dict(new_action["target"])
-                    del new_target["device_id"]
-                    # Merge with existing entity_id if any (can be list or str)
-                    existing = new_target.get("entity_id")
-                    if existing:
-                        if isinstance(existing, list):
-                            new_target["entity_id"] = existing + [resolved_entity]
-                        else:
-                            new_target["entity_id"] = [existing, resolved_entity]
-                    else:
-                        new_target["entity_id"] = resolved_entity
-                    new_action["target"] = new_target
-                    
                     changes.append({
-                        "section": "action",
-                        "index": idx,
-                        "to": new_action,
-                        "description": f"Action {idx}: target.device_id → target.entity_id: {resolved_entity}"
+                        "section": section, "index": idx,
+                        "to": conversion.new, "description": note,
                     })
-                else:
-                    _LOGGER.debug("Cannot resolve entity for action %d target (device_id=%s)", idx, device_id)
-        
+
         # --- Generate YAML previews ---
         import copy
-        current_yaml = yaml.dump(automation_config, default_flow_style=False, allow_unicode=True)
-        
+        current_yaml = _as_yaml(automation_config)
+
         new_config = copy.deepcopy(automation_config)
-        
+
         # Apply all changes to the deep copy
         for change in changes:
-            section = change["section"]
-            idx = change["index"]
-            
-            if section == "trigger":
-                key = trigger_key
-            elif section == "condition":
-                key = condition_key
-            elif section == "action":
-                key = action_key
-            else:
-                continue
-            
+            key = keys[change["section"]]
             items = new_config.get(key, [])
             if not isinstance(items, list):
                 items = [items] if items else []
-            if idx < len(items):
-                items[idx] = change["to"]
+            if change["index"] < len(items):
+                items[change["index"]] = change["to"]
             new_config[key] = items
-        
-        new_yaml = yaml.dump(new_config, default_flow_style=False, allow_unicode=True)
-        
+
+        new_yaml = _as_yaml(new_config)
+
         return {
             "success": True,
             "automation_id": automation_id,
             "alias": automation_config.get("alias", ""),
             "changes": changes,
             "changes_count": len(changes),
+            "skipped": skipped,
             "current_yaml": current_yaml,
             "new_yaml": new_yaml
         }
@@ -582,7 +418,7 @@ class RefactoringAssistant:
         
         # Generate YAML previews
         import copy
-        current_yaml = yaml.dump(automation_config, default_flow_style=False, allow_unicode=True)
+        current_yaml = _as_yaml(automation_config)
         
         # Create a deep copy to apply changes for preview
         new_config = copy.deepcopy(automation_config)
@@ -592,7 +428,7 @@ class RefactoringAssistant:
             if "max" not in new_config:
                 new_config["max"] = 10
                 
-        new_yaml = yaml.dump(new_config, default_flow_style=False, allow_unicode=True)
+        new_yaml = _as_yaml(new_config)
         
         return {
             "success": True,
@@ -692,7 +528,7 @@ class RefactoringAssistant:
 
         # Generate YAML previews
         import copy
-        current_yaml = yaml.dump(automation_config, default_flow_style=False, allow_unicode=True)
+        current_yaml = _as_yaml(automation_config)
         new_config = copy.deepcopy(automation_config)
         
         for change in changes:
@@ -701,7 +537,7 @@ class RefactoringAssistant:
             if idx < len(items):
                 items[idx] = change["to"]
                 
-        new_yaml = yaml.dump(new_config, default_flow_style=False, allow_unicode=True)
+        new_yaml = _as_yaml(new_config)
         
         return {
             "success": True,
@@ -1052,61 +888,6 @@ class RefactoringAssistant:
         except Exception:
             return None
 
-    async def _get_entities_for_device(self, device_id: str) -> list[str]:
-        """Get entity IDs for a device."""
-        entity_reg = er.async_get(self.hass)
-        
-        entities = []
-        for entity in entity_reg.entities.values():
-            if entity.device_id == device_id:
-                entities.append(entity.entity_id)
-        
-        return entities
-
-    async def _resolve_entity_id(self, device_id: str, registry_uuid: str | None, domain: str = "") -> str | None:
-        """Resolve an entity from device_id + registry UUID + domain.
-        
-        HA device automations store entity references as UUID registry entry IDs,
-        not as human-readable entity_id strings. This method resolves to the actual
-        entity_id string using a 3-step approach:
-        1. Try to find the entity by its UUID in the entity registry
-        2. Filter device entities by domain to pick the correct one
-        3. Fallback to any entity for the device
-        """
-        entity_reg = er.async_get(self.hass)
-        
-        # Step 1: Try to resolve UUID → entity_id
-        if registry_uuid:
-            # Check if it's already a real entity_id (contains a dot like "binary_sensor.xxx")
-            if "." in registry_uuid:
-                return registry_uuid
-            
-            # It's a UUID — look it up in the registry
-            for entity in entity_reg.entities.values():
-                if entity.id == registry_uuid:
-                    _LOGGER.info("Resolved UUID %s → %s", registry_uuid, entity.entity_id)
-                    return entity.entity_id
-            
-            _LOGGER.debug("UUID %s not found in entity registry", registry_uuid)
-        
-        # Step 2: Get all entities for this device, filter by domain
-        all_entities = await self._get_entities_for_device(device_id)
-        
-        if not all_entities:
-            _LOGGER.debug("No entities found for device_id %s", device_id)
-            return None
-        
-        if domain:
-            # Filter by domain (e.g., "binary_sensor", "sensor", "light")
-            domain_entities = [e for e in all_entities if e.startswith(f"{domain}.")]
-            if domain_entities:
-                _LOGGER.info("Resolved device %s + domain %s → %s", device_id, domain, domain_entities[0])
-                return domain_entities[0]
-        
-        # Step 3: Fallback to first entity
-        _LOGGER.info("Fallback: using first entity for device %s → %s", device_id, all_entities[0])
-        return all_entities[0]
-
     async def get_fuzzy_suggestions(self, broken_entity_id: str) -> list[str]:
         """Get similar entity IDs for a broken reference."""
         all_entities = [e.entity_id for e in self.hass.states.async_all()]
@@ -1261,11 +1042,11 @@ class RefactoringAssistant:
         
         # Prepare content for prompt
         if is_script:
-            triggers_yaml = yaml.dump(config.get("sequence", []), default_flow_style=False, allow_unicode=True)
+            triggers_yaml = _as_yaml(config.get("sequence", []))
             actions_yaml = ""
         else:
-            triggers_yaml = yaml.dump(config.get("trigger", []) or config.get("triggers", []), default_flow_style=False, allow_unicode=True)
-            actions_yaml = yaml.dump(config.get("action", []) or config.get("actions", []), default_flow_style=False, allow_unicode=True)
+            triggers_yaml = _as_yaml(config.get("trigger", []) or config.get("triggers", []))
+            actions_yaml = _as_yaml(config.get("action", []) or config.get("actions", []))
 
         # Build the full YAML block from triggers + actions parts
         yaml_block = (triggers_yaml + "\n" + actions_yaml).strip()[:4000] or "(YAML unavailable)"

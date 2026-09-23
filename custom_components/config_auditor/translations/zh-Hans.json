@@ -261,7 +261,8 @@
       "open_editor": "打开编辑器",
       "automation": "自动化",
       "problem": "问题",
-      "unknown_device_id": "未知设备ID"
+      "unknown_device_id": "未知设备ID",
+      "left_unchanged": "保持不变"
     },
     "notifications": {
       "copy_failed": "复制失败",
@@ -339,7 +340,7 @@
       "success": "修复成功应用！",
       "error_unknown": "未知错误",
       "cannot_find_automation": "找不到自动化 ID",
-      "cannot_resolve_entity": "无法自动解析此设备引用的实体。设备可能已以新ID重新添加。请使用编辑器手动修复。"
+      "not_convertible": "这里的设备引用都没有行为完全相同的基于实体的等效写法，因此每一项都保持不变。原因见下方；如有需要，请手动编辑此自动化。"
     },
     "instructions": {
       "open_yaml_editor": "在 YAML 编辑器中打开自动化",

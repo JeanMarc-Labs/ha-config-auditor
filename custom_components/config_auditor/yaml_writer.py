@@ -671,16 +671,26 @@ async def async_write_checked(
     Returns the backup path, or None when this call created the file.
     """
     if entry is not None:
-        error = await async_validation_error(hass, domain, target.yaml, entry, key)
-        if error is not None:
-            raise RejectedByHomeAssistant(
-                f"Home Assistant rejects this {domain}, so nothing was "
-                f"written: {error}"
-            )
+        await async_check_entry(hass, domain, target.yaml, entry, key)
 
     return await hass.async_add_executor_job(
         write_back, target, hass.config.config_dir
     )
+
+
+async def async_check_entry(
+    hass: Any, domain: str, yaml: Any, entry: Any, key: str | None
+) -> None:
+    """Raise :class:`RejectedByHomeAssistant` if HA's own editor would refuse *entry*.
+
+    The check alone, for a caller writing several entries at once: each one is
+    checked before any is written.
+    """
+    error = await async_validation_error(hass, domain, yaml, entry, key)
+    if error is not None:
+        raise RejectedByHomeAssistant(
+            f"Home Assistant rejects this {domain}, so nothing was written: {error}"
+        )
 
 
 async def async_write_and_reload(

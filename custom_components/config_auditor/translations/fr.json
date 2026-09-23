@@ -261,7 +261,8 @@
       "open_editor": "Ouvrir l'éditeur",
       "automation": "Automatisation",
       "problem": "Problème",
-      "unknown_device_id": "device_id inconnu"
+      "unknown_device_id": "device_id inconnu",
+      "left_unchanged": "Laissés tels quels"
     },
     "notifications": {
       "copy_failed": "Échec de la copie",
@@ -339,7 +340,7 @@
       "success": "Correction Appliquée !",
       "error_unknown": "Erreur inconnue",
       "cannot_find_automation": "Impossible de trouver l'ID de l'automatisation",
-      "cannot_resolve_entity": "L'entité référencée par cet appareil n'a pas pu être résolue automatiquement. L'appareil a peut-être été ré-ajouté avec un nouvel identifiant. Veuillez corriger manuellement via l'éditeur."
+      "not_convertible": "Aucune des références d'appareil de cette automatisation n'a d'équivalent sur une entité qui se comporte exactement pareil : chacune reste telle quelle. La raison est indiquée ci-dessous ; modifiez l'automatisation à la main si besoin."
     },
     "instructions": {
       "open_yaml_editor": "Ouvrez l'automatisation dans l'éditeur YAML",

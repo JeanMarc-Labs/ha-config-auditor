@@ -261,7 +261,8 @@
       "open_editor": "Open editor",
       "automation": "Automatisering",
       "problem": "Probleem",
-      "unknown_device_id": "onbekend device_id"
+      "unknown_device_id": "onbekend device_id",
+      "left_unchanged": "Ongewijzigd gelaten"
     },
     "notifications": {
       "copy_failed": "Kopiëren mislukt",
@@ -339,7 +340,7 @@
       "success": "Oplossing succesvol toegepast!",
       "error_unknown": "Onbekende fout",
       "cannot_find_automation": "Automatiserings-ID niet gevonden",
-      "cannot_resolve_entity": "De entiteit waarnaar dit apparaat verwijst, kon niet automatisch worden omgezet. Het apparaat is mogelijk opnieuw toegevoegd met een nieuw ID. Herstel dit handmatig via de editor."
+      "not_convertible": "Geen van de apparaatverwijzingen hier heeft een op entiteiten gebaseerd equivalent dat zich precies hetzelfde gedraagt, dus elke verwijzing blijft zoals ze is. De reden staat hieronder; bewerk de automatisering zo nodig met de hand."
     },
     "instructions": {
       "open_yaml_editor": "Open de automatisering in de YAML-editor",
