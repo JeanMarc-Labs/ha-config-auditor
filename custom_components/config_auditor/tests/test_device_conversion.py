@@ -14,6 +14,7 @@ module in Home Assistant 2026.9.
 from __future__ import annotations
 
 import contextlib
+import copy
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -320,3 +321,111 @@ class TestDeviceTarget:
         selection = resolve.call_args.args[1]
         assert selection.device_ids == {"dev1", "dev2"}
         assert resolve.call_args.kwargs == {"expand_group": False}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Nested blocks: found where HA reads them, written back where they were
+# ═══════════════════════════════════════════════════════════════════════════
+
+LIGHT_ON = _condition("light", "is_on", "light.kitchen")
+SWITCH_OFF = _condition("switch", "is_off", "switch.pump")
+TOGGLE = _device("switch", "toggle", "switch.pump")
+
+# Every nesting HA's config_validation reads, each spelled the short way where
+# it has one: a single block in place of a list, `or:` for `condition: or`,
+# `condition: [...]` for `and`, a list as a parallel branch.
+NESTED = {
+    "triggers": [{"triggers": [_trigger("light", "turned_on", "light.kitchen")]}],
+    "conditions": [{"or": [LIGHT_ON]}],
+    "actions": [
+        {"choose": [{"conditions": LIGHT_ON, "sequence": [TOGGLE]}],
+         "default": {"action": "light.turn_on", "target": {"device_id": "dev1"}}},
+        {"if": [SWITCH_OFF],
+         "then": [{"repeat": {
+             "until": [{"condition": [SWITCH_OFF]}],
+             "sequence": [{"wait_for_trigger": _trigger("switch", "turned_on", "switch.pump")}],
+         }}],
+         "else": [{"sequence": [LIGHT_ON]}]},
+        {"parallel": [[TOGGLE], {"sequence": [TOGGLE]}]},
+        {"variables": {"device_id": "not a block"}},
+    ],
+}
+
+
+def _device_blocks(automation):
+    return [
+        (dc.location(b.path), b.role, dc.device_reference(b.role, b.config))
+        for b in dc.iter_blocks(automation)
+        if dc.device_reference(b.role, b.config)
+    ]
+
+
+class TestNestedBlocks:
+    def test_every_device_block_is_found_with_its_role(self):
+        assert _device_blocks(NESTED) == [
+            ("trigger[0].triggers[0]", "trigger", "device_id"),
+            ("condition[0].or[0]", "condition", "device_id"),
+            ("action[0].choose[0].conditions[0]", "condition", "device_id"),
+            ("action[0].choose[0].sequence[0]", "action", "device_id"),
+            ("action[0].default[0]", "action", "target"),
+            ("action[1].if[0]", "condition", "device_id"),
+            ("action[1].then[0].repeat.until[0].condition[0]", "condition", "device_id"),
+            ("action[1].then[0].repeat.sequence[0].wait_for_trigger[0]", "trigger", "device_id"),
+            ("action[1].else[0].sequence[0]", "condition", "device_id"),
+            ("action[2].parallel[0][0]", "action", "device_id"),
+            ("action[2].parallel[1].sequence[0]", "action", "device_id"),
+        ]
+
+    def test_a_condition_used_as_an_action_step_is_converted_as_a_condition(self, hass):
+        """It went to the action table, found no `is_on` action and was left alone."""
+        found = dc.find(hass, {"actions": [LIGHT_ON]}, service_key="action")
+        assert [(b.role, c.new) for b, c in found] == [
+            ("condition", {"condition": "state", "entity_id": "light.kitchen", "state": "on"}),
+        ]
+
+    def test_every_location_reads_back_as_its_path(self):
+        for block in dc.iter_blocks(NESTED):
+            assert dc.parse_location(dc.location(block.path)) == block.path
+
+    @pytest.mark.parametrize("text, path", [
+        ("action[0]", ("action", 0)),
+        ("action[3].target", ("action", 3)),  # the device_id-in-target issue's
+        ("action[1].then[0].repeat.sequence[0]", ("action", 1, "then", 0, "repeat", "sequence", 0)),
+        ("root", None),
+        ("trigger", None),
+        ("mode", None),
+        ("action[x]", None),
+    ])
+    def test_a_location_names_a_block_or_nothing(self, text, path):
+        assert dc.parse_location(text) == path
+
+    def test_a_scope_keeps_the_blocks_under_it(self, hass):
+        found = dc.find(hass, NESTED, service_key="action", scope=("action", 0, "choose"))
+        assert [dc.location(b.path) for b, _ in found] == [
+            "action[0].choose[0].conditions[0]", "action[0].choose[0].sequence[0]",
+        ]
+
+    def test_a_block_is_replaced_where_it_was(self):
+        automation = copy.deepcopy(NESTED)
+        path = ("action", 1, "then", 0, "repeat", "sequence", 0, "wait_for_trigger", 0)
+        assert dc.replace(automation, path, {"trigger": "state", "entity_id": "switch.pump"})
+        # One block in place of a list stays one block.
+        assert automation["actions"][1]["then"][0]["repeat"]["sequence"][0] == {
+            "wait_for_trigger": {"trigger": "state", "entity_id": "switch.pump"},
+        }
+        assert dc.replace(automation, ("action", 2, "parallel", 0, 0), {"action": "switch.toggle"})
+        assert automation["actions"][2]["parallel"][0] == [{"action": "switch.toggle"}]
+        replaced = {"action[1].then[0].repeat.sequence[0].wait_for_trigger[0]", "action[2].parallel[0][0]"}
+        assert _device_blocks(automation) == [b for b in _device_blocks(NESTED) if b[0] not in replaced]
+
+    @pytest.mark.parametrize("path", [
+        ("action", 3),                           # no device there
+        ("action", 0, "choose", 1, "sequence", 0),  # no second option
+        ("action", 9),
+        ("condition", 0, "and", 0),
+        ("mode", 0),
+    ])
+    def test_a_path_that_leads_to_no_device_block_changes_nothing(self, path):
+        automation = copy.deepcopy(NESTED)
+        assert dc.replace(automation, path, {"action": "light.turn_on"}) is False
+        assert automation == NESTED

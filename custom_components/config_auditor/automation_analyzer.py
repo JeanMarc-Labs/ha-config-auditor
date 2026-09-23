@@ -18,6 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import area_registry as ar
 from homeassistant.util import slugify as ha_slugify
 
+from . import device_conversion
 from .translation_utils import TranslationHelper
 from .yaml_sources import (
     iter_domain_files,
@@ -1072,7 +1073,10 @@ class AutomationAnalyzer:
         for idx, action in enumerate(actions):
             if isinstance(action, dict):
                 self._analyze_action(entity_id, alias or entity_id, automation_id, action, idx)
-        
+
+        # The loops above see the top level only.
+        self._analyze_nested_device_blocks(entity_id, alias or entity_id, automation_id, config)
+
         # Analyze mode
         self._analyze_mode(entity_id, alias or entity_id, automation_id, config)
 
@@ -1406,6 +1410,44 @@ class AutomationAnalyzer:
         target = action.get("target", {})
         if isinstance(target, dict):
             self._check_unknown_targets(entity_id, alias, automation_id, target, idx)
+
+    # (block role, device reference) -> (issue type, recommendation key)
+    _NESTED_DEVICE_ISSUES = {
+        ("trigger", "device_id"): ("device_id_in_trigger", "use_entity_id_instead_device"),
+        ("condition", "device_id"): ("device_id_in_condition", "use_entity_id_instead_device"),
+        ("action", "device_id"): ("device_id_in_action", "use_entity_id_in_target"),
+        ("action", "target"): ("device_id_in_target", "use_entity_id_in_target"),
+    }
+
+    def _analyze_nested_device_blocks(
+        self, entity_id: str, alias: str, automation_id: str, config: dict[str, Any]
+    ) -> None:
+        """A device block in a choose: / if: / repeat: / parallel: / sequence:.
+
+        One issue per block, typed by the block itself. The message names the
+        top-level trigger, condition or action holding it, the location the
+        path inside -- which the device_id fix converts, and nothing else.
+        """
+        t = self._translator.t
+        for block in device_conversion.iter_blocks(config):
+            if len(block.path) <= 2:
+                continue  # the top level has its own checks
+            reference = device_conversion.device_reference(block.role, block.config)
+            if reference is None:
+                continue
+            issue_type, recommendation = self._NESTED_DEVICE_ISSUES[(block.role, reference)]
+            section, idx = block.path[0], block.path[1]
+            self.issues.append({
+                "entity_id": entity_id,
+                "alias": alias,
+                "automation_id": automation_id,
+                "type": issue_type,
+                "severity": "high",
+                "message": t(f"{section}_uses_device_id", idx=idx),
+                "location": device_conversion.location(block.path),
+                "recommendation": t(recommendation),
+                "fix_available": True,
+            })
 
     # ── P0 helpers ────────────────────────────────────────────────────────────
 

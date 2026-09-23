@@ -280,3 +280,48 @@ class TestHacaIgnoreInAutomationAnalyzer:
         await a._load_ignored_entities()
         assert a._is_ignored("automation.skip_me") is True
         assert a._is_ignored("automation.normal") is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Device blocks below the top level
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestNestedDeviceBlocks:
+    """Only the top level was checked: a device block in a choose: had no issue,
+    so the panel never offered its fix."""
+
+    def _issues(self, config):
+        a = make_analyzer()
+        a.issues = []
+        a._analyze_automation("automation.nested", {"id": "n", "alias": "N", "description": "d", **config})
+        return [(i["type"], i["location"], i["message"]) for i in a.issues if "device" in i["type"]]
+
+    def test_each_nested_block_is_reported_where_it_is(self):
+        on = {"condition": "device", "device_id": "d1", "domain": "light", "type": "is_on",
+              "entity_id": "light.kitchen"}
+        assert self._issues({
+            "triggers": [{"trigger": "state", "entity_id": "light.kitchen"}],
+            "conditions": [{"condition": "not", "conditions": [on]}],
+            "actions": [
+                {"delay": 1},
+                {"choose": [{"conditions": [on], "sequence": [
+                    {"device_id": "d1", "domain": "light", "type": "turn_off", "entity_id": "light.kitchen"},
+                ]}], "default": [{"action": "light.turn_on", "target": {"device_id": "d1"}}]},
+                {"wait_for_trigger": [{"trigger": "device", "device_id": "d1", "domain": "light",
+                                       "type": "turned_on", "entity_id": "light.kitchen"}]},
+            ],
+        }) == [
+            # The message names the top-level block holding it.
+            ("device_id_in_condition", "condition[0].conditions[0]", "condition_uses_device_id"),
+            ("device_id_in_condition", "action[1].choose[0].conditions[0]", "action_uses_device_id"),
+            ("device_id_in_action", "action[1].choose[0].sequence[0]", "action_uses_device_id"),
+            ("device_id_in_target", "action[1].default[0]", "action_uses_device_id"),
+            ("device_id_in_trigger", "action[2].wait_for_trigger[0]", "action_uses_device_id"),
+        ]
+
+    def test_a_top_level_block_is_reported_once_as_before(self):
+        issues = self._issues({
+            "triggers": [{"trigger": "state", "entity_id": "light.kitchen"}],
+            "actions": [{"device_id": "d1", "domain": "light", "type": "turn_off", "entity_id": "light.kitchen"}],
+        })
+        assert issues == [("device_id_in_action", "action[0]", "action_uses_device_id")]

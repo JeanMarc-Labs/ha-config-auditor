@@ -529,6 +529,128 @@ class TestFixesWithoutReload:
         assert scoped["skipped"] == []
 
 
+# A device block in every place HA reads one below the top level. Only the top
+# level was converted: the rest stayed, and was not even reported.
+NESTED = (
+    "# mine\n"
+    "- id: nested\n"
+    "  triggers:\n"
+    "    - triggers:\n"
+    "        - {trigger: device, device_id: d1, domain: binary_sensor, type: opened, entity_id: binary_sensor.door, id: door}\n"
+    "  conditions:\n"
+    "    - or:\n"
+    "        - {condition: device, device_id: d1, domain: light, type: is_on, entity_id: light.kitchen}\n"
+    "  actions:\n"
+    "    - choose:\n"
+    "        - conditions:\n"
+    "            - {condition: device, device_id: d1, domain: switch, type: is_off, entity_id: switch.pump}\n"
+    "          sequence:\n"
+    "            - {device_id: d1, domain: switch, type: turn_on, entity_id: switch.pump}\n"
+    "      default:\n"
+    "        - action: light.turn_off\n"
+    "          target:\n"
+    "            device_id: d1\n"
+    "    - if:\n"
+    "        - {condition: device, device_id: d1, domain: light, type: is_off, entity_id: light.kitchen}\n"
+    "      then:\n"
+    "        - repeat:\n"
+    "            until:\n"
+    "              - {condition: device, device_id: d1, domain: switch, type: is_on, entity_id: switch.pump}\n"
+    "            sequence:\n"
+    "              - wait_for_trigger:\n"
+    "                  - {trigger: device, device_id: d1, domain: switch, type: turned_on, entity_id: switch.pump}\n"
+    "                timeout: '00:00:30'\n"
+    "    - parallel:\n"
+    "        - - {device_id: d1, domain: light, type: toggle, entity_id: light.kitchen}\n"
+    "        - sequence:\n"
+    "            - {condition: device, device_id: d1, domain: light, type: is_on, entity_id: light.kitchen}\n"
+)
+NESTED_FILES = {
+    "configuration.yaml": "automation: !include automations.yaml\n",
+    "automations.yaml": NESTED,
+}
+
+
+class TestNestedDeviceBlocks:
+    @pytest.mark.asyncio
+    async def test_every_nested_block_is_converted_into_one_home_assistant_loads(self, tmp_path):
+        from custom_components.config_auditor import device_conversion
+
+        for name, text in NESTED_FILES.items():
+            (tmp_path / name).write_text(text, encoding="utf-8")
+        async with _real_hass(tmp_path) as hass:
+            from homeassistant.helpers import entity_registry as er
+
+            from custom_components.config_auditor.tests.conftest import MockEntityRegistry
+
+            hass.data[er.DATA_REGISTRY] = MockEntityRegistry()
+            with patch.object(
+                device_conversion, "_device_entities", return_value={"light.kitchen", "switch.pump"}
+            ):
+                preview = await _assistant(hass).preview_device_id_fix("nested")
+                with patch.object(yw._LOGGER, "debug") as debug:
+                    result = await _assistant(hass).apply_device_id_fix("nested")
+
+        assert preview["skipped"] == []
+        assert [c["location"] for c in preview["changes"]] == [
+            "trigger[0].triggers[0]",
+            "condition[0].or[0]",
+            "action[0].choose[0].conditions[0]",
+            "action[0].choose[0].sequence[0]",
+            "action[0].default[0]",
+            "action[1].if[0]",
+            "action[1].then[0].repeat.until[0]",
+            "action[1].then[0].repeat.sequence[0].wait_for_trigger[0]",
+            "action[2].parallel[0][0]",
+            "action[2].parallel[1].sequence[0]",
+        ]
+        assert preview["changes"][3]["description"] == (
+            "Action 0 › choose[0].sequence[0]: switch.turn_on → switch.turn_on on switch.pump"
+        )
+        assert result["success"] is True, result
+        assert not [c for c in debug.call_args_list if "Could not validate" in str(c)]
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert "device_id" not in written
+        assert written.startswith("# mine\n")
+        assert "id: door" in written and "timeout: '00:00:30'" in written
+
+    @pytest.mark.asyncio
+    async def test_the_fix_of_one_nested_issue_converts_that_block_only(self, tmp_path):
+        hass = _hass(tmp_path, NESTED_FILES)
+        assistant = _assistant(hass)
+        location = "action[0].choose[0].conditions[0]"
+        preview = await assistant.preview_device_id_fix("nested", location=location)
+        with patch(
+            "homeassistant.components.automation.config.async_validate_config_item",
+            AsyncMock(return_value=None),
+        ):
+            result = await assistant.apply_device_id_fix("nested", location=location)
+
+        assert [c["location"] for c in preview["changes"]] == [location]
+        assert result["success"] is True and result["changes_applied"] == 1, result
+        written = (tmp_path / "automations.yaml").read_text(encoding="utf-8")
+        assert written.count("device_id") == NESTED.count("device_id") - 1
+        assert "entity_id: switch.pump\n              state: 'off'" in written
+
+    @pytest.mark.asyncio
+    async def test_a_preview_the_file_no_longer_matches_writes_nothing(self, tmp_path):
+        hass = _hass(tmp_path, NESTED_FILES)
+        assistant = _assistant(hass)
+        preview = await assistant.preview_device_id_fix("nested")
+        # The user converts the parallel branch by hand in the meantime.
+        edited = NESTED.replace(
+            "{device_id: d1, domain: light, type: toggle, entity_id: light.kitchen}",
+            "{action: light.toggle, target: {entity_id: light.kitchen}}",
+        )
+        (tmp_path / "automations.yaml").write_text(edited, encoding="utf-8")
+        result = await assistant.apply_device_id_fix("nested", preview=preview)
+
+        assert result["success"] is False
+        assert "changed since the preview" in result["error"]
+        assert (tmp_path / "automations.yaml").read_text(encoding="utf-8") == edited
+        assert _backups(tmp_path) == []
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # The panel's alias / description fix (websocket) and the AI optimizer
 # ═══════════════════════════════════════════════════════════════════════════
