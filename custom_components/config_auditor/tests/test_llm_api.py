@@ -205,9 +205,9 @@ class TestAutoBackupDelegation:
         # Past the docstring: it names write_back and the rollback itself, so
         # asserting over the whole function would pass on the prose alone.
         code = src[start:end].split('"""', 2)[-1]
-        assert "write_back" in code, \
-            "async_write_and_reload must go through write_back, which is "\
-            "what takes the snapshot the rollback restores"
+        assert "async_write_checked(" in code, \
+            "async_write_and_reload must write through async_write_checked, whose "\
+            "write_back takes the snapshot the rollback restores"
         assert "_rollback" in code, \
             "async_write_and_reload must restore the file when the reload fails"
         # Not just "a RuntimeError somewhere": the function already raises one on

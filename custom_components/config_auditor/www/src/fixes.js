@@ -408,10 +408,17 @@
                 </div>`);
 
         try {
-          await this.hass.callService('config_auditor', 'fix_description', {
-            entity_id: issue.entity_id || issue.alias,
-            description: desc
+          // A refusal comes back as a result, not as an error: callService
+          // dropped it, and the modal closed as if the description was saved.
+          const resp = await this.hass.callWS({
+            type: 'call_service',
+            domain: 'config_auditor',
+            service: 'fix_description',
+            service_data: { entity_id: issue.entity_id || issue.alias, description: desc },
+            return_response: true
           });
+          const result = resp?.response || resp;
+          if (!result?.success) throw new Error(result?.error || this.t('fix.error_unknown'));
 
           // Trigger a new scan so the issue disappears from the list
           await this.hass.callService('config_auditor', 'scan_automations');

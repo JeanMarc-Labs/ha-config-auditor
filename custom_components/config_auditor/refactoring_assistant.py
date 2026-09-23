@@ -18,6 +18,7 @@ from .yaml_writer import (
     EditScan,
     RejectedByHomeAssistant,
     async_write_and_reload,
+    async_write_checked,
     create_backup,
     list_entries,
     open_domain_for_edit,
@@ -25,7 +26,6 @@ from .yaml_writer import (
     prune_backups,
     scan_in_passes,
     scan_named_domain_for_edit,
-    write_back,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -496,9 +496,6 @@ class RefactoringAssistant:
         if not scan.found:
             return {"success": False, "error": f"Automation not found: {automation_id}"}
 
-        target = Path(scan.path)
-        backup_path = await self._create_backup(target)
-
         try:
             automation = scan.entry
 
@@ -524,7 +521,12 @@ class RefactoringAssistant:
                     items[idx] = change["to"]
                 automation[key] = items
 
-            await self.hass.async_add_executor_job(write_back, scan.target)
+            # No reload here, so HA would only disable a broken conversion at
+            # the user's next one — a device condition with no state mapping
+            # becomes a state condition without `state:`.
+            backup_path = await async_write_checked(
+                self.hass, scan.target, "automation", entry=automation, key=automation.get("id")
+            )
 
             return {
                 "success": True,
@@ -533,14 +535,13 @@ class RefactoringAssistant:
                 "backup_path": str(backup_path),
                 "message": "Changes applied successfully. Restart Home Assistant to apply."
             }
-            
+
+        except RejectedByHomeAssistant as e:
+            _LOGGER.info("device_id fix on %s not applied: %s", automation_id, e)
+            return {"success": False, "error": str(e)}
         except Exception as e:
             _LOGGER.error("Error applying fixes: %s", e)
-            return {
-                "success": False,
-                "error": str(e),
-                "backup_path": str(backup_path)
-            }
+            return {"success": False, "error": str(e)}
 
     async def preview_mode_fix(self, automation_id: str, new_mode: str) -> dict[str, Any]:
         """Preview automation mode change."""
@@ -625,16 +626,15 @@ class RefactoringAssistant:
         if not scan.found:
             return {"success": False, "error": f"Automation not found: {automation_id}"}
 
-        target = Path(scan.path)
-        backup_path = await self._create_backup(target)
-
         try:
             automation = scan.entry
             automation["mode"] = new_mode
             if new_mode in ["queued", "parallel"] and "max" not in automation:
                 automation["max"] = 10
 
-            await self.hass.async_add_executor_job(write_back, scan.target)
+            backup_path = await async_write_checked(
+                self.hass, scan.target, "automation", entry=automation, key=automation.get("id")
+            )
 
             return {
                 "success": True,
@@ -643,14 +643,13 @@ class RefactoringAssistant:
                 "backup_path": str(backup_path),
                 "message": "Mode changed successfully. Restart Home Assistant to apply."
             }
-            
+
+        except RejectedByHomeAssistant as e:
+            _LOGGER.info("Mode fix on %s not applied: %s", automation_id, e)
+            return {"success": False, "error": str(e)}
         except Exception as e:
             _LOGGER.error("Error changing mode: %s", e)
-            return {
-                "success": False,
-                "error": str(e),
-                "backup_path": str(backup_path)
-            }
+            return {"success": False, "error": str(e)}
 
     async def preview_template_fix(self, automation_id: str) -> dict[str, Any]:
         """Preview template to native condition conversion."""
@@ -733,9 +732,6 @@ class RefactoringAssistant:
         if not scan.found:
             return {"success": False, "error": f"Automation not found: {automation_id}"}
 
-        target = Path(scan.path)
-        backup_path = await self._create_backup(target)
-
         try:
             automation = scan.entry
             cond_key = "conditions" if "conditions" in automation else "condition"
@@ -749,7 +745,9 @@ class RefactoringAssistant:
                     items[idx] = change["to"]
             automation[cond_key] = items
 
-            await self.hass.async_add_executor_job(write_back, scan.target)
+            backup_path = await async_write_checked(
+                self.hass, scan.target, "automation", entry=automation, key=automation.get("id")
+            )
 
             return {
                 "success": True,
@@ -758,9 +756,12 @@ class RefactoringAssistant:
                 "backup_path": str(backup_path),
                 "message": "Template fix applied successfully."
             }
+        except RejectedByHomeAssistant as e:
+            _LOGGER.info("Template fix on %s not applied: %s", automation_id, e)
+            return {"success": False, "error": str(e)}
         except Exception as e:
             _LOGGER.error("Error applying template fix: %s", e)
-            return {"success": False, "error": str(e), "backup_path": str(backup_path)}
+            return {"success": False, "error": str(e)}
 
     def _parse_is_state_template(self, template: str) -> dict[str, str] | None:
         """Parse is_state('entity', 'state') from template string."""
@@ -1327,11 +1328,15 @@ class RefactoringAssistant:
                     "error": f"Automation '{entity_id}' not found in any automation YAML file",
                 }
 
-        backup_path = await self._create_backup(Path(scan.path))
-
         try:
             scan.entry["description"] = description
-            await self.hass.async_add_executor_job(write_back, scan.target)
+            # A script is validated under its key, an automation under its `id`.
+            backup_path = await async_write_checked(
+                self.hass, scan.target,
+                "script" if is_script else "automation",
+                entry=scan.entry,
+                key=scan.key if is_script else scan.entry.get("id"),
+            )
 
             return {
                 "success": True,
@@ -1341,6 +1346,9 @@ class RefactoringAssistant:
                 "message": "Description saved. Reload automations/scripts to apply.",
             }
 
+        except RejectedByHomeAssistant as exc:
+            _LOGGER.info("Description fix on %s not applied: %s", entity_id, exc)
+            return {"success": False, "error": str(exc)}
         except Exception as exc:
             _LOGGER.error("apply_description_fix error: %s", exc)
-            return {"success": False, "error": str(exc), "backup_path": str(backup_path)}
+            return {"success": False, "error": str(exc)}
