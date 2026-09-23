@@ -11,7 +11,8 @@ maintains by hand, not just around the entry being edited.
 Everything that edits an existing config file now goes through this module:
 
 * :func:`read_for_edit` parses in **ruamel round-trip** mode, so comments, key
-  order, quoting style and anchors survive the edit;
+  order, quoting style and anchors survive the edit, and the file is written
+  back in its own layout -- Home Assistant's editor style or the docs style;
 * it refuses a file carrying an unresolved Home Assistant tag (``!secret``,
   ``!include``, ``!input``) -- rewriting one would inline a secret in clear
   text or flatten an include, so the caller reports "not found" instead;
@@ -32,6 +33,7 @@ the write side, and the only one.
 """
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 import functools
 import logging
@@ -210,24 +212,180 @@ def _home_assistant_scalars():
     return Constructor, Representer
 
 
+class _Layout(NamedTuple):
+    """How a file indents its blocks and wraps its long values."""
+
+    mapping: int  # a nested mapping, from its key
+    offset: int   # a block sequence's dash, from its key
+    width: int    # where a long value is wrapped
+
+
+# For a file with nothing to measure -- a new one, or one without a nested
+# list -- the layout of Home Assistant's docs, which HACA has always written.
+_DEFAULT_LAYOUT = _Layout(mapping=2, offset=2, width=80)
+
+# PyYAML breaks a long value at the first space past column 80, so a file with
+# a space further right was not wrapped by a dumper: its long lines are the
+# user's own, and stay long.
+_WRAPPED_BY_A_DUMPER = 81
+_NO_WRAP = 4096
+
+# A key opening a block (`triggers:`), and any key -- quoted, flow and tagged
+# keys are left out, which only makes the vote smaller.
+_BLOCK_KEY_RE = re.compile(r"^[^\s#'\"{\[&*!|>%@`][^#]*:$")
+_KEY_RE = re.compile(r"^[^\s#'\"{\[&*!|>%@`-][^#]*?:(\s|$)")
+
+# Document markers and directives: always at column 0, and never content.
+_NOT_CONTENT = ("---", "...", "%")
+
+
+def _measure_layout(text: str) -> _Layout:
+    """How *text* lays out its blocks, measured where a key opens one.
+
+    Home Assistant's editor writes a list flush with its key (``triggers:``
+    then ``- trigger:``); its docs, and most hand-written files, indent it by
+    two. The most common spacing wins, so one entry pasted in the other style
+    does not flip the whole file.
+    """
+    offsets: Counter[int] = Counter()
+    mappings: Counter[int] = Counter()
+    opener: int | None = None  # column of the key that opened a block just above
+    long_lines = False
+    for line in text.splitlines():
+        content = line.strip()
+        if not content or content.startswith("#"):
+            continue
+        long_lines = long_lines or " " in line[_WRAPPED_BY_A_DUMPER:]
+        lead = len(line) - len(line.lstrip(" "))
+        if opener is not None:
+            if (content == "-" or content.startswith("- ")) and lead >= opener:
+                offsets[lead - opener] += 1
+            elif lead > opener and _KEY_RE.match(content):
+                mappings[lead - opener] += 1
+        # In `- - key:` the key sits after every dash on the line.
+        body, column = content, lead
+        while body.startswith("- "):
+            rest = body[2:].lstrip(" ")
+            column += len(body) - len(rest)
+            body = rest
+        opener = column if _BLOCK_KEY_RE.match(body.split(" #")[0].rstrip()) else None
+    return _Layout(
+        mappings.most_common(1)[0][0] if mappings else _DEFAULT_LAYOUT.mapping,
+        offsets.most_common(1)[0][0] if offsets else _DEFAULT_LAYOUT.offset,
+        _NO_WRAP if long_lines else _DEFAULT_LAYOUT.width,
+    )
+
+
+def _starts_with_a_list(text: str) -> bool:
+    for line in text.splitlines():
+        if line.strip() and not line.lstrip().startswith("#") and not line.startswith(_NOT_CONTENT):
+            return line.startswith("- ") or line.rstrip() == "-"
+    return False
+
+
+def _indent_lines(text: str, spaces: int) -> str:
+    pad = " " * spaces
+    return "".join(
+        line if not line.strip() or line.startswith(_NOT_CONTENT) else pad + line
+        for line in text.splitlines(keepends=True)
+    )
+
+
+def _dedent_lines(text: str, spaces: int) -> str:
+    pad = " " * spaces
+    return "".join(
+        line[spaces:] if line.startswith(pad) else line
+        for line in text.splitlines(keepends=True)
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def _layout_keeping_yaml():
+    """The ruamel ``YAML`` class HACA reads and writes with.
+
+    It writes a file back laid out the way it was, so the diff of an edit is
+    the lines that changed. A stock round-trip instance gets three things wrong:
+
+    * **Indentation is one setting per instance**, not per file, so a file
+      in Home Assistant's editor style (lists flush with their key) came back
+      in the docs style, or the other way round. :meth:`load` measures the
+      file and sets it (:func:`_measure_layout`).
+    * **The dash offset applies at the root too**: a root list came back
+      indented by two. The dump removes that indent. The load first adds it,
+      because ruamel puts a comment back at its original column: shifting only
+      the output would move every comment two columns left.
+    * **A long plain value is wrapped differently from PyYAML**, which Home
+      Assistant writes its files with: ruamel moves a word that would cross
+      the width to the next line, PyYAML lets it cross and breaks after. A
+      plain value is written by PyYAML's own code, run on ruamel's emitter --
+      the attributes it reads have the same names in both, ruamel being a
+      fork of it -- and libyaml, the C dumper HA uses when it can, wraps it
+      the same way. Quoted values already wrap like libyaml. A file with long
+      lines of its own is not wrapped at all.
+    """
+    from ruamel.yaml import YAML
+    from ruamel.yaml.emitter import Emitter
+    import yaml as pyyaml
+
+    constructor, representer = _home_assistant_scalars()
+
+    class HomeAssistantEmitter(Emitter):
+        def write_plain(self, text, split=True):
+            # A root-level scalar is ruamel's own business.
+            if self.root_context:
+                return super().write_plain(text, split)
+            return pyyaml.emitter.Emitter.write_plain(self, text, split)
+
+    class LayoutKeepingYaml(YAML):
+        def __init__(self):
+            super().__init__()  # round-trip
+            self.Constructor = constructor
+            self.Representer = representer
+            self.Emitter = HomeAssistantEmitter
+            self.preserve_quotes = True
+            self._use(_DEFAULT_LAYOUT)
+
+        def _use(self, layout: _Layout) -> None:
+            self.file_layout = layout
+            self.indent(
+                mapping=layout.mapping,
+                sequence=layout.offset + 2,
+                offset=layout.offset,
+            )
+
+        def load(self, stream):
+            text = stream if isinstance(stream, str) else stream.read()
+            text = text.lstrip("﻿")
+            self._use(_measure_layout(text))
+            if self.file_layout.offset and _starts_with_a_list(text):
+                text = _indent_lines(text, self.file_layout.offset)
+            return super().load(text)
+
+        def dump(self, data, stream=None, *, transform=None):
+            shift = self.file_layout.offset if isinstance(data, list) else 0
+            # The root indent is removed after wrapping: widen by as much.
+            self.width = self.file_layout.width + shift
+            if shift:
+                then = transform
+
+                def transform(output):
+                    output = _dedent_lines(output, shift)
+                    return then(output) if then else output
+
+            return super().dump(data, stream, transform=transform)
+
+    return LayoutKeepingYaml
+
+
 def roundtrip_yaml():
     """The configured ruamel instance every read and write in HACA shares.
 
-    These settings are what produce a minimal diff: without them a rewritten
-    file comes back re-indented from top to bottom and the user's ``git diff``
-    is the whole file. Its scalar handling is what keeps a new string a string
-    once Home Assistant reads the file back -- see
-    :func:`_home_assistant_scalars`.
+    It writes a file back the way Home Assistant will read it
+    (:func:`_home_assistant_scalars`) and the way the file was laid out
+    (:func:`_layout_keeping_yaml`). Use one instance per file: loading a file
+    sets the instance to that file's layout.
     """
-    from ruamel.yaml import YAML
-
-    yaml = YAML()  # default = round-trip
-    yaml.Constructor, yaml.Representer = _home_assistant_scalars()
-    yaml.preserve_quotes = True
-    # Home Assistant's own 2-space indent, so an edited file still looks
-    # hand-written next to the parts we did not touch.
-    yaml.indent(mapping=2, sequence=4, offset=2)
-    return yaml
+    return _layout_keeping_yaml()()
 
 
 def read_for_edit(path: str, shape: type | None = None) -> EditTarget:
