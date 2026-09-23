@@ -49,7 +49,7 @@ import shutil
 from typing import Any, Callable, NamedTuple
 
 from .const import BACKUP_DIR
-from .yaml_sources import is_within, iter_domain_files
+from .yaml_sources import iter_domain_files
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,17 +59,22 @@ _LOGGER = logging.getLogger(__name__)
 # otherwise wipe every backup the panel offers to restore.
 BACKUP_KEEP = 10
 
-# Snapshots of the files HACA writes verbatim or deletes -- a raw config file,
-# a blueprint -- get a subtree of their own that mirrors each file's path under
-# the config dir. The panel lists and restores the top level of .haca_backups
-# and matches a backup to an *automation* file by name alone, so a blueprint
-# called `lights.yaml` must not land beside the snapshots of
-# `automations/lights.yaml`; and two blueprints of one name in different
-# folders must not share a pruning quota.
+# Every snapshot sits in a folder of its own source file, at that file's path
+# under the config dir: `.haca_backups/files/automations/kitchen.yaml/
+# 20260923_101500.yaml` is a copy of `automations/kitchen.yaml`. The folder is
+# where a restore writes, so two files of one name -- a script file and an
+# automation file both called `lights.yaml` on a split config, two blueprints
+# in different folders -- can neither be restored into each other nor evict
+# each other's snapshots.
 FILE_SNAPSHOT_DIR = "files"
 
-# `<stem>_<YYYYmmdd_HHMMSS>[_<seq>].yaml` -- the name refactoring_assistant has
-# always written, and the one its restore path parses back.
+# `<YYYYmmdd_HHMMSS>[_<seq>].yaml` -- a snapshot inside its file's folder.
+_SNAPSHOT_NAME_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})(?:_(?P<seq>\d+))?\.yaml$")
+
+# `<stem>_<YYYYmmdd_HHMMSS>[_<seq>].yaml` at the top of .haca_backups: the
+# flat layout written up to 1.8.0. Only the stem says where such a backup came
+# from, so its restore still looks the stem up among the automation files, as
+# it always did. Nothing writes this layout any more.
 _BACKUP_NAME_RE = re.compile(
     r"^(?P<stem>.+)_(?P<ts>\d{8}_\d{6})(?:_(?P<seq>\d+))?\.yaml$"
 )
@@ -471,88 +476,213 @@ def backup_stem(name: str) -> str | None:
     return parsed[0] if parsed else None
 
 
+class BackupFile(NamedTuple):
+    """One snapshot in ``.haca_backups``, in either layout."""
+
+    path: str
+    # The file a restore writes, relative to the config dir with "/" -- None
+    # for a flat backup from 1.8.0 or earlier, which only carries a stem.
+    source: str | None
+    stem: str
+    timestamp: str  # raw YYYYmmdd_HHMMSS
+    sequence: int   # 1, then 2, 3... for later snapshots within one second
+
+
+def _age(timestamp: str, sequence: str | None) -> tuple[str, int]:
+    """Sort key, oldest first. The sequence compares as a number: by name,
+    `_10` sorted before `_2`, and pruning deleted the wrong one."""
+    return timestamp, int(sequence or 1)
+
+
+def _config_relative(config_dir: str, source: str) -> str:
+    """*source*'s path under the config dir; ValueError when it is not under it.
+
+    Tried as written first, then with links resolved: a file linked in from
+    elsewhere keeps the place Home Assistant reads it from, and a config dir
+    that is itself a link still matches a caller that resolved its path.
+    """
+    for resolve in (os.path.abspath, os.path.realpath):
+        root, path = resolve(config_dir), resolve(source)
+        try:
+            if path != root and os.path.commonpath([root, path]) == root:
+                return os.path.relpath(path, root)
+        except ValueError:  # another drive, on Windows
+            continue
+    raise ValueError(f"{source} is outside the config directory {config_dir}")
+
+
 def create_backup(config_dir: str, source: str) -> str:
-    """Snapshot *source* into ``.haca_backups``, then prune that file's old ones.
+    """Snapshot *source* into its own folder under ``.haca_backups/files``.
 
-    Named after the file it copies -- ``automations_<ts>.yaml`` on a flat
-    install, ``<name>_<ts>.yaml`` for a file inside a merged folder -- which is
-    what lets the panel's restore put it back where it came from.
+    Keeps the newest :data:`BACKUP_KEEP` of that one file and returns the
+    copy's path. Raises when there is no such file, or when it lies outside
+    the config dir.
     """
-    src = os.path.abspath(source)
-    if not os.path.isfile(src):
+    if not os.path.isfile(source):
         raise FileNotFoundError(f"nothing to back up at {source}")
-    return _snapshot_into(os.path.join(config_dir, BACKUP_DIR), src)
-
-
-def snapshot_file(config_dir: str, source: str) -> str | None:
-    """Snapshot a file HACA is about to overwrite verbatim or delete.
-
-    Lands under ``.haca_backups/files/`` at the file's own path relative to the
-    config dir, named like every other backup, and keeps the newest
-    :data:`BACKUP_KEEP` of that one file. None when the file does not exist
-    yet: a new file has nothing to lose. Raises when the snapshot cannot be
-    taken -- the caller must not write without one.
-    """
-    root = os.path.realpath(config_dir)
-    src = os.path.realpath(source)
-    if not os.path.isfile(src):
-        return None
-    if not is_within(src, root):
-        raise ValueError(f"{source} is outside the config directory")
-    rel_dir = os.path.relpath(os.path.dirname(src), root)
-    return _snapshot_into(
-        os.path.normpath(os.path.join(root, BACKUP_DIR, FILE_SNAPSHOT_DIR, rel_dir)),
-        src,
+    folder = os.path.join(
+        os.path.abspath(config_dir), BACKUP_DIR, FILE_SNAPSHOT_DIR,
+        _config_relative(config_dir, source),
     )
+    os.makedirs(folder, exist_ok=True)
 
-
-def _snapshot_into(backup_dir: str, src: str) -> str:
-    """Copy *src* into *backup_dir* as ``<stem>_<ts>.yaml``, prune, return the copy."""
-    os.makedirs(backup_dir, exist_ok=True)
-
-    stem = os.path.splitext(os.path.basename(src))[0]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # One-second timestamps collide: two operations in the same second produced
-    # the same name and the second silently overwrote the first. A restore
-    # takes a pre-restore snapshot, so that collision could destroy the very
-    # backup being restored.
-    backup = os.path.join(backup_dir, f"{stem}_{timestamp}.yaml")
-    sequence = 2
-    while os.path.exists(backup):
-        backup = os.path.join(backup_dir, f"{stem}_{timestamp}_{sequence}.yaml")
+    # One-second timestamps collide, so a later snapshot in the same second is
+    # numbered after the highest one still there -- not into the first free
+    # name: pruning frees the oldest names first, and a snapshot that took one
+    # sorted as the oldest and was deleted the moment it was written.
+    sequence = 1 + max(
+        (
+            int(match["seq"] or 1)
+            for match in map(_SNAPSHOT_NAME_RE.match, os.listdir(folder))
+            if match and match["ts"] == timestamp
+        ),
+        default=0,
+    )
+    while True:
+        name = f"{timestamp}.yaml" if sequence == 1 else f"{timestamp}_{sequence}.yaml"
+        backup = os.path.join(folder, name)
+        if not os.path.exists(backup):
+            break
         sequence += 1
 
-    shutil.copy2(src, backup)
-    _prune_dir(backup_dir, stem)
+    shutil.copy2(source, backup)
+    _prune_folder(folder)
     return backup
 
 
-def prune_backups(config_dir: str, stem: str | None = None) -> None:
-    """Keep the newest :data:`BACKUP_KEEP` backups of each source file."""
-    _prune_dir(os.path.join(config_dir, BACKUP_DIR), stem)
+def snapshot_file(config_dir: str, source: str) -> str | None:
+    """:func:`create_backup`, or None when *source* does not exist yet.
+
+    For a write that may create its file: a new file has nothing to lose. A
+    snapshot that cannot be taken still raises -- the caller must not write
+    without one.
+    """
+    if not os.path.isfile(source):
+        return None
+    return create_backup(config_dir, source)
 
 
-def _prune_dir(backup_dir: str, stem: str | None = None) -> None:
-    """:func:`prune_backups` over one backup directory."""
+def backup_source(config_dir: str, backup: str) -> str | None:
+    """The file a snapshot restores to, or None when *backup* is not one.
+
+    Only the per-file layout answers: a flat backup from 1.8.0 or earlier
+    carries a stem, not a path. A folder that would restore into a hidden
+    directory, or a file other than YAML, is refused as well: HACA never
+    snapshots one, so it did not make that folder.
+    """
+    root = os.path.realpath(os.path.join(config_dir, BACKUP_DIR, FILE_SNAPSHOT_DIR))
+    path = os.path.realpath(backup)
+    if not _SNAPSHOT_NAME_RE.match(os.path.basename(path)):
+        return None
     try:
-        names = os.listdir(backup_dir)
+        if os.path.commonpath([root, path]) != root:
+            return None
+    except ValueError:
+        return None
+    rel = os.path.relpath(os.path.dirname(path), root)
+    parts = rel.replace(os.sep, "/").split("/")
+    if rel == os.curdir or any(p.startswith(".") for p in parts):
+        return None
+    if os.path.splitext(parts[-1])[1].lower() not in (".yaml", ".yml"):
+        return None
+    return os.path.join(os.path.abspath(config_dir), rel)
+
+
+def list_backup_files(config_dir: str) -> list[BackupFile]:
+    """Every snapshot in ``.haca_backups``, both layouts, newest first.
+
+    Anything else a user may have dropped in there -- the recorder editor's
+    ``configuration.yaml.<ts>.bak`` included -- is left out.
+    """
+    base = os.path.join(config_dir, BACKUP_DIR)
+    found: list[BackupFile] = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return found
+    for name in names:
+        match = _BACKUP_NAME_RE.match(name)
+        path = os.path.join(base, name)
+        if match and os.path.isfile(path):
+            found.append(BackupFile(
+                path, None, match["stem"], match["ts"], int(match["seq"] or 1),
+            ))
+    config_root = os.path.abspath(config_dir)
+    for folder, dirs, files in os.walk(os.path.join(base, FILE_SNAPSHOT_DIR)):
+        dirs.sort()
+        for name in files:
+            match = _SNAPSHOT_NAME_RE.match(name)
+            path = os.path.join(folder, name)
+            source = backup_source(config_dir, path) if match else None
+            if source is None:
+                continue
+            found.append(BackupFile(
+                path,
+                os.path.relpath(source, config_root).replace(os.sep, "/"),
+                os.path.splitext(os.path.basename(source))[0],
+                match["ts"],
+                int(match["seq"] or 1),
+            ))
+    found.sort(key=lambda b: (b.timestamp, b.sequence), reverse=True)
+    return found
+
+
+def prune_backups(config_dir: str) -> None:
+    """Keep the newest :data:`BACKUP_KEEP` snapshots of each source file.
+
+    A flat backup from 1.8.0 or earlier counts against its stem, as it did.
+    """
+    groups: dict[tuple[str, str], list[BackupFile]] = {}
+    for backup in list_backup_files(config_dir):
+        key = ("file", backup.source) if backup.source else ("stem", backup.stem)
+        groups.setdefault(key, []).append(backup)
+    for group in groups.values():
+        for old in group[BACKUP_KEEP:]:  # newest first already
+            _unlink_backup(old.path)
+
+
+def _prune_folder(folder: str) -> None:
+    """:func:`prune_backups` for the one file whose folder this is."""
+    try:
+        names = [n for n in os.listdir(folder) if _SNAPSHOT_NAME_RE.match(n)]
     except OSError:
         return
+    names.sort(key=lambda n: _age(*_SNAPSHOT_NAME_RE.match(n).group("ts", "seq")),
+               reverse=True)
+    for old in names[BACKUP_KEEP:]:
+        _unlink_backup(os.path.join(folder, old))
 
-    by_stem: dict[str, list[str]] = {}
-    for name in names:
-        owner = backup_stem(name)
-        if owner is None or (stem is not None and owner != stem):
-            continue
-        by_stem.setdefault(owner, []).append(name)
 
-    for group in by_stem.values():
-        # The timestamp is fixed-width, so the name sorts by age.
-        for old in sorted(group, reverse=True)[BACKUP_KEEP:]:
-            try:
-                os.unlink(os.path.join(backup_dir, old))
-            except OSError as exc:
-                _LOGGER.warning("Could not delete old backup %s: %s", old, exc)
+def _unlink_backup(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError as exc:
+        _LOGGER.warning("Could not delete old backup %s: %s", path, exc)
+
+
+def restore_snapshot(config_dir: str, backup: str, destination: str) -> str | None:
+    """Put *backup* back over *destination*, atomically.
+
+    Snapshots the file it replaces first and returns that snapshot's path
+    (None when *destination* no longer exists, a deleted blueprint say). The
+    backup is read before that snapshot is taken: taking it prunes, and the
+    backup being restored may be the oldest one kept.
+    """
+    with open(backup, "rb") as fh:
+        content = fh.read()
+    replaced = snapshot_file(config_dir, destination)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    tmp = f"{destination}{_TMP_SUFFIX}"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(content)
+        _copy_mode(destination, tmp)
+        os.replace(tmp, destination)
+    except Exception:
+        _discard(tmp)
+        raise
+    return replaced
 
 
 def atomic_write(path: str, content: str, encoding: str = "utf-8") -> None:

@@ -275,8 +275,9 @@ def _assistant(hass):
 
 
 def _backups(tmp_path) -> list[str]:
+    """Every snapshot, at any depth: each file's are kept in a folder of its own."""
     folder = tmp_path / ".haca_backups"
-    return sorted(os.listdir(folder)) if folder.is_dir() else []
+    return sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
 
 
 @contextlib.asynccontextmanager

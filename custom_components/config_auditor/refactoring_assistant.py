@@ -20,11 +20,14 @@ from .yaml_writer import (
     RejectedByHomeAssistant,
     async_write_and_reload,
     async_write_checked,
+    backup_source,
     create_backup,
+    list_backup_files,
     list_entries,
     open_domain_for_edit,
     parse_backup_name,
     prune_backups,
+    restore_snapshot,
     roundtrip_yaml,
     scan_in_passes,
     scan_named_domain_for_edit,
@@ -34,10 +37,10 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _backup_stem(path: Path) -> str | None:
-    """The source file's stem behind a `<stem>_<YYYYmmdd_HHMMSS>.yaml` backup.
+    """The source file's stem behind a flat `<stem>_<YYYYmmdd_HHMMSS>.yaml` backup.
 
-    Backups are named after the file they copy, so a split config's backups no
-    longer all claim to be `automations_*`.
+    The layout written up to 1.8.0; snapshots now sit in a folder named after
+    their file's path instead (:func:`yaml_writer.backup_source`).
     """
     parsed = parse_backup_name(path.name)
     return parsed[0] if parsed else None
@@ -581,51 +584,33 @@ class RefactoringAssistant:
         return None
 
     async def list_backups(self) -> list[dict]:
-        """List available backups."""
+        """List every snapshot HACA holds, newest first.
+
+        Each is named by its path under ``.haca_backups`` -- a snapshot's own
+        name is only its timestamp -- so two files of one name read apart.
+        ``source`` is the file a restore writes; for a flat backup from 1.8.0
+        or earlier it is only the stem the restore will look up.
+        """
 
         def _scan_backups():
             results = []
-            # The directory probe belongs in here with the walk: on the event
-            # loop it is one more blocking stat() for Home Assistant to warn
-            # about.
-            if not self._backup_dir.is_dir():
-                _LOGGER.debug("Backup directory does not exist: %s", self._backup_dir)
-                return results
-            try:
-                _LOGGER.debug("Scanning backups in: %s", self._backup_dir)
-                for entry in self._backup_dir.iterdir():
-                    # Any `<source stem>_<timestamp>.yaml`, not just
-                    # `automations_*`: a split config backs up the file that
-                    # holds the entry, which is rarely named automations.yaml.
-                    if entry.is_file() and _backup_stem(entry):
-                        try:
-                            stat = entry.stat()
-                            # Parser la date depuis le nom de fichier (automations_YYYYMMDD_HHMMSS.yaml)
-                            # Plus fiable que st_mtime qui reflète l'heure de copie/restauration
-                            created_iso = datetime.fromtimestamp(stat.st_mtime).isoformat()
-                            try:
-                                ts_str = parse_backup_name(entry.name)[1]
-                                parsed = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
-                                created_iso = parsed.isoformat()
-                            except Exception:
-                                pass  # garder st_mtime si parsing impossible
-                            results.append({
-                                "path": str(entry.absolute()),
-                                "name": entry.name,
-                                "size": stat.st_size,
-                                "created": created_iso,
-                                "source": _backup_stem(entry) + ".yaml",
-                            })
-                        except Exception as err:
-                            _LOGGER.warning("Error reading backup file %s: %s", entry.name, err)
-                            
-                # Sort by reverse chronological order (newest first) based on created timestamp
-                results.sort(key=lambda x: (x["created"], x["name"]), reverse=True)
-                return results[:10]
-                
-            except Exception as err:
-                _LOGGER.error("Error scanning backup directory: %s", err)
-                return []
+            for backup in list_backup_files(self._config_dir):
+                try:
+                    size = Path(backup.path).stat().st_size
+                except OSError as err:
+                    _LOGGER.warning("Error reading backup file %s: %s", backup.path, err)
+                    continue
+                # The creation time is the one in the name: st_mtime shows
+                # when the file was last copied or restored.
+                created = datetime.strptime(backup.timestamp, "%Y%m%d_%H%M%S")
+                results.append({
+                    "path": str(Path(backup.path).absolute()),
+                    "name": Path(backup.path).relative_to(self._backup_dir).as_posix(),
+                    "size": size,
+                    "created": created.isoformat(),
+                    "source": backup.source or f"{backup.stem}.yaml",
+                })
+            return results
 
         try:
             return await self.hass.async_add_executor_job(_scan_backups)
@@ -649,7 +634,7 @@ class RefactoringAssistant:
         return "ok" if backup_file.is_file() else "missing"
 
     async def restore_backup(self, backup_path: str) -> dict[str, Any]:
-        """Restore automations from backup.
+        """Put a snapshot back over the file it was taken from.
 
         Security: backup_path is validated to be inside the designated backup
         directory before any file operation, preventing path-traversal attacks.
@@ -677,39 +662,37 @@ class RefactoringAssistant:
             }
         
         # ── Which file does this backup belong to? ────────────────────────
-        # The backup is named after its source (`<stem>_<timestamp>.yaml`), so
-        # the destination is the automation file with that stem. Restoring
-        # blindly to `<config>/automations.yaml` — what this did before — wrote
-        # a file HA does not read on a split config, silently restoring nothing.
+        # A snapshot's folder is the path of its file. A flat backup from
+        # 1.8.0 or earlier only carries a stem, looked up among the automation
+        # files. Restoring blindly to `<config>/automations.yaml`, as this once
+        # did, wrote a file HA does not read on a split config.
         destination = await self.hass.async_add_executor_job(
             self._resolve_restore_target, backup_file
         )
         if destination is None:
-            stem = _backup_stem(backup_file) or "?"
+            stem = _backup_stem(backup_file)
             return {
                 "success": False,
                 "error": (
                     f"Cannot tell which file '{backup_file.name}' belongs to: no "
                     f"automation file named '{stem}.yaml' is loaded by 'automation:' "
                     f"any more. Restore it by hand."
+                ) if stem and backup_file.parent == self._backup_dir else (
+                    f"'{backup_file.name}' is not a snapshot HACA took. Restore it by hand."
                 ),
             }
 
         try:
-            # Create backup of current state before restore
-            pre_restore_backup = await self._create_backup(destination)
-
-            def restore():
-                import shutil
-                shutil.copy2(backup_file, destination)
-
-            await self.hass.async_add_executor_job(restore)
+            # Snapshots the current state first, and returns that snapshot.
+            pre_restore_backup = await self.hass.async_add_executor_job(
+                restore_snapshot, self._config_dir, str(backup_file), str(destination)
+            )
 
             return {
                 "success": True,
                 "restored_from": str(backup_file),
                 "restored_to": str(destination),
-                "backup_before_restore": str(pre_restore_backup),
+                "backup_before_restore": pre_restore_backup,
                 "message": "Backup restored. Restart Home Assistant to apply."
             }
             
@@ -721,14 +704,18 @@ class RefactoringAssistant:
             }
 
     def _resolve_restore_target(self, backup_file: Path) -> Path | None:
-        """The automation file a backup came from, or None when it is gone.
+        """The file a backup came from, or None when that cannot be told.
 
-        Matches on the stem the backup name carries. Refuses an ambiguous match
-        — two files of that name in different sub-folders of a merged directory
-        — rather than picking one and overwriting the wrong config.
+        A snapshot answers with the path its folder records. A flat backup
+        from 1.8.0 or earlier is matched on its stem among the automation
+        files, and an ambiguous match — two files of that name in different
+        sub-folders of a merged directory — is refused rather than guessed.
         """
+        source = backup_source(self._config_dir, str(backup_file))
+        if source is not None:
+            return Path(source)
         stem = _backup_stem(backup_file)
-        if not stem:
+        if not stem or backup_file.parent.resolve() != self._backup_dir.resolve():
             return None
         candidates = [
             Path(p)

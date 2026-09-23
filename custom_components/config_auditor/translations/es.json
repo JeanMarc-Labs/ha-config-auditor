@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Intervalo de escaneo (minutos)",
           "auto_fix_enabled": "Habilitar correcciones automáticas",
-          "backup_enabled": "Habilitar copias de seguridad automáticas",
           "startup_delay_seconds": "Escaneo al inicio: espera máxima (segundos)",
           "event_monitoring_enabled": "Monitoreo continuo (escaneo automático en eventos)",
           "event_debounce_seconds": "Retraso de debounce en monitoreo de eventos (segundos)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Monitoreo activo",
-      "auto_backup": "Copia de seguridad automática antes de la corrección",
       "auto_fixable": "✓ Autocorregible",
       "auto_rescan_after_changes": "Reescanear automáticamente después de cambios",
       "automatic_scan": "Escaneo automático",
@@ -718,7 +716,6 @@
       "persist_hint": "Para persistir tras reinicios, añádalo a",
       "proactive_agent_enabled": "Agente de IA proactivo",
       "proactive_agent_enabled_hint": "Analiza su configuración por su cuenta y le envía un informe semanal. Llama al servicio de IA configurado en Home Assistant.",
-      "recommended": "Recomendado",
       "reset": "Restablecer",
       "resetting": "Restableciendo…",
       "save": "Guardar",

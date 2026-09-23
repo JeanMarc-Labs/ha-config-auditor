@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "扫描间隔（分钟）",
           "auto_fix_enabled": "启用自动修复",
-          "backup_enabled": "启用自动备份",
           "startup_delay_seconds": "启动扫描：最长等待（秒）",
           "event_monitoring_enabled": "持续监控（事件自动扫描）",
           "event_debounce_seconds": "事件监控防抖延迟（秒）"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "主动监控",
-      "auto_backup": "修复前自动备份",
       "auto_fixable": "✓ 可自动修复",
       "auto_rescan_after_changes": "更改后自动重新扫描",
       "automatic_scan": "自动扫描",
@@ -718,7 +716,6 @@
       "persist_hint": "重启后持续生效，请加入到",
       "proactive_agent_enabled": "主动式 AI 智能体",
       "proactive_agent_enabled_hint": "自行分析你的配置并每周发送一份报告。会调用你在 Home Assistant 中配置的 AI 服务。",
-      "recommended": "推荐",
       "reset": "重置",
       "resetting": "重置中…",
       "save": "保存",

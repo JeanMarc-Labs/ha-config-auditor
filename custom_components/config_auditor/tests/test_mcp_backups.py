@@ -84,7 +84,7 @@ def _under(path: str, base: Path) -> Path:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestSnapshotFile:
-    def test_mirrors_the_file_path_under_files(self, tmp_path):
+    def test_kept_under_the_path_of_the_file(self, tmp_path):
         src = tmp_path / "blueprints" / "automation" / "someone" / "motion.yaml"
         src.parent.mkdir(parents=True)
         src.write_text(BLUEPRINT, encoding="utf-8")
@@ -92,20 +92,16 @@ class TestSnapshotFile:
         backup = yaml_writer.snapshot_file(str(tmp_path), str(src))
 
         rel = _under(backup, tmp_path / ".haca_backups" / "files")
-        assert rel.parent == Path("blueprints/automation/someone")
-        assert yaml_writer.backup_stem(rel.name) == "motion"
+        assert rel.parent == Path("blueprints/automation/someone/motion.yaml")
         assert Path(backup).read_text(encoding="utf-8") == BLUEPRINT
 
-    def test_stays_out_of_the_panel_restore_list(self, tmp_path):
-        """The panel lists the top level of .haca_backups and restores what it
-        finds there into an *automation* file of the same name."""
+    def test_lands_in_the_panel_restore_list_with_its_path(self, tmp_path):
         (tmp_path / "configuration.yaml").write_text("default_config:\n", encoding="utf-8")
 
         backup = yaml_writer.snapshot_file(str(tmp_path), str(tmp_path / "configuration.yaml"))
 
-        assert _under(backup, tmp_path / ".haca_backups" / "files").parent == Path(".")
-        top_level = [p for p in (tmp_path / ".haca_backups").iterdir() if p.is_file()]
-        assert top_level == []
+        [listed] = yaml_writer.list_backup_files(str(tmp_path))
+        assert (listed.path, listed.source) == (backup, "configuration.yaml")
 
     def test_a_new_file_has_nothing_to_snapshot(self, tmp_path):
         assert yaml_writer.snapshot_file(str(tmp_path), str(tmp_path / "new.yaml")) is None
@@ -133,8 +129,8 @@ class TestSnapshotFile:
         yaml_writer.snapshot_file(str(tmp_path), str(tmp_path / "blueprints/b/motion.yaml"))
 
         root = tmp_path / ".haca_backups" / "files" / "blueprints"
-        assert len(list((root / "a").iterdir())) == 2
-        assert len(list((root / "b").iterdir())) == 1
+        assert len(list((root / "a" / "motion.yaml").iterdir())) == 2
+        assert len(list((root / "b" / "motion.yaml").iterdir())) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -186,18 +182,21 @@ class TestWriteToolsCopyFirst:
 
         assert res.get("success") is True, res
         assert Path(res["backup"]).read_text(encoding="utf-8") == BLUEPRINT
-        assert _under(res["backup"], tmp_path / ".haca_backups" / "files").parent == \
-            Path("blueprints/automation/someone")
+        assert yaml_writer.backup_source(str(tmp_path), res["backup"]) == \
+            str(tmp_path / "blueprints" / BP_REL)
 
     @pytest.mark.asyncio
-    async def test_blueprint_removal_keeps_a_copy(self, tmp_path):
+    async def test_a_removed_blueprint_can_be_restored(self, tmp_path):
         hass = _hass(tmp_path, {"blueprints/" + BP_REL: BLUEPRINT})
 
         res = await tools_blueprint._tool_ha_remove_blueprint(hass, {"path": BP_REL})
 
         assert res.get("success") is True, res
-        assert not (tmp_path / "blueprints" / BP_REL).exists()
-        assert Path(res["backup"]).read_text(encoding="utf-8") == BLUEPRINT
+        target = tmp_path / "blueprints" / BP_REL
+        assert not target.exists()
+        destination = yaml_writer.backup_source(str(tmp_path), res["backup"])
+        assert yaml_writer.restore_snapshot(str(tmp_path), res["backup"], destination) is None
+        assert target.read_text(encoding="utf-8") == BLUEPRINT
 
     @pytest.mark.asyncio
     async def test_no_copy_no_write(self, tmp_path, monkeypatch):
@@ -215,7 +214,6 @@ class TestWriteToolsCopyFirst:
 
     @pytest.mark.asyncio
     async def test_automation_update_returns_a_restorable_copy(self, tmp_path):
-        """Automation files keep their top-level copy, the one the panel restores."""
         original = "- id: f1\n  alias: Flat\n  triggers: []\n  actions: []\n"
         hass = _hass(tmp_path, {
             "configuration.yaml": "automation: !include automations.yaml\n",
@@ -226,7 +224,8 @@ class TestWriteToolsCopyFirst:
             "entity_id": "automation.flat", "description": "changed"})
 
         assert res.get("success") is True, res
-        assert _under(res["backup"], tmp_path / ".haca_backups").parent == Path(".")
+        assert yaml_writer.backup_source(str(tmp_path), res["backup"]) == \
+            str(tmp_path / "automations.yaml")
         assert Path(res["backup"]).read_text(encoding="utf-8") == original
 
 

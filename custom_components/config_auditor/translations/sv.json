@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Skanningsintervall (minuter)",
           "auto_fix_enabled": "Aktivera automatiska korrigeringar",
-          "backup_enabled": "Aktivera automatiska säkerhetskopior",
           "startup_delay_seconds": "Uppstartsskanning: maximal väntetid (sekunder)",
           "event_monitoring_enabled": "Kontinuerlig övervakning (automatisk skanning vid händelser)",
           "event_debounce_seconds": "Debounce-fördröjning för händelseövervakning (sekunder)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Aktiv övervakning",
-      "auto_backup": "Automatisk säkerhetskopia innan korrigering",
       "auto_fixable": "✓ Automatiskt korrigerbar",
       "auto_rescan_after_changes": "Automatisk omskanning efter ändringar",
       "automatic_scan": "Automatisk skanning",
@@ -718,7 +716,6 @@
       "persist_hint": "För att bevara vid omstart, lägg till i",
       "proactive_agent_enabled": "Proaktiv AI-agent",
       "proactive_agent_enabled_hint": "Analyserar din konfiguration på egen hand och skickar dig en veckorapport. Anropar den AI-tjänst som är konfigurerad i Home Assistant.",
-      "recommended": "Rekommenderat",
       "reset": "Återställ",
       "resetting": "Återställer…",
       "save": "Spara",

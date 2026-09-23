@@ -80,15 +80,17 @@ class TestBackupCreation:
 
     @pytest.mark.asyncio
     async def test_backup_cleanup_keeps_last_10(self, tmp_path):
+        """Fifteen in one second: `_10` and up used to sort before `_2`, and the
+        newest of them were the ones pruned."""
         ra = make_ra(tmp_path, [AUTOMATION_DEVICE_ID])
-        for _ in range(15):
-            await ra._create_backup()
-            await asyncio.sleep(0.01)
+        folder = ra._backup_dir / "files" / "automations.yaml"
+        made = [await ra._create_backup() for _ in range(15)]
+        # Each backup prunes its own folder as it is written...
+        assert set(folder.iterdir()) == set(made[-10:])
+        # ...and the sweep over every folder agrees.
         await ra._cleanup_old_backups()
-        assert len(list(ra._backup_dir.glob("automations_*.yaml"))) <= 10
+        assert set(folder.iterdir()) == set(made[-10:])
 
-
-import asyncio
 
 class TestNormalizeAutomation:
     def test_no_alias_detected(self, tmp_path):
@@ -160,22 +162,57 @@ class TestSplitConfig:
         assert "Wake up" in (tmp_path / "ha_scripts" / "morning.yaml").read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
-    async def test_backup_is_named_after_the_file_it_copies(self, tmp_path):
+    async def test_backup_is_kept_under_the_path_of_the_file_it_copies(self, tmp_path):
         ra = _make_split_ra(tmp_path)
         scan = await ra._async_locate_automation("Clima salon")
         backup = await ra._create_backup(Path(scan.path))
         assert backup.exists()
-        assert backup.name.startswith("clima_")
+        assert backup.parent == ra._backup_dir / "files" / "automations" / "clima.yaml"
 
     @pytest.mark.asyncio
     async def test_restore_puts_the_backup_back_where_it_came_from(self, tmp_path):
         ra = _make_split_ra(tmp_path)
         await ra.apply_mode_fix("Clima salon", "queued")
         backups = await ra.list_backups()
-        snapshot = next(b for b in backups if b["name"].startswith("clima_"))
+        snapshot = next(b for b in backups if b["source"] == "automations/clima.yaml")
         result = await ra.restore_backup(snapshot["path"])
-        assert result["success"] is True
-        assert Path(result["restored_to"]).name == "clima.yaml"
+        assert result["success"] is True, result
+        assert Path(result["restored_to"]) == tmp_path / "automations" / "clima.yaml"
+        assert "mode: single" in (tmp_path / "automations" / "clima.yaml").read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_a_script_file_is_never_restored_into_an_automation_file(self, tmp_path):
+        """Both called `clima.yaml`: named by stem alone, the script's backup was
+        listed as the automation file's, and restored over it."""
+        ra = _make_split_ra(tmp_path)
+        script_file = tmp_path / "ha_scripts" / "clima.yaml"
+        script_file.write_text("heat:\n  alias: Heat\n  sequence: []\n", encoding="utf-8")
+        automation_before = (tmp_path / "automations" / "clima.yaml").read_text(encoding="utf-8")
+        await ra._create_backup(script_file)
+
+        backups = await ra.list_backups()
+        snapshot = next(b for b in backups if b["source"] == "ha_scripts/clima.yaml")
+        script_file.write_text("heat:\n  alias: Changed\n  sequence: []\n", encoding="utf-8")
+        result = await ra.restore_backup(snapshot["path"])
+
+        assert result["success"] is True, result
+        assert "alias: Heat" in script_file.read_text(encoding="utf-8")
+        assert (tmp_path / "automations" / "clima.yaml").read_text(encoding="utf-8") == automation_before
+
+    @pytest.mark.asyncio
+    async def test_a_flat_backup_from_before_1_8_1_still_restores(self, tmp_path):
+        ra = _make_split_ra(tmp_path)
+        ra._backup_dir.mkdir(exist_ok=True)
+        legacy = ra._backup_dir / "clima_20260101_000000.yaml"
+        legacy.write_text("- id: old\n  alias: Old\n  trigger: []\n  action: []\n", encoding="utf-8")
+
+        backups = await ra.list_backups()
+        assert any(b["name"] == legacy.name for b in backups)
+        result = await ra.restore_backup(str(legacy))
+
+        assert result["success"] is True, result
+        assert Path(result["restored_to"]) == tmp_path / "automations" / "clima.yaml"
+        assert "alias: Old" in (tmp_path / "automations" / "clima.yaml").read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
     async def test_a_miss_is_an_error_not_a_traceback(self, tmp_path):

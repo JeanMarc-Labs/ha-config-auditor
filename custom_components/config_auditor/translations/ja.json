@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "スキャン間隔（分）",
           "auto_fix_enabled": "自動修正を有効にする",
-          "backup_enabled": "自動バックアップを有効にする",
           "startup_delay_seconds": "起動時スキャン：最大待機時間（秒）",
           "event_monitoring_enabled": "継続的監視（イベント発生時に自動スキャン）",
           "event_debounce_seconds": "イベント監視のディバウンス遅延（秒）"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "アクティブ監視",
-      "auto_backup": "修正前の自動バックアップ",
       "auto_fixable": "✓ 自動修正可能",
       "auto_rescan_after_changes": "変更後の自動再スキャン",
       "automatic_scan": "自動スキャン",
@@ -718,7 +716,6 @@
       "persist_hint": "再起動後も持続させるには以下に追加してください",
       "proactive_agent_enabled": "能動型 AI エージェント",
       "proactive_agent_enabled_hint": "設定を自動的に分析し、毎週レポートを送ります。Home Assistant で設定した AI サービスを呼び出します。",
-      "recommended": "推奨",
       "reset": "リセット",
       "resetting": "リセット中…",
       "save": "保存",

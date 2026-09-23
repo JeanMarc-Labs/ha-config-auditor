@@ -368,3 +368,21 @@ class TestMcpToolCategories:
             "the advertised list must come from MCP_TOOLS"
         assert '"callable_tools": sorted(TOOL_HANDLERS)' in block, \
             "the callable list must come from TOOL_HANDLERS"
+
+
+# ── Backups tab ───────────────────────────────────────────────────────────────
+
+class TestBackupsPanel:
+    def test_restore_reads_the_service_answer(self):
+        """A bare callService never read `success: false`: a restore that did
+        nothing was announced as done."""
+        core = (SRC / "core.js").read_text(encoding="utf-8")
+        body = core.split("async restoreBackup(path) {", 1)[1].split("\n    async ", 1)[0]
+        assert "return_response: true" in body
+        assert "response.success" in body
+        assert "callService(" not in body
+
+    def test_no_switch_for_the_retired_backup_option(self):
+        """`backup_enabled` was shown as "Auto-backup before fix" and read by nothing."""
+        assert "backup_enabled" not in (SRC / "config_tab.js").read_text(encoding="utf-8")
+        assert "backup_enabled" not in (BASE / "config_flow.py").read_text(encoding="utf-8")

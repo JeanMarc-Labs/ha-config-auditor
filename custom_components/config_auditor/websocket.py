@@ -1550,6 +1550,9 @@ async def handle_save_options(
         return
 
     new_options = dict(entry.options)
+    # Retired in 1.8.1: nothing ever read it, while the panel showed it as an
+    # "Auto-backup before fix" switch. Every write takes a snapshot regardless.
+    new_options.pop("backup_enabled", None)
     incoming = msg.get("options", {})
 
     ALLOWED_KEYS = {
@@ -1557,7 +1560,7 @@ async def handle_save_options(
         "event_monitoring_enabled", "event_debounce_seconds",
         "excluded_categories", "excluded_issue_types",
         "battery_critical", "battery_low", "battery_warning",
-        "history_retention_days", "backup_enabled",
+        "history_retention_days",
         "debug_mode",
         "excluded_compliance_types",
         "report_frequency",   # daily | weekly | monthly | never

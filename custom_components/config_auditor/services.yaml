@@ -165,7 +165,7 @@ fix_description:
 
 list_backups:
   name: List Backups
-  description: List all available automation backups.
+  description: List the snapshots HACA took of the files it changed, newest first.
 
 
 create_backup:
@@ -174,13 +174,13 @@ create_backup:
 
 restore_backup:
   name: Restore Backup
-  description: Restore automations from a backup file (creates backup of current state first).
+  description: Put a snapshot back over the file it was taken from (snapshots the current state first).
   fields:
     backup_path:
       name: Backup Path
       description: Full path to the backup file.
       required: true
-      example: "/config/.haca_backups/automations_20260209_120000.yaml"
+      example: "/config/.haca_backups/files/automations.yaml/20260209_120000.yaml"
       selector:
         text:
 

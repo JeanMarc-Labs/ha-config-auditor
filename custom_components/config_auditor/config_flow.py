@@ -63,7 +63,6 @@ class ConfigAuditorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "excluded_categories": [],
                         "excluded_issue_types": list(DEFAULT_EXCLUDED_ISSUE_TYPES),
                         "auto_fix_enabled": False,
-                        "backup_enabled": True,
                         "repairs_enabled": True,
                         "battery_notifications_enabled": True,
                         "battery_critical": 5,

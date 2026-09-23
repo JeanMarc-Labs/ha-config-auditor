@@ -24,7 +24,6 @@
         "data": {
           "scan_interval": "Intervalo de varredura (minutos)",
           "auto_fix_enabled": "Ativar correções automáticas",
-          "backup_enabled": "Ativar backups automáticos",
           "startup_delay_seconds": "Varredura de inicialização: espera máxima (segundos)",
           "event_monitoring_enabled": "Monitoramento contínuo (varredura automática em eventos)",
           "event_debounce_seconds": "Atraso de debounce no monitoramento de eventos (segundos)"
@@ -657,7 +656,6 @@
     },
     "config": {
       "active_monitoring": "Monitoramento ativo",
-      "auto_backup": "Backup automático antes da correção",
       "auto_fixable": "✓ Corrigível automaticamente",
       "auto_rescan_after_changes": "Reverificação automática após mudanças",
       "automatic_scan": "Verificação automática",
@@ -718,7 +716,6 @@
       "persist_hint": "Para persistir após reinícios, adicione a",
       "proactive_agent_enabled": "Agente de IA proativo",
       "proactive_agent_enabled_hint": "Analisa a sua configuração por iniciativa própria e envia-lhe um relatório semanal. Chama o serviço de IA configurado no Home Assistant.",
-      "recommended": "Recomendado",
       "reset": "Redefinir",
       "resetting": "Resetando…",
       "save": "Salvar",

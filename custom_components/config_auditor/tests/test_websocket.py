@@ -281,3 +281,30 @@ class TestPathTraversal:
         )
         assert not vulnerable, \
             "Vulnerable fpath.startswith(config_root) without realpath() found"
+
+
+# ── Options: the retired backup switch ───────────────────────────────────────
+
+class TestRetiredBackupOption:
+    """`backup_enabled` was never read; a save drops it from the entry."""
+
+    @pytest.mark.asyncio
+    async def test_save_drops_it(self, tmp_path):
+        import inspect
+        from unittest.mock import MagicMock, patch
+
+        ws = pytest.importorskip("custom_components.config_auditor.websocket")
+        entry = MagicMock()
+        entry.options = {"backup_enabled": True, "scan_interval": 60}
+        hass = MagicMock()
+        hass.data = {}
+        connection = MagicMock()
+        connection.user.id = f"user-{tmp_path.name}"
+        msg = {"id": 1, "type": "haca/save_options",
+               "options": {"scan_interval": 30, "backup_enabled": False}}
+
+        with patch.object(ws, "_get_entry_data", return_value=(entry, {})):
+            await inspect.unwrap(ws.handle_save_options)(hass, connection, msg)
+
+        saved = hass.config_entries.async_update_entry.call_args.kwargs["options"]
+        assert saved == {"scan_interval": 30}
