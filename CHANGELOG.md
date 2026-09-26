@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.8.1] — 2026-09-19 — Ignore entities with a glob pattern, and entities reported as disabled, missing or unavailable when they were none of those
+## [1.8.1] — 2026-09-26 — Ignore entities with a glob pattern, no more entities falsely reported disabled or missing, every write checked the way Home Assistant reads it back, YAML files kept in their own layout, AI fixes and backups repaired
 
 ### Added
 

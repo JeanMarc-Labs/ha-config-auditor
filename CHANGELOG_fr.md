@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.8.1] — 2026-09-19 — Ignorer des entités avec un pattern glob, et des entités signalées désactivées, disparues ou indisponibles alors qu'elles n'étaient rien de tout cela
+## [1.8.1] — 2026-09-26 — Ignorer des entités avec un pattern glob, plus d'entités signalées à tort désactivées ou disparues, chaque écriture vérifiée comme Home Assistant la relira, fichiers YAML réécrits dans leur propre mise en page, corrections IA et sauvegardes réparées
 
 ### Ajouté
 
