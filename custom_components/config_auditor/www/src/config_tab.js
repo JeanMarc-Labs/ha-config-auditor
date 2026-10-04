@@ -29,6 +29,7 @@ var ISSUE_TYPES_BY_CATEGORY = [
       { id: 'probable_duplicate_automation', fixable: false },
       { id: 'ghost_automation', fixable: false },
       { id: 'never_triggered', fixable: false },
+      { id: 'disabled_automation', fixable: false },
       { id: 'excessive_delay', fixable: false },
       { id: 'wait_template_vs_wait_for_trigger', fixable: false },
       { id: 'zone_no_entity', fixable: false },

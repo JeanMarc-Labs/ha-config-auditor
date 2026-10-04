@@ -1,4 +1,4 @@
-// HACA-BUILD: 77d8464b  2026-09-23T18:50:00Z
+// HACA-BUILD: 83fe8179  2026-10-04T07:13:17Z
 // ── config_tab.js ──────────────────────────────────────────
 // ── config_tab.js ─────────────────────────────────────────────────────────
 // Onglet Configuration du panel HACA
@@ -31,6 +31,7 @@ var ISSUE_TYPES_BY_CATEGORY = [
       { id: 'probable_duplicate_automation', fixable: false },
       { id: 'ghost_automation', fixable: false },
       { id: 'never_triggered', fixable: false },
+      { id: 'disabled_automation', fixable: false },
       { id: 'excessive_delay', fixable: false },
       { id: 'wait_template_vs_wait_for_trigger', fixable: false },
       { id: 'zone_no_entity', fixable: false },
@@ -590,7 +591,7 @@ function _updateTypeCounts(el) {
 (function () {
   'use strict';
   if (customElements.get('haca-panel')) return; // already loaded, skip entirely
-  const HACA_VERSION = '1.8.1'; // build marker
+  const HACA_VERSION = '1.8.2'; // build marker
 
   // Dans l'iframe (embed_iframe:true), ha-icon n'est pas enregistré.
   // On copie la définition depuis le document parent où HA l'a déjà défini.
@@ -6698,6 +6699,10 @@ function _updateTypeCounts(el) {
       return diag(`haca_get_automation("${eid}")`, 'no_description', 'no_description');
     if (t === 'never_triggered' || t === 'ghost_automation')
       return diagAction(`haca_get_automation("${eid}")`, 'never_triggered', 'never_triggered');
+    // Never loaded, so it has no state: haca_get_automation cannot find it,
+    // the entity detail reads the registry entry that disables it.
+    if (t === 'disabled_automation')
+      return diagAction(`ha_get_entity_detail("${eid}")`, 'disabled_automation', 'disabled_automation');
     if (t === 'duplicate_automation' || t === 'probable_duplicate_automation')
       return diagAction(`haca_get_automation("${eid}")`, 'duplicate', 'duplicate');
     if (t === 'device_id_in_trigger' || t === 'device_id_in_action' ||

@@ -407,6 +407,10 @@
       return diag(`haca_get_automation("${eid}")`, 'no_description', 'no_description');
     if (t === 'never_triggered' || t === 'ghost_automation')
       return diagAction(`haca_get_automation("${eid}")`, 'never_triggered', 'never_triggered');
+    // Never loaded, so it has no state: haca_get_automation cannot find it,
+    // the entity detail reads the registry entry that disables it.
+    if (t === 'disabled_automation')
+      return diagAction(`ha_get_entity_detail("${eid}")`, 'disabled_automation', 'disabled_automation');
     if (t === 'duplicate_automation' || t === 'probable_duplicate_automation')
       return diagAction(`haca_get_automation("${eid}")`, 'duplicate', 'duplicate');
     if (t === 'device_id_in_trigger' || t === 'device_id_in_action' ||

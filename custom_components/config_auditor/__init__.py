@@ -665,7 +665,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 return []
             with timer.overlapping("performance"):
                 return await performance_analyzer.analyze_all(
-                    automation_analyzer.automation_configs
+                    automation_analyzer.running_automation_configs
                 )
 
         async def _safe_security() -> list:
@@ -816,7 +816,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 with timer.stage("area complexity"):
                     area_complexity_data = await area_complexity_analyzer.async_analyze(
-                        automation_configs=automation_analyzer.automation_configs,
+                        automation_configs=automation_analyzer.running_automation_configs,
                         complexity_scores=automation_analyzer.complexity_scores,
                     )
             except Exception as ac_err:
@@ -828,7 +828,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 with timer.stage("redundancy"):
                     redundancy_data = await redundancy_analyzer.async_analyze(
-                        automation_configs=automation_analyzer.automation_configs,
+                        automation_configs=automation_analyzer.running_automation_configs,
                         blueprint_stats=automation_analyzer.blueprint_stats,
                         complexity_scores=automation_analyzer.complexity_scores,
                     )
@@ -866,7 +866,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 with timer.stage("recorder impact"):
                     recorder_impact_data = await recorder_impact_analyzer.async_analyze(
-                        automation_configs=automation_analyzer.automation_configs,
+                        automation_configs=automation_analyzer.running_automation_configs,
                         complexity_scores=automation_analyzer.complexity_scores,
                     )
             except Exception as ri_err:
