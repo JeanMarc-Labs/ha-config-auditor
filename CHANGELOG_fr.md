@@ -5,6 +5,13 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
+## [1.8.2] — 2026-10-04 — Les automatisations désactivées dans le registre des entités ne sont plus auditées comme si elles tournaient
+
+### Corrigé
+
+- **Une automatisation désactivée dans le registre des entités était auditée comme si elle tournait, et pouvait finir dans les Réparations** — Home Assistant ne charge jamais une telle automatisation et elle n'apparaît plus dans la liste des automatisations, mais sa configuration reste dans `automations.yaml`, que H.A.C.A lit : un `device_id` qu'elle contenait était signalé en sévérité haute, et une ancienne copie désactivée faisait de sa remplaçante un doublon. Elle reçoit désormais une seule alerte de sévérité basse, *Automatisation désactivée restée dans la config*, et rien de ce qu'elle contient n'est signalé ; les entités qu'elle référence comptent toujours comme utilisées.
+
+---
 ## [1.8.1] — 2026-09-26 — Ignorer des entités avec un pattern glob, plus d'entités signalées à tort désactivées ou disparues, chaque écriture vérifiée comme Home Assistant la relira, fichiers YAML réécrits dans leur propre mise en page, corrections IA et sauvegardes réparées
 
 ### Ajouté

@@ -434,6 +434,7 @@ async def _tool_list_issue_catalog(hass: HomeAssistant, params: dict) -> dict:
             {"type": "duplicate_automation",       "severity": "medium", "fixable": False, "description": "Duplicate automation detected"},
             {"type": "probable_duplicate_automation", "severity": "low", "fixable": False, "description": "Probable duplicate automation"},
             {"type": "ghost_automation",           "severity": "medium", "fixable": False, "description": "Automation references non-existent entities"},
+            {"type": "disabled_automation",        "severity": "low",    "fixable": False, "description": "Automation disabled in the entity registry: never loaded, but its config is still on disk"},
             {"type": "incorrect_mode_motion_single", "severity": "medium", "fixable": True, "description": "Motion automation uses mode:single instead of restart"},
             {"type": "high_complexity_actions",    "severity": "low",    "fixable": False, "description": "Automation has high action complexity"},
             {"type": "excessive_delay",            "severity": "low",    "fixable": False, "description": "Automation has excessive delay"},

@@ -19,6 +19,7 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.util import slugify as ha_slugify
 
 from . import device_conversion
+from .registry_utils import disabled_automation_ids
 from .translation_utils import TranslationHelper
 from .yaml_sources import (
     iter_domain_files,
@@ -95,6 +96,8 @@ class AutomationAnalyzer:
         self._registered_floor_ids: set[str] = set()
         self._registered_label_ids: set[str] = set()
         self._ignored_entity_ids: set[str] = set()
+        # Automations Home Assistant never loads — see _load_disabled_automations.
+        self._disabled_automation_ids: set[str] = set()
         # One entry per blueprint file, kept across scans — see
         # _read_blueprint. Bounded by the blueprint paths the config refers to.
         self._blueprint_cache: dict[
@@ -116,6 +119,19 @@ class AutomationAnalyzer:
     def automation_configs(self) -> dict[str, dict]:
         """Public view of loaded automation configurations."""
         return self._automation_configs
+
+    @property
+    def running_automation_configs(self) -> dict[str, dict]:
+        """The loaded automations minus those Home Assistant never loads.
+
+        What an analysis of run-time behaviour — performance, overlapping
+        triggers, recorder writes — should look at. One reading what the
+        files contain, such as the secrets scan, keeps automation_configs.
+        """
+        return {
+            eid: cfg for eid, cfg in self._automation_configs.items()
+            if eid not in self._disabled_automation_ids
+        }
 
     @property
     def script_configs(self) -> dict[str, dict]:
@@ -158,6 +174,7 @@ class AutomationAnalyzer:
             await self._load_registered_services()
             await self._load_registered_areas_floors_labels()
             await self._load_ignored_entities()
+            self._load_disabled_automations()
 
         # Load configurations
         with steps.stage("read config"):
@@ -171,7 +188,12 @@ class AutomationAnalyzer:
         # Analyze each automation
         with steps.stage("automations"):
             for idx, (entity_id, config) in enumerate(self._automation_configs.items()):
-                if self._is_ignored(entity_id): continue
+                if entity_id in self._ignored_entity_ids: continue
+                if entity_id in self._disabled_automation_ids:
+                    # One finding saying so, instead of the checks of code
+                    # that cannot run.
+                    self._report_disabled_automation(entity_id, config)
+                    continue
                 self._analyze_automation(entity_id, config)
                 if idx % 10 == 0: await asyncio.sleep(0)
 
@@ -360,9 +382,50 @@ class AutomationAnalyzer:
         from .translation_utils import async_get_haca_ignored_entity_ids
         self._ignored_entity_ids = await async_get_haca_ignored_entity_ids(self.hass)
 
+    def _load_disabled_automations(self) -> None:
+        """Cache the automations whose entity is disabled in the registry.
+
+        Home Assistant never loads them, so every check that judges what an
+        automation does skips them, like a haca_ignore label would.
+        """
+        try:
+            self._disabled_automation_ids = disabled_automation_ids(er.async_get(self.hass))
+        except Exception as e:
+            _LOGGER.error("Error reading disabled automations from the entity registry: %s", e)
+            self._disabled_automation_ids = set()
+
     def _is_ignored(self, entity_id: str) -> bool:
-        """Return True if this entity should be skipped (has haca_ignore label)."""
-        return entity_id in self._ignored_entity_ids
+        """Return True if this entity should be skipped: it has the haca_ignore
+        label, or it is an automation Home Assistant never loads."""
+        return (
+            entity_id in self._ignored_entity_ids
+            or entity_id in self._disabled_automation_ids
+        )
+
+    def _report_disabled_automation(self, entity_id: str, config: dict[str, Any]) -> None:
+        """The one finding a disabled automation gets.
+
+        It is not deleted, and it is not an orphan: the registry entry and the
+        configuration both exist. It is a leftover the user can no longer see in
+        the automation list, which is worth knowing at a low severity — and
+        nothing more, since none of it can run.
+        """
+        t = self._translator.t
+        alias = config.get("alias", "")
+        self.issues.append({
+            "entity_id": entity_id,
+            "alias": alias or entity_id,
+            "automation_id": str(config.get("id") or ""),
+            "type": "disabled_automation",
+            "severity": "low",
+            "message": t(
+                "disabled_automation",
+                file=config.get("_source_file") or "automations.yaml",
+            ),
+            "location": "root",
+            "recommendation": t("disabled_automation_recommendation"),
+            "fix_available": False,
+        })
 
     async def _load_automation_configs(self) -> None:
         """Load automation configurations from all sources:

@@ -11,7 +11,7 @@ from homeassistant.helpers import (
     device_registry as dr,
 )
 
-from .registry_utils import iter_devices
+from .registry_utils import disabled_automation_ids, iter_devices
 from .translation_utils import TranslationHelper
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,6 +96,8 @@ class EntityAnalyzer:
         self._all_config_entity_ids: set[str] = set()
         # Maps automation/script entity_id → human-readable alias
         self._automation_alias_map: dict[str, str] = {}
+        # Automations Home Assistant never loads — see _running_referrers.
+        self._disabled_automation_ids: set[str] = set()
         self._translator = TranslationHelper(hass)
 
     @property
@@ -140,6 +142,7 @@ class EntityAnalyzer:
         # Load ignored entities (haca_ignore label) — MUST be first, before any analysis
         with steps.stage("haca_ignore"):
             self._ignored_entity_ids = await self._load_ignored_entity_ids()
+            self._disabled_automation_ids = self._load_disabled_automation_ids()
 
         # Build entity reference map (automations + scripts)
         with steps.stage("references"):
@@ -584,6 +587,24 @@ class EntityAnalyzer:
         from .translation_utils import async_get_haca_ignored_entity_ids
         return await async_get_haca_ignored_entity_ids(self.hass)
 
+    def _load_disabled_automation_ids(self) -> set[str]:
+        """Automations whose entity is disabled in the registry."""
+        try:
+            return disabled_automation_ids(er.async_get(self.hass))
+        except Exception:  # noqa: BLE001 — registry not loaded yet
+            return set()
+
+    def _running_referrers(self, referrers: list[str]) -> list[str]:
+        """``referrers`` minus the automations Home Assistant never loads.
+
+        A disabled automation still *uses* what it references — its
+        configuration is on disk and would break if the entity went away, so
+        it keeps a helper from being called unused. But it cannot run, so it
+        never makes an entity a problem on its own: a missing or disabled
+        entity that only it references is not reported.
+        """
+        return [r for r in referrers if r not in self._disabled_automation_ids]
+
     async def _analyze_zombie_entities(self) -> None:
         """Detect zombie entities - referenced but don't exist.
 
@@ -621,7 +642,11 @@ class EntityAnalyzer:
                 if idx % 50 == 0: await asyncio.sleep(0)
                 continue
             if entity_id not in existing_entities:
-                automation_ids = list(dict.fromkeys(automations))  # deduplicate, keep order
+                # deduplicate, keep order
+                automation_ids = list(dict.fromkeys(self._running_referrers(automations)))
+                if not automation_ids:
+                    if idx % 50 == 0: await asyncio.sleep(0)
+                    continue
                 # Resolve human-readable names for each referencing automation
                 automation_names = [
                     self._automation_alias_map.get(aid, aid)
@@ -658,7 +683,9 @@ class EntityAnalyzer:
                 continue
             # Check for disabled entities that are referenced
             if entry.disabled_by is not None:
-                referencing_automations = self._entity_references.get(entity_id, [])
+                referencing_automations = self._running_referrers(
+                    self._entity_references.get(entity_id, [])
+                )
                 if referencing_automations:
                     self.issues.append({
                         "entity_id": entity_id,
@@ -715,8 +742,9 @@ class EntityAnalyzer:
         t = self._translator.t
         
         for idx, (automation_id, config) in enumerate(automation_configs.items()):
-            # Skip ignored automations
-            if automation_id in self._ignored_entity_ids:
+            # Skip ignored automations, and those Home Assistant never loads
+            if (automation_id in self._ignored_entity_ids
+                    or automation_id in self._disabled_automation_ids):
                 if idx % 20 == 0: await asyncio.sleep(0)
                 continue
 
@@ -838,9 +866,13 @@ class EntityAnalyzer:
 
             # ── Check if referenced ONLY in disabled automations ──────────
             if refs:
+                # Turned off, or disabled in the registry and never loaded.
                 all_disabled = all(
-                    self.hass.states.get(aid) is not None
-                    and self.hass.states.get(aid).state == "off"
+                    aid in self._disabled_automation_ids
+                    or (
+                        self.hass.states.get(aid) is not None
+                        and self.hass.states.get(aid).state == "off"
+                    )
                     for aid in refs
                     if aid.startswith("automation.")
                 )
@@ -1026,11 +1058,12 @@ class EntityAnalyzer:
             # ── Timer in event trigger but never started ───────────────────
             in_trigger = entity_id in timers_in_event_trigger
             in_start = entity_id in timers_in_start_action
+            listeners = self._running_referrers(timers_in_event_trigger.get(entity_id, []))
 
-            if in_trigger and not in_start:
+            if listeners and not in_start:
                 automation_names = [
                     self._automation_alias_map.get(aid, aid)
-                    for aid in timers_in_event_trigger.get(entity_id, [])
+                    for aid in listeners
                 ]
                 self.issues.append({
                     "entity_id": entity_id,

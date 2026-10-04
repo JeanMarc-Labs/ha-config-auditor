@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
+## [1.8.2] — 2026-10-04 — Automations disabled in the entity registry are no longer audited as if they ran
+
+### Fixed
+
+- **An automation disabled in the entity registry was audited as if it ran, and could reach Repairs** — Home Assistant never loads such an automation and it is missing from the automation list, but its configuration stays in `automations.yaml`, which H.A.C.A reads: a `device_id` in it was filed as high severity, and an old disabled copy made its replacement a duplicate. It now gets one low-severity finding, *Disabled automation still in config*, and nothing it contains is reported; the entities it references still count as used.
+
+---
 ## [1.8.1] — 2026-09-26 — Ignore entities with a glob pattern, no more entities falsely reported disabled or missing, every write checked the way Home Assistant reads it back, YAML files kept in their own layout, AI fixes and backups repaired
 
 ### Added

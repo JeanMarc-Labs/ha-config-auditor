@@ -43,12 +43,13 @@ class _Translator:
 def analyzer(configs: dict, ignored=()) -> AutomationAnalyzer:
     """An analyzer holding these configs and nothing else.
 
-    `_check_duplicate_automations` reads four attributes and no hass at all,
+    `_check_duplicate_automations` reads five attributes and no hass at all,
     so building it this way keeps the test about the algorithm.
     """
     a = AutomationAnalyzer.__new__(AutomationAnalyzer)
     a._automation_configs = configs
     a._ignored_entity_ids = set(ignored)
+    a._disabled_automation_ids = set()
     a._translator = _Translator()
     a.issues = []
     return a
