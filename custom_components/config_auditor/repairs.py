@@ -62,7 +62,8 @@ async def async_update_repairs(
     """Sync HACA HIGH issues with HA Repairs panel.
 
     - Creates repair entries for new HIGH issues.
-    - Deletes ALL previous HACA repair entries first (clean slate each scan).
+    - Deletes HACA repair entries no longer present in the current scan.
+    - Leaves unchanged entries in place (no event churn, dismissals preserved).
     """
     try:
         from homeassistant.helpers import issue_registry as ir
@@ -74,23 +75,7 @@ async def async_update_repairs(
     if not coordinator_data:
         return
 
-    # ── Step 1: Remove ALL existing HACA repairs (clean slate) ────────────
-    # This ensures resolved issues are always removed, even after HA restart.
-    try:
-        registry = ir.async_get(hass)
-        haca_issues = [
-            (domain, issue_id)
-            for (domain, issue_id) in list(registry.issues)
-            if domain == DOMAIN
-        ]
-        for domain, issue_id in haca_issues:
-            ir.async_delete_issue(hass, domain, issue_id)
-        if haca_issues:
-            _LOGGER.debug("[HACA Repairs] Cleared %d previous repair entries", len(haca_issues))
-    except Exception as exc:
-        _LOGGER.debug("[HACA Repairs] Could not clear old issues: %s", exc)
-
-    # ── Step 2: Collect all HIGH severity issues across all categories ────
+    # ── Step 1: Collect all HIGH severity issues across all categories ────
     all_high_issues: dict[str, dict[str, Any]] = {}
     for list_key in [
         "automation_issue_list", "script_issue_list", "scene_issue_list",
@@ -104,10 +89,30 @@ async def async_update_repairs(
 
     # Limit to avoid flooding the Repairs panel
     selected = dict(list(all_high_issues.items())[:MAX_REPAIR_ISSUES])
+    desired_ids = {f"haca_{key}" for key in selected}
 
-    # ── Step 3: Create new repair entries ─────────────────────────────────
+    # ── Step 2: Reconcile — delete only HACA repairs that are no longer in
+    # this scan, and leave unchanged ones in place. Deleting+recreating an
+    # unchanged issue fires an issue-registry event every scan (retriggering
+    # user automations) and drops the user's dismissal (hidden issues return).
+    existing_ids: set[str] = set()
+    try:
+        registry = ir.async_get(hass)
+        for domain, issue_id in list(registry.issues):
+            if domain != DOMAIN:
+                continue
+            if issue_id in desired_ids:
+                existing_ids.add(issue_id)
+            else:
+                ir.async_delete_issue(hass, domain, issue_id)
+    except Exception as exc:
+        _LOGGER.debug("[HACA Repairs] Could not reconcile old issues: %s", exc)
+
+    # ── Step 3: Create only repair entries not already present ────────────
     for key, issue in selected.items():
         issue_id = f"haca_{key}"
+        if issue_id in existing_ids:
+            continue
 
         entity_name = issue.get("alias") or issue.get("entity_id", "?")
         issue_type = issue.get("type", "unknown")

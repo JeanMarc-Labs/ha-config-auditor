@@ -10,7 +10,9 @@ What is covered here is what the module actually does now:
 
   - a HIGH issue becomes exactly one Repairs entry, MEDIUM and LOW never do;
   - all nine coordinator issue lists are read;
-  - previous HACA entries are cleared first, entries of other domains are not;
+  - stale HACA entries are removed while unchanged ones are left untouched, so
+    rescans neither retrigger automations nor wipe dismissals; entries of other
+    domains are never touched;
   - the flood cap holds;
   - user text reaches HA as a *placeholder value*, never as part of the
     template — the ``{ }``-in-a-message crash the old file was written for;
@@ -194,21 +196,21 @@ class TestWhatIsPushed:
         )
 
 
-# ── Clean slate ──────────────────────────────────────────────────────────────
+# ── Reconciliation ────────────────────────────────────────────────────────────
 
-class TestCleanSlate:
+class TestReconciliation:
 
     @pytest.mark.asyncio
-    async def test_previous_haca_entries_are_cleared_first(self, mock_hass, fake_ir):
+    async def test_stale_haca_entries_are_removed(self, mock_hass, fake_ir):
         fake_ir.registry.issues[("config_auditor", "haca_old_one")] = {}
         fake_ir.registry.issues[("config_auditor", "haca_old_two")] = {}
 
         await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
 
-        assert fake_ir.deleted == [
+        assert set(fake_ir.deleted) == {
             ("config_auditor", "haca_old_one"),
             ("config_auditor", "haca_old_two"),
-        ]
+        }
 
     @pytest.mark.asyncio
     async def test_other_domains_are_left_alone(self, mock_hass, fake_ir):
@@ -232,6 +234,32 @@ class TestCleanSlate:
         await run(mock_hass, coordinator_data(automation_issue_list=[]))
 
         assert fake_ir.registry.issues == {}
+
+    @pytest.mark.asyncio
+    async def test_unchanged_issue_is_not_recreated_on_rescan(self, mock_hass, fake_ir):
+        # Recreating an identical issue every scan fires an issue-registry event
+        # that retriggers user automations — the whole point of reconciling.
+        data = coordinator_data(automation_issue_list=[issue()])
+
+        await run(mock_hass, data)
+        await run(mock_hass, data)
+
+        assert len(fake_ir.created) == 1
+        assert fake_ir.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_dismissed_issue_survives_rescan(self, mock_hass, fake_ir):
+        # A hidden issue must stay hidden: the entry is left untouched so HA
+        # keeps its dismissal instead of seeing a freshly created issue.
+        data = coordinator_data(automation_issue_list=[issue()])
+        await run(mock_hass, data)
+        key = ("config_auditor", "haca_automation.test_device_id_in_trigger")
+        fake_ir.registry.issues[key]["dismissed_version"] = "1.0"
+
+        await run(mock_hass, data)
+
+        assert key not in fake_ir.deleted
+        assert fake_ir.registry.issues[key]["dismissed_version"] == "1.0"
 
 
 # ── The text handed to Home Assistant ────────────────────────────────────────
