@@ -1361,9 +1361,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not entry.options.get("repairs_enabled", True):
             return
         if _session_scan_number() <= 1:
-            # Scan de référence : on ne touche pas au panneau Réparations, qui
-            # garde donc les entrées du dernier scan d'avant le redémarrage
-            # jusqu'à ce que le deuxième scan les remplace en bloc.
+            # Scan de référence : on ne touche pas au panneau Réparations.
+            # Après un redémarrage de HA, les entrées du dernier scan sont
+            # rechargées inactives (masquées) ; le deuxième scan réactive
+            # celles qui sont toujours signalées et supprime les autres.
             _LOGGER.info(
                 "[HACA] First scan of the session: Repairs left untouched "
                 "(baseline scan) — entries are refreshed at the next scan"
