@@ -10,19 +10,24 @@ What is covered here is what the module actually does now:
 
   - a HIGH issue becomes exactly one Repairs entry, MEDIUM and LOW never do;
   - all nine coordinator issue lists are read;
-  - previous HACA entries are cleared first, entries of other domains are not;
+  - an entry the scan no longer reports is removed; one it still reports is
+    pushed again, never deleted and recreated; other domains are left alone;
   - the flood cap holds;
   - user text reaches HA as a *placeholder value*, never as part of the
     template — the ``{ }``-in-a-message crash the old file was written for;
   - the placeholder names the code sends are the ones the translation files
     declare, in all 13 languages.
 
-``homeassistant.helpers.issue_registry`` is replaced by a recorder: the real one
-needs a live hass with loaded storage, and what matters here is the call, not
-HA's own bookkeeping.
+``homeassistant.helpers.issue_registry`` is replaced by a recorder for most of
+the file, where what matters is the call. What HA then does with it (no event
+for an identical entry, the dismissal kept, an entry reloaded inactive after a
+restart) is checked against HA's own registry in the last classes: a recorder
+that only stores entries cannot show that skipping the call for an entry that
+already exists hides it after every restart.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -74,8 +79,11 @@ class FakeIssueRegistry:
         self.registry.issues.pop((domain, issue_id), None)
 
     def async_create_issue(self, hass, **kwargs):
+        # Like HA's, an existing entry is updated in place: what the call does
+        # not carry, a dismissal for instance, survives it.
         self.created.append(kwargs)
-        self.registry.issues[(kwargs["domain"], kwargs["issue_id"])] = kwargs
+        key = (kwargs["domain"], kwargs["issue_id"])
+        self.registry.issues[key] = {**self.registry.issues.get(key, {}), **kwargs}
 
     # convenience for the assertions below
     def created_ids(self) -> list[str]:
@@ -194,12 +202,12 @@ class TestWhatIsPushed:
         )
 
 
-# ── Clean slate ──────────────────────────────────────────────────────────────
+# ── Reconciliation ───────────────────────────────────────────────────────────
 
-class TestCleanSlate:
+class TestReconciliation:
 
     @pytest.mark.asyncio
-    async def test_previous_haca_entries_are_cleared_first(self, mock_hass, fake_ir):
+    async def test_entries_no_longer_reported_are_removed(self, mock_hass, fake_ir):
         fake_ir.registry.issues[("config_auditor", "haca_old_one")] = {}
         fake_ir.registry.issues[("config_auditor", "haca_old_two")] = {}
 
@@ -208,6 +216,26 @@ class TestCleanSlate:
         assert fake_ir.deleted == [
             ("config_auditor", "haca_old_one"),
             ("config_auditor", "haca_old_two"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_entry_still_reported_is_pushed_again_never_deleted(
+        self, mock_hass, fake_ir
+    ):
+        """Deleting it would fire registry events and drop the dismissal.
+
+        Skipping the push instead would leave it hidden after an HA restart —
+        see TestAgainstHomeAssistantsRegistry — so every scan pushes it.
+        """
+        data = coordinator_data(automation_issue_list=[issue()])
+
+        await run(mock_hass, data)
+        await run(mock_hass, data)
+
+        assert fake_ir.deleted == []
+        assert fake_ir.created_ids() == [
+            "haca_automation.test_device_id_in_trigger",
+            "haca_automation.test_device_id_in_trigger",
         ]
 
     @pytest.mark.asyncio
@@ -351,7 +379,7 @@ class TestOldHomeAssistant:
 
         await run(mock_hass, coordinator_data(automation_issue_list=[issue()]))
 
-        # Clearing failed, but the push still happened.
+        # Removing resolved entries failed, but the push still happened.
         assert len(fake_ir.created) == 1
 
 
@@ -391,3 +419,129 @@ class TestOptionGate:
 
         assert 'entry.options.get("repairs_enabled", True)' in source
         assert "async_update_repairs(hass, cdata)" in source
+
+
+# ── Against Home Assistant's own issue registry ──────────────────────────────
+
+@contextlib.asynccontextmanager
+async def _home_assistant(config_dir):
+    """A bare Home Assistant whose issue registry is loaded from ``config_dir``.
+
+    Opening a second one on the same folder is an HA restart: the registry is
+    read back from storage the way HA does it at boot.
+    """
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import issue_registry as ir
+
+    hass = HomeAssistant(str(config_dir))
+    await ir.async_load(hass)
+    try:
+        yield hass
+    finally:
+        await hass.async_stop(force=True)  # its final write saves the registry
+
+
+def _issue_id(entity_id="automation.test") -> str:
+    return f"haca_{entity_id}_device_id_in_trigger"
+
+
+def _entry(hass, entity_id="automation.test"):
+    from homeassistant.helpers import issue_registry as ir
+
+    return ir.async_get(hass).async_get_issue("config_auditor", _issue_id(entity_id))
+
+
+def _record_events(hass) -> list[str]:
+    """The registry events an automation listening to Repairs would receive."""
+    from homeassistant.core import callback
+    from homeassistant.helpers import issue_registry as ir
+
+    actions: list[str] = []
+
+    @callback
+    def _record(event):
+        actions.append(event.data["action"])
+
+    hass.bus.async_listen(ir.EVENT_REPAIRS_ISSUE_REGISTRY_UPDATED, _record)
+    return actions
+
+
+class TestAgainstHomeAssistantsRegistry:
+    """What the user sees in the Repairs panel, and what automations receive."""
+
+    @pytest.mark.asyncio
+    async def test_a_rescan_with_the_same_findings_fires_no_event(self, tmp_path):
+        data = coordinator_data(automation_issue_list=[issue()])
+        async with _home_assistant(tmp_path) as hass:
+            await run(hass, data)
+            actions = _record_events(hass)
+
+            await run(hass, data)
+            await hass.async_block_till_done()
+
+            assert actions == [], (
+                "an automation triggered by Repairs changes would fire on every scan"
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_dismissed_entry_stays_dismissed_on_rescan(self, tmp_path):
+        from homeassistant.helpers import issue_registry as ir
+
+        data = coordinator_data(automation_issue_list=[issue()])
+        async with _home_assistant(tmp_path) as hass:
+            await run(hass, data)
+            ir.async_ignore_issue(hass, "config_auditor", _issue_id(), True)
+
+            await run(hass, data)
+
+            assert _entry(hass).dismissed_version is not None
+
+    @pytest.mark.asyncio
+    async def test_after_a_restart_the_next_scan_shows_the_entries_again(self, tmp_path):
+        from homeassistant.helpers import issue_registry as ir
+
+        data = coordinator_data(automation_issue_list=[
+            issue(entity_id="automation.a"),
+            issue(entity_id="automation.b"),
+        ])
+        async with _home_assistant(tmp_path) as hass:
+            await run(hass, data)
+            ir.async_ignore_issue(hass, "config_auditor", _issue_id("automation.b"), True)
+
+        async with _home_assistant(tmp_path) as hass:
+            # The situation itself: HA reloads them hidden from the panel.
+            assert _entry(hass, "automation.a").active is False
+
+            await run(hass, data)
+
+            assert _entry(hass, "automation.a").active is True
+            assert _entry(hass, "automation.b").active is True
+            assert _entry(hass, "automation.b").dismissed_version is not None
+
+    @pytest.mark.asyncio
+    async def test_a_changed_text_updates_the_entry_in_place(self, tmp_path):
+        async with _home_assistant(tmp_path) as hass:
+            await run(hass, coordinator_data(automation_issue_list=[
+                issue(alias="Old name"),
+            ]))
+            actions = _record_events(hass)
+
+            await run(hass, coordinator_data(automation_issue_list=[
+                issue(alias="New name"),
+            ]))
+            await hass.async_block_till_done()
+
+            assert _entry(hass).translation_placeholders["entity"] == "New name"
+            assert actions == ["update"]
+
+    @pytest.mark.asyncio
+    async def test_a_problem_resolved_across_a_restart_is_removed(self, tmp_path):
+        async with _home_assistant(tmp_path) as hass:
+            await run(hass, coordinator_data(automation_issue_list=[issue()]))
+
+        async with _home_assistant(tmp_path) as hass:
+            assert _entry(hass) is not None
+
+            await run(hass, coordinator_data())
+
+            assert _entry(hass) is None

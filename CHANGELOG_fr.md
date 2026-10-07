@@ -10,6 +10,7 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ### Corrigé
 
 - **Une automatisation désactivée dans le registre des entités était auditée comme si elle tournait, et pouvait finir dans les Réparations** — Home Assistant ne charge jamais une telle automatisation et elle n'apparaît plus dans la liste des automatisations, mais sa configuration reste dans `automations.yaml`, que H.A.C.A lit : un `device_id` qu'elle contenait était signalé en sévérité haute, et une ancienne copie désactivée faisait de sa remplaçante un doublon. Elle reçoit désormais une seule alerte de sévérité basse, *Automatisation désactivée restée dans la config*, et rien de ce qu'elle contient n'est signalé ; les entités qu'elle référence comptent toujours comme utilisées.
+- **Chaque scan redéclenchait les automatisations à l'écoute des Réparations, et une alerte ignorée revenait** — chaque scan supprimait toutes les entrées de H.A.C.A dans les Réparations puis les recréait, ce qui émettait deux événements du registre par entrée et annulait le choix *Ignorer* de l'utilisateur. Seules les entrées qu'un scan ne signale plus sont désormais supprimées ; les autres sont mises à jour sur place, si bien qu'une entrée inchangée n'émet rien et qu'une alerte ignorée le reste.
 
 ---
 ## [1.8.1] — 2026-09-26 — Ignorer des entités avec un pattern glob, plus d'entités signalées à tort désactivées ou disparues, chaque écriture vérifiée comme Home Assistant la relira, fichiers YAML réécrits dans leur propre mise en page, corrections IA et sauvegardes réparées

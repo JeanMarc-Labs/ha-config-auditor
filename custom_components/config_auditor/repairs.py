@@ -61,8 +61,8 @@ async def async_update_repairs(
 ) -> None:
     """Sync HACA HIGH issues with HA Repairs panel.
 
-    - Creates repair entries for new HIGH issues.
-    - Deletes ALL previous HACA repair entries first (clean slate each scan).
+    - Deletes the HACA entries the current scan no longer reports.
+    - Creates or refreshes an entry for every HIGH issue it does report.
     """
     try:
         from homeassistant.helpers import issue_registry as ir
@@ -74,23 +74,7 @@ async def async_update_repairs(
     if not coordinator_data:
         return
 
-    # ── Step 1: Remove ALL existing HACA repairs (clean slate) ────────────
-    # This ensures resolved issues are always removed, even after HA restart.
-    try:
-        registry = ir.async_get(hass)
-        haca_issues = [
-            (domain, issue_id)
-            for (domain, issue_id) in list(registry.issues)
-            if domain == DOMAIN
-        ]
-        for domain, issue_id in haca_issues:
-            ir.async_delete_issue(hass, domain, issue_id)
-        if haca_issues:
-            _LOGGER.debug("[HACA Repairs] Cleared %d previous repair entries", len(haca_issues))
-    except Exception as exc:
-        _LOGGER.debug("[HACA Repairs] Could not clear old issues: %s", exc)
-
-    # ── Step 2: Collect all HIGH severity issues across all categories ────
+    # ── Step 1: Collect all HIGH severity issues across all categories ────
     all_high_issues: dict[str, dict[str, Any]] = {}
     for list_key in [
         "automation_issue_list", "script_issue_list", "scene_issue_list",
@@ -104,8 +88,35 @@ async def async_update_repairs(
 
     # Limit to avoid flooding the Repairs panel
     selected = dict(list(all_high_issues.items())[:MAX_REPAIR_ISSUES])
+    reported = {f"haca_{key}" for key in selected}
 
-    # ── Step 3: Create new repair entries ─────────────────────────────────
+    # ── Step 2: Remove the HACA repairs this scan no longer reports ───────
+    # Only those. Deleting an entry that is still reported and creating it
+    # again fires two issue-registry events per scan, which retriggers every
+    # automation listening to them, and drops the user's dismissal, so an
+    # ignored issue comes back. Entries kept from before an HA restart are in
+    # the registry too, so a problem resolved meanwhile is still removed.
+    try:
+        registry = ir.async_get(hass)
+        resolved = [
+            (domain, issue_id)
+            for (domain, issue_id) in list(registry.issues)
+            if domain == DOMAIN and issue_id not in reported
+        ]
+        for domain, issue_id in resolved:
+            ir.async_delete_issue(hass, domain, issue_id)
+        if resolved:
+            _LOGGER.debug("[HACA Repairs] Removed %d resolved repair entries", len(resolved))
+    except Exception as exc:
+        _LOGGER.debug("[HACA Repairs] Could not remove resolved issues: %s", exc)
+
+    # ── Step 3: Create or refresh every reported entry ────────────────────
+    # Called for entries that already exist too — never skip them. HA reloads
+    # a non-persistent issue as *inactive* after a restart (still in the
+    # registry, hidden from the Repairs panel) and only this call makes it
+    # active again. It also updates an entry whose text changed, a renamed
+    # automation for instance. On an identical entry it changes nothing and
+    # fires no event, and an update keeps the user's dismissal.
     for key, issue in selected.items():
         issue_id = f"haca_{key}"
 
