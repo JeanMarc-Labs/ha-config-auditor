@@ -2,7 +2,8 @@
 
 ha_get_logbook called logbook.async_get_logbook_entries, which no Home
 Assistant version has ever had, so it only ever returned an error. It now runs
-the query /api/logbook runs. The patches below are autospecced on Home
+the query /api/logbook runs. And ha_get_history takes entity_id as well as
+entity_ids. The patches below are autospecced on Home
 Assistant's own functions: if one disappears or changes its signature, these
 tests fail instead of the tool.
 
@@ -26,6 +27,7 @@ from custom_components.config_auditor.mcp_server import tools_history
 PROCESSOR = "homeassistant.components.logbook.processor.EventProcessor"
 EVENT_TYPES = "homeassistant.components.logbook.helpers.async_determine_event_types"
 RECORDER = "homeassistant.components.recorder.get_instance"
+HISTORY = "homeassistant.components.recorder.history.get_significant_states"
 
 
 def _hass(*components):
@@ -59,3 +61,26 @@ class TestLogbook:
 
         assert result["success"] is False
         assert "not loaded" in result["error"]
+
+
+class TestHistory:
+    """ha_get_history read entity_ids only; an agent sending entity_id got the
+    recorder's 'entity_ids must be provided'."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("params", [{"entity_id": "switch.x"}, {"entity_ids": "switch.x"}, {"entity_ids": ["switch.x"]}])
+    async def test_one_entity_reaches_the_recorder_as_a_list(self, params):
+        with patch(HISTORY, autospec=True, return_value={}) as history, \
+             patch(RECORDER, autospec=True, return_value=_recorder()):
+            result = await tools_history._tool_ha_get_history(_hass(), params)
+
+        assert result["success"] is True
+        assert history.call_args.args[3] == ["switch.x"]
+
+    @pytest.mark.asyncio
+    async def test_no_entity_is_a_clear_error(self):
+        with patch(HISTORY, autospec=True) as history:
+            result = await tools_history._tool_ha_get_history(_hass(), {"entity_ids": []})
+
+        assert result == {"error": "entity_ids (or entity_id) is required"}
+        history.assert_not_called()
