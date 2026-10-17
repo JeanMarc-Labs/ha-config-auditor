@@ -101,6 +101,7 @@ Le panel H.A.C.A est organisé en **10 onglets principaux** :
 | `battery_alert_threshold` | 20% | Seuil d'alerte batterie (pris en compte sans redémarrage) |
 | `notifications_enabled` | true | Notifications HA lors de nouvelles issues HIGH |
 | `report_frequency` | weekly | Fréquence du rapport automatique : `daily` / `weekly` / `monthly` / `never` |
+| `ignore_off_automations` | false | Ignore les automatisations éteintes — sauf celle qu'une autre automatisation, un script ou une scène nomme, qui peut la rallumer |
 | `mcp_server_enabled` | **désactivé** | Serveur MCP en HTTP — voir [Sécurité et vie privée](#sécurité-et-vie-privée) |
 | `llm_api_enabled` | **désactivé** | Propose les outils H.A.C.A aux agents conversationnels HA |
 | `llm_write_enabled` | false | Autorise ces agents à utiliser les outils d'écriture (administrateurs uniquement) |

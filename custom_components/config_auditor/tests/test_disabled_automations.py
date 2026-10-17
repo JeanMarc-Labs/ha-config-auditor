@@ -65,9 +65,18 @@ _DISARM = {
 
 
 async def _scan(tmp_path, automations: list[dict], entries: list[MockRegistryEntry],
-                states: dict[str, str] | None = None):
+                states: dict[str, str] | None = None, options: dict | None = None,
+                scripts: dict | None = None, scenes: list[dict] | None = None):
     (tmp_path / "automations.yaml").write_text(yaml.safe_dump(automations), encoding="utf-8")
+    if scripts is not None:
+        (tmp_path / "scripts.yaml").write_text(yaml.safe_dump(scripts), encoding="utf-8")
+    if scenes is not None:
+        (tmp_path / "scenes.yaml").write_text(yaml.safe_dump(scenes), encoding="utf-8")
     hass = MockHass(config_dir=str(tmp_path))
+    if options is not None:
+        entry = MagicMock()
+        entry.options = options
+        hass.config_entries.async_entries = MagicMock(return_value=[entry])
     for entry in entries:
         hass.add_registry_entry(entry)
     for entity_id, state in (states or {}).items():
@@ -151,7 +160,10 @@ class TestAutomationAnalyzer:
 
     @pytest.mark.asyncio
     async def test_a_turned_off_automation_is_still_audited(self, tmp_path):
-        """Off is not disabled: it is loaded, and one click turns it back on."""
+        """Off is not disabled: it is loaded, and one click turns it back on.
+
+        By default, that is — see TestIgnoreOffAutomations for the option.
+        """
         analyzer = await _scan(
             tmp_path,
             [{"id": "42", **_DISARM}],
@@ -182,6 +194,168 @@ class TestAutomationAnalyzer:
         # The file is unchanged: the secrets scan and the reference walk read all of it.
         assert set(analyzer.automation_configs) == {"automation.old", "automation.live"}
         assert "automation.old" not in {s["entity_id"] for s in analyzer.complexity_scores}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# The ignore_off_automations option — turned off, and skipped on request
+# ══════════════════════════════════════════════════════════════════════════════
+
+_IGNORE_OFF = {"ignore_off_automations": True}
+
+
+def _turns_on(entity_id: str) -> dict:
+    return {"action": "automation.turn_on", "target": {"entity_id": entity_id}}
+
+
+class TestIgnoreOffAutomations:
+    """Requested on 1.8.1: "Anything disabled should be ignored by default."
+
+    Opt-in instead: a turned-off automation is loaded, and comes back with a
+    click. So one that something else names stays audited even with the option.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_turned_off_automation_gets_no_finding_at_all(self, tmp_path):
+        analyzer = await _scan(
+            tmp_path,
+            [{"id": "42", **_DISARM}, {"id": "43", **_DISARM, "alias": "Live"}],
+            [_automation("automation.paused", "42"), _automation("automation.live", "43")],
+            states={"automation.paused": "off"},
+            options=_IGNORE_OFF,
+        )
+        assert _by_entity(analyzer, "automation.paused") == []
+        assert "duplicate_automation" not in {i["type"] for i in analyzer.issues}
+        assert "device_id_in_target" in {i["type"] for i in _by_entity(analyzer, "automation.live")}
+        assert analyzer.off_automation_ids == {"automation.paused"}
+        assert set(analyzer.running_automation_configs) == {"automation.live"}
+        assert "automation.paused" in analyzer.automation_configs, "the file is still read"
+
+    @pytest.mark.asyncio
+    async def test_one_another_automation_turns_on_is_still_audited(self, tmp_path):
+        holiday = {
+            "id": "50", "alias": "Holiday on",
+            "triggers": [{"trigger": "state", "entity_id": "input_boolean.holiday", "to": "on"}],
+            "actions": [_turns_on("automation.paused")],
+        }
+        analyzer = await _scan(
+            tmp_path,
+            [{"id": "42", **_DISARM}, holiday],
+            [_automation("automation.paused", "42"), _automation("automation.holiday_on", "50")],
+            states={"automation.paused": "off"},
+            options=_IGNORE_OFF,
+        )
+        assert analyzer.off_automation_ids == set()
+        assert "device_id_in_target" in {i["type"] for i in _by_entity(analyzer, "automation.paused")}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("named_by", ["script", "scene", "template"])
+    async def test_named_anywhere_else_it_stays_audited(self, tmp_path, named_by):
+        automations = [{"id": "42", **_DISARM}]
+        entries = [_automation("automation.paused", "42")]
+        scripts = scenes = None
+        if named_by == "script":
+            scripts = {"wake_up": {"sequence": [_turns_on("automation.paused")]}}
+        elif named_by == "scene":
+            scenes = [{"name": "Evening", "entities": {"automation.paused": "on"}}]
+        else:
+            automations.append({
+                "id": "50", "alias": "Picker",
+                "triggers": [{"trigger": "state", "entity_id": "input_select.mode"}],
+                "actions": [_turns_on("{{ 'automation.paused' if is_state('input_select.mode', 'away') }}")],
+            })
+            entries.append(_automation("automation.picker", "50"))
+
+        analyzer = await _scan(
+            tmp_path, automations, entries,
+            states={"automation.paused": "off"}, options=_IGNORE_OFF,
+            scripts=scripts, scenes=scenes,
+        )
+        assert analyzer.off_automation_ids == set()
+        assert "device_id_in_target" in {i["type"] for i in _by_entity(analyzer, "automation.paused")}
+
+    @pytest.mark.asyncio
+    async def test_its_own_name_does_not_keep_it_audited(self, tmp_path):
+        """An automation that turns itself off names itself — and nothing else."""
+        one_shot = {**_DISARM, "actions": [
+            *_DISARM["actions"],
+            {"action": "automation.turn_off", "target": {"entity_id": "automation.paused"}},
+        ]}
+        analyzer = await _scan(
+            tmp_path,
+            [{"id": "42", **one_shot}],
+            [_automation("automation.paused", "42")],
+            states={"automation.paused": "off"},
+            options=_IGNORE_OFF,
+        )
+        assert analyzer.off_automation_ids == {"automation.paused"}
+        assert _by_entity(analyzer, "automation.paused") == []
+
+    @pytest.mark.asyncio
+    async def test_a_registry_disabled_one_keeps_its_low_finding(self, tmp_path):
+        """It has no state, so it is not "off": 1.8.2's rule applies unchanged."""
+        analyzer = await _scan(
+            tmp_path,
+            [{"id": "1", **_DISARM}],
+            [_automation("automation.old", "1", disabled=True)],
+            options=_IGNORE_OFF,
+        )
+        assert analyzer.off_automation_ids == set()
+        assert [(i["type"], i["severity"]) for i in _by_entity(analyzer, "automation.old")] == [
+            ("disabled_automation", "low")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_option_set_to_false_changes_nothing(self, tmp_path):
+        analyzer = await _scan(
+            tmp_path,
+            [{"id": "42", **_DISARM}],
+            [_automation("automation.paused", "42")],
+            states={"automation.paused": "off"},
+            options={"ignore_off_automations": False},
+        )
+        assert analyzer.off_automation_ids == set()
+        assert "device_id_in_target" in {i["type"] for i in _by_entity(analyzer, "automation.paused")}
+
+    @pytest.mark.asyncio
+    async def test_the_entity_checks_skip_what_the_automation_scan_skipped(self):
+        hass = MockHass()
+        hass.add_registry_entry(_automation("automation.paused", "1"))
+        hass.add_state("automation.paused", "off")
+        configs = {"automation.paused": _uses("light.gone")}
+        with patch("custom_components.config_auditor.entity_analyzer.TranslationHelper") as TH:
+            TH.return_value.t = _t
+            TH.return_value.async_load_language = AsyncMock()
+            from custom_components.config_auditor.entity_analyzer import EntityAnalyzer
+            analyzer = EntityAnalyzer(hass)
+            skipped = await analyzer.analyze_all(configs, {}, {"automation.paused"})
+            assert "zombie_entity" not in {i["type"] for i in skipped}
+
+            # Option off: the automation scan skipped nothing, and neither do these.
+            audited = await analyzer.analyze_all(configs, {})
+            assert "zombie_entity" in {i["type"] for i in audited}
+
+
+class TestIgnoreOffAutomationsWiring:
+    """Source-level guards: the places the option can silently stop working."""
+
+    _ROOT = Path(__file__).parent.parent
+
+    def _src(self, name: str) -> str:
+        return (self._ROOT / name).read_text(encoding="utf-8")
+
+    def test_save_options_accepts_the_key(self):
+        assert "OPT_IGNORE_OFF_AUTOMATIONS,  #" in self._src("websocket.py"), (
+            "ignore_off_automations must be in websocket ALLOWED_KEYS or the panel cannot save it"
+        )
+
+    def test_panel_reads_and_writes_the_option(self):
+        config_tab = self._src("www/src/config_tab.js")
+        assert "options.ignore_off_automations === true" in config_tab
+        assert "ignore_off_automations: bool('#cfg-ignore-off-automations', false)" in config_tab
+
+    @pytest.mark.parametrize("caller", ["__init__.py", "services.py"])
+    def test_every_entity_scan_gets_the_skipped_set(self, caller):
+        assert "automation_analyzer.off_automation_ids" in self._src(caller)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

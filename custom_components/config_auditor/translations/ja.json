@@ -686,6 +686,8 @@
       "haca_ignore_title": "ラベルで無視",
       "history_backups": "履歴とバックアップ",
       "history_retention": "履歴保存期間（日）",
+      "ignore_off_automations": "無効化されたオートメーションを無視（状態 off）",
+      "ignore_off_automations_hint": "状態が off のオートメーションは監査しません。ただし、他のオートメーション、スクリプト、シーンが名前を挙げているものは引き続き監査します。そこから再びオンにされる可能性があるためです。エンティティレジストリで無効化されたオートメーションは常に除外されます。",
       "ignore_patterns_examples": "<b>例</b> — <code>sensor.bbq_*</code> はバーベキューのセンサーをすべて非表示 · <code>*_ipx800</code> は <code>_ipx800</code> で終わるものすべてを非表示 · <code>climate.garage?</code> は <code>climate.garage1</code> と <code>climate.garage2</code> を非表示 · <code>media_player.*</code> はすべてのメディアプレーヤーを非表示。",
       "ignore_patterns_info": "<b>用途：</b> 上の <code>haca_ignore</code> ラベルは、Home Assistant が認識しているものにしか付けられません。削除済みのエンティティを指しているダッシュボードのカードや、意図的に電源を切っている機器（バーベキュー用温度プローブ、夏だけ使うポンプなど）で統合が起動しない場合、レジストリのエントリ自体が存在しません — ラベルを付ける対象がなく、HACA は報告し続けます。<br><br><b>使い方：</b> 下に <a href=\"https://docs.python.org/3/library/fnmatch.html\" target=\"_blank\">glob パターン</a>を 1 行ずつ追加してください。<code>entity_id</code> が一致するエンティティは、ラベルが付いている場合とまったく同じように<em>すべての</em> HACA スキャンでスキップされます — しかもラベルと違い、存在しないエンティティにも効きます。パターンは大文字・小文字を区別し、<code>*</code>（任意の文字列）と <code>?</code>（1 文字）が使えます。<br><br><b>ショートカット：</b> <em>存在しない</em>・<em>利用不可</em>・<em>ゾンビ</em>エンティティの問題カードで <b>エンティティを無視</b> をクリックすると、その entity_id が下のリストに追加されます。まとめて扱いたい場合はパターンを使ってください。",
       "ignore_patterns_placeholder": "1 行に 1 パターン、例：\nsensor.bbq_*\nbinary_sensor.pool_*\nclimate.garage?",

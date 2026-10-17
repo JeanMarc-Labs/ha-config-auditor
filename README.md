@@ -101,6 +101,7 @@ The H.A.C.A panel is organized into **10 main tabs**:
 | `battery_alert_threshold` | 20% | Battery alert threshold (applied without HA restart) |
 | `notifications_enabled` | true | HA notifications for new HIGH issues |
 | `report_frequency` | weekly | Automatic report frequency: `daily` / `weekly` / `monthly` / `never` |
+| `ignore_off_automations` | false | Skips automations that are turned off — except one another automation, a script or a scene names, which may turn it back on |
 | `mcp_server_enabled` | **off** | MCP server over HTTP — see [Security & privacy](#security--privacy) |
 | `llm_api_enabled` | **off** | Offers the H.A.C.A tools to HA conversation agents |
 | `llm_write_enabled` | false | Lets those agents use the write tools (administrators only) |
