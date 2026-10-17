@@ -645,6 +645,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await entity_analyzer.analyze_all(
                         automation_analyzer.automation_configs,
                         automation_analyzer.script_configs,
+                        automation_analyzer.off_automation_ids,
                     )
                     if "entities" not in excluded else []
                 )

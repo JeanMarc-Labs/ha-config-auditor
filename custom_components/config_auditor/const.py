@@ -195,9 +195,19 @@ OPT_LLM_API_ENABLED = "llm_api_enabled"
 # `noisy_scan_exclude_patterns` et comme les `entity_globs` du recorder.
 OPT_HACA_IGNORE_PATTERNS = "haca_ignore_patterns"
 
+# Ne pas auditer les automatisations éteintes (état `off`, le « Désactiver » de
+# l'éditeur). Faux par défaut : une automatisation éteinte reste chargée, et un
+# clic ou un `automation.turn_on` la relance — un device_id cassé casse alors
+# sans que HACA ait rien dit. Même activée, l'option garde dans l'audit celle
+# qu'une autre automatisation, un script ou une scène nomme : c'est peut-être
+# ce qui la rallume. Une automatisation désactivée dans le registre des entités
+# n'est jamais chargée ; elle est écartée dans tous les cas (1.8.2).
+OPT_IGNORE_OFF_AUTOMATIONS = "ignore_off_automations"
+
 DEFAULT_MCP_SERVER_ENABLED = False
 DEFAULT_PROACTIVE_AGENT_ENABLED = False
 DEFAULT_LLM_API_ENABLED = False
+DEFAULT_IGNORE_OFF_AUTOMATIONS = False
 
 # Types d'anomalies exclus par défaut : du bruit pour la plupart des
 # installations, à réactiver depuis Configuration → Types d'analyse.

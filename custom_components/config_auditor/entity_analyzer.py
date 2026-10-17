@@ -96,7 +96,9 @@ class EntityAnalyzer:
         self._all_config_entity_ids: set[str] = set()
         # Maps automation/script entity_id → human-readable alias
         self._automation_alias_map: dict[str, str] = {}
-        # Automations Home Assistant never loads — see _running_referrers.
+        # Automations that do not run: never loaded by Home Assistant, or turned
+        # off and skipped by the ignore_off_automations option — see
+        # _running_referrers.
         self._disabled_automation_ids: set[str] = set()
         self._translator = TranslationHelper(hass)
 
@@ -119,8 +121,14 @@ class EntityAnalyzer:
         self,
         automation_configs: dict[str, dict] = None,
         script_configs: dict[str, dict] = None,
+        off_automation_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Analyze all entities."""
+        """Analyze all entities.
+
+        ``off_automation_ids`` are the turned-off automations the automation
+        analyzer skipped under the ``ignore_off_automations`` option; they are
+        treated like the ones disabled in the registry.
+        """
         # Audit 5-3 measured this analyzer at 10.4s of an 18.4s scan, in a
         # single 10.1s stretch that never handed the event loop back — the
         # largest freeze left in HACA. It was timed as one block, so nothing
@@ -142,7 +150,9 @@ class EntityAnalyzer:
         # Load ignored entities (haca_ignore label) — MUST be first, before any analysis
         with steps.stage("haca_ignore"):
             self._ignored_entity_ids = await self._load_ignored_entity_ids()
-            self._disabled_automation_ids = self._load_disabled_automation_ids()
+            self._disabled_automation_ids = (
+                self._load_disabled_automation_ids() | set(off_automation_ids or ())
+            )
 
         # Build entity reference map (automations + scripts)
         with steps.stage("references"):
@@ -595,7 +605,8 @@ class EntityAnalyzer:
             return set()
 
     def _running_referrers(self, referrers: list[str]) -> list[str]:
-        """``referrers`` minus the automations Home Assistant never loads.
+        """``referrers`` minus the automations that do not run: those Home
+        Assistant never loads, and the turned-off ones the user asked to skip.
 
         A disabled automation still *uses* what it references — its
         configuration is on disk and would break if the entity went away, so

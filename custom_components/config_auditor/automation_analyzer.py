@@ -65,6 +65,36 @@ def _collect_blueprint_inputs(declared: Any, required: set, entity: set) -> None
             entity.add(key)
 
 
+# An automation's entity id, wherever a config spells it out.
+_AUTOMATION_ID_RE = re.compile(r"\bautomation\.[a-z0-9_]+")
+
+# Real configs nest a handful of levels; this only stops a pathological one.
+_MAX_CONFIG_DEPTH = 30
+
+
+def _automation_names_in(node: Any, found: set[str], depth: int = 0) -> None:
+    """Add to ``found`` every ``automation.*`` id a config names, keys included.
+
+    Read as text rather than from ``entity_id:`` fields alone: an id handed to
+    ``automation.turn_on`` through a template or a blueprint input names the
+    automation just as much, and a scene names it as a key of its entities.
+    """
+    if depth > _MAX_CONFIG_DEPTH:
+        return
+    if isinstance(node, str):
+        if "automation." in node:
+            found.update(_AUTOMATION_ID_RE.findall(node))
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            if key == "_source_file":  # HACA's own note, not the user's config
+                continue
+            _automation_names_in(key, found, depth + 1)
+            _automation_names_in(value, found, depth + 1)
+    elif isinstance(node, list):
+        for item in node:
+            _automation_names_in(item, found, depth + 1)
+
+
 class AutomationAnalyzer:
     """Analyze automations for best practice violations."""
 
@@ -98,6 +128,8 @@ class AutomationAnalyzer:
         self._ignored_entity_ids: set[str] = set()
         # Automations Home Assistant never loads — see _load_disabled_automations.
         self._disabled_automation_ids: set[str] = set()
+        # Turned off, and skipped at the user's request — see _load_off_automations.
+        self._off_automation_ids: set[str] = set()
         # One entry per blueprint file, kept across scans — see
         # _read_blueprint. Bounded by the blueprint paths the config refers to.
         self._blueprint_cache: dict[
@@ -122,7 +154,8 @@ class AutomationAnalyzer:
 
     @property
     def running_automation_configs(self) -> dict[str, dict]:
-        """The loaded automations minus those Home Assistant never loads.
+        """The loaded automations minus those Home Assistant never loads, and
+        minus the turned-off ones the ``ignore_off_automations`` option skips.
 
         What an analysis of run-time behaviour — performance, overlapping
         triggers, recorder writes — should look at. One reading what the
@@ -131,7 +164,13 @@ class AutomationAnalyzer:
         return {
             eid: cfg for eid, cfg in self._automation_configs.items()
             if eid not in self._disabled_automation_ids
+            and eid not in self._off_automation_ids
         }
+
+    @property
+    def off_automation_ids(self) -> set[str]:
+        """The turned-off automations this scan skipped, for the entity checks."""
+        return set(self._off_automation_ids)
 
     @property
     def script_configs(self) -> dict[str, dict]:
@@ -181,6 +220,8 @@ class AutomationAnalyzer:
             await self._load_automation_configs()
             await self._load_script_configs()
             await self._load_scene_configs()
+            # Needs every config read: what names an automation keeps it audited.
+            await self._load_off_automations()
 
         _LOGGER.debug("Analyzing %d automations, %d scripts, %d scenes",
                      len(self._automation_configs), len(self._script_configs), len(self._scene_configs))
@@ -189,6 +230,8 @@ class AutomationAnalyzer:
         with steps.stage("automations"):
             for idx, (entity_id, config) in enumerate(self._automation_configs.items()):
                 if entity_id in self._ignored_entity_ids: continue
+                # Turned off, and the user asked for those to be left alone.
+                if entity_id in self._off_automation_ids: continue
                 if entity_id in self._disabled_automation_ids:
                     # One finding saying so, instead of the checks of code
                     # that cannot run.
@@ -394,12 +437,54 @@ class AutomationAnalyzer:
             _LOGGER.error("Error reading disabled automations from the entity registry: %s", e)
             self._disabled_automation_ids = set()
 
+    def _ignore_off_automations(self) -> bool:
+        """The ``ignore_off_automations`` option, off when there is no entry."""
+        from .const import DEFAULT_IGNORE_OFF_AUTOMATIONS, DOMAIN, OPT_IGNORE_OFF_AUTOMATIONS
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            return bool(entry.options.get(OPT_IGNORE_OFF_AUTOMATIONS, DEFAULT_IGNORE_OFF_AUTOMATIONS))
+        return DEFAULT_IGNORE_OFF_AUTOMATIONS
+
+    async def _load_off_automations(self) -> None:
+        """Cache the turned-off automations the user asked HACA to skip.
+
+        Only with the ``ignore_off_automations`` option. Turned off is not
+        disabled: the automation is loaded, and a click or an
+        ``automation.turn_on`` runs it again. So one that another automation, a
+        script or a scene names stays audited — that may be what turns it back
+        on. Its own name in its own config does not count.
+        """
+        self._off_automation_ids = set()
+        try:
+            if not self._ignore_off_automations():
+                return
+            off = set()
+            for entity_id in self._automation_configs:
+                state = self.hass.states.get(entity_id)
+                if state is not None and state.state == "off":
+                    off.add(entity_id)
+            if not off:
+                return
+            named: set[str] = set()
+            for configs in (self._automation_configs, self._script_configs, self._scene_configs):
+                for idx, (owner, config) in enumerate(configs.items()):
+                    found: set[str] = set()
+                    _automation_names_in(config, found)
+                    found.discard(owner)
+                    named |= found
+                    if idx % 50 == 0: await asyncio.sleep(0)
+            self._off_automation_ids = off - named
+        except Exception as e:
+            _LOGGER.error("Error reading the turned-off automations: %s", e)
+            self._off_automation_ids = set()
+
     def _is_ignored(self, entity_id: str) -> bool:
         """Return True if this entity should be skipped: it has the haca_ignore
-        label, or it is an automation Home Assistant never loads."""
+        label, it is an automation Home Assistant never loads, or one turned
+        off that the ignore_off_automations option skips."""
         return (
             entity_id in self._ignored_entity_ids
             or entity_id in self._disabled_automation_ids
+            or entity_id in self._off_automation_ids
         )
 
     def _report_disabled_automation(self, entity_id: str, config: dict[str, Any]) -> None:

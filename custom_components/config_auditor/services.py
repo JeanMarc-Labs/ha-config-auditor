@@ -253,6 +253,7 @@ async def async_setup_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
             issues = await entity_analyzer.analyze_all(
                 automation_analyzer.automation_configs,
                 automation_analyzer.script_configs,
+                automation_analyzer.off_automation_ids,
             )
             
             # Mettre à jour le coordinator avec les nouvelles données

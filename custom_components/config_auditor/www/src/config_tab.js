@@ -228,6 +228,10 @@ function renderConfigTab(options, lang, t) {
     '<div class="cfg-row-label"><span>' + t('config.startup_scan') + '</span><span class="cfg-row-hint">' + t('config.startup_scan_hint') + '</span></div>' +
     '<label class="cfg-toggle"><input type="checkbox" id="cfg-startup-scan"' + (options.startup_scan_enabled !== false ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
     '</div>' +
+    '<div class="cfg-row" style="align-items:flex-start;">' +
+    '<div class="cfg-row-label"><span>' + t('config.ignore_off_automations') + '</span><span class="cfg-row-hint">' + t('config.ignore_off_automations_hint') + '</span></div>' +
+    '<label class="cfg-toggle"><input type="checkbox" id="cfg-ignore-off-automations"' + (options.ignore_off_automations === true ? ' checked' : '') + '><span class="cfg-toggle-slider"></span></label>' +
+    '</div>' +
     '</div>' +
 
     // ── Section : Événements ──
@@ -503,6 +507,7 @@ var DEFAULT_OPTIONS = {
   scan_interval: 60,
   startup_delay_seconds: 60,
   startup_scan_enabled: true,
+  ignore_off_automations: false,
   event_monitoring_enabled: true,
   event_debounce_seconds: 30,
   excluded_issue_types: [],
@@ -541,6 +546,7 @@ function collectFormOptions(root) {
     scan_interval: (function () { var el = q('#cfg-scan-interval'); if (!el) return 60; var v = parseInt(el.value, 10); return isNaN(v) ? 60 : Math.max(0, v); })(),
     startup_delay_seconds: num('#cfg-startup-delay', 60),
     startup_scan_enabled: bool('#cfg-startup-scan', true),
+    ignore_off_automations: bool('#cfg-ignore-off-automations', false),
     event_monitoring_enabled: bool('#cfg-event-monitoring', true),
     event_debounce_seconds: num('#cfg-event-debounce', 30),
     excluded_issue_types: excluded,

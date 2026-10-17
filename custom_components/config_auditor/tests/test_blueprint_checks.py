@@ -103,12 +103,13 @@ class _Translator:
 
 
 def analyzer(hass, configs, ignored=()):
-    """`_check_blueprint_issues` reads these six attributes and hass."""
+    """`_check_blueprint_issues` reads these seven attributes and hass."""
     a = AutomationAnalyzer.__new__(AutomationAnalyzer)
     a.hass = hass
     a._automation_configs = configs
     a._ignored_entity_ids = set(ignored)
     a._disabled_automation_ids = set()
+    a._off_automation_ids = set()
     a._translator = _Translator()
     a.issues = []
     a._blueprint_cache = {}
