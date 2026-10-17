@@ -121,44 +121,42 @@ async def _tool_ha_get_logbook(hass: HomeAssistant, params: dict) -> dict:
     entity_id = params.get("entity_id")
     limit = int(params.get("limit", 50))
 
-    try:
-        from homeassistant.components import logbook
-
-        entity_ids = [entity_id] if entity_id else None
-
-        entries = await logbook.async_get_logbook_entries(
-            hass,
-            start_time=start_dt,
-            end_time=end_dt,
-            entity_ids=entity_ids,
-        )
-
-        # entries is an async generator or list depending on HA version
-        results: list[dict] = []
-        if hasattr(entries, "__aiter__"):
-            async for e in entries:
-                results.append(e)
-                if len(results) >= limit:
-                    break
-        else:
-            results = list(entries)[:limit]
-
+    if "logbook" not in hass.config.components:
         return {
-            "success": True,
-            "period": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
-            "entity_filter": entity_id,
-            "total_entries": len(results),
-            "entries": results,
+            "success": False,
+            "error": "The logbook integration is not loaded.",
+            "hint": "Use ha_get_history() as an alternative to get state changes.",
         }
 
+    try:
+        # The query Home Assistant's own /api/logbook runs: the logbook has no
+        # public function for it.
+        from homeassistant.components.logbook.helpers import async_determine_event_types
+        from homeassistant.components.logbook.processor import EventProcessor
+        from homeassistant.components.recorder import get_instance
+
+        entity_ids = [entity_id] if entity_id else None
+        processor = EventProcessor(
+            hass,
+            async_determine_event_types(hass, entity_ids, None),
+            entity_ids,
+            None,
+            None,
+            timestamp=False,
+            include_entity_name=True,
+        )
+        entries = await get_instance(hass).async_add_executor_job(
+            processor.get_events, start_dt, end_dt
+        )
     except Exception as exc:
-        # Fallback: use recorder directly
-        try:
-            return {
-                "success": False,
-                "error": f"Logbook API unavailable: {exc}",
-                "hint": "Ensure the logbook integration is enabled. "
-                        "Use ha_get_history() as an alternative to get state changes.",
-            }
-        except Exception:
-            return {"error": f"Logbook query failed: {exc}"}
+        return {"success": False, "error": f"Logbook query failed: {exc}"}
+
+    # Oldest first, like the history: keep the most recent ones.
+    return {
+        "success": True,
+        "period": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
+        "entity_filter": entity_id,
+        "total_entries": len(entries),
+        "truncated": len(entries) > limit,
+        "entries": entries[-limit:],
+    }
