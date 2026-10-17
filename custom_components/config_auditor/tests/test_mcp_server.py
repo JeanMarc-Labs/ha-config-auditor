@@ -218,6 +218,36 @@ class TestMcpServerImport:
             except SyntaxError as e:
                 pytest.fail(f"Syntax error in mcp_server/{path.name}: {e}")
 
+    def test_relative_imports_resolve(self):
+        """Every relative import in the package names a module and names that exist.
+
+        The 1.8.0 split moved this code one package down; three imports inside
+        haca_explain_issue kept their single dot and failed only when called.
+        """
+        import ast
+        import importlib
+        import importlib.util
+        pytest.importorskip("homeassistant")
+
+        pkg = "custom_components.config_auditor.mcp_server"
+        broken = []
+        for path in mcp_package_files():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.ImportFrom) or not node.level:
+                    continue
+                base = pkg.rsplit(".", node.level - 1)[0]
+                target = f"{base}.{node.module}" if node.module else base
+                where = f"mcp_server/{path.name}:{node.lineno}"
+                try:
+                    module = importlib.import_module(target)
+                except ImportError as exc:
+                    broken.append(f"{where}: {exc}")
+                    continue
+                for alias in node.names:
+                    if not hasattr(module, alias.name) and importlib.util.find_spec(f"{target}.{alias.name}") is None:
+                        broken.append(f"{where}: {target} has no {alias.name}")
+        assert not broken, "Unresolved relative imports:\n" + "\n".join(broken)
+
     def test_package_exports_the_public_surface(self):
         """llm_api.py and __init__.py import these from the package root."""
         mcp = pytest.importorskip("custom_components.config_auditor.mcp_server")

@@ -709,20 +709,14 @@ async def _tool_explain_issue(hass: HomeAssistant, params: dict) -> dict:
     if not issue:
         return {"error": f"Issue '{issue_id}' not found"}
 
-    # Utiliser le cache AI si disponible
-    from .conversation import _async_call_ai, _AI_CACHE_KEY
-    cache = hass.data.get(DOMAIN, {}).get(_AI_CACHE_KEY, {})
-    cache_key = f"explain_{issue_id}"
-
-    if cache_key in cache:
-        return {"explanation": cache[cache_key], "cached": True}
+    from ..conversation import _async_call_ai, _AI_CACHE_KEY
+    from ..translation_utils import resolve_notification_language
 
     # The prompt is what the model answers in, so it follows the notification
     # language like every other AI prompt (see conversation.explain_issue_ai).
-    from .translation_utils import resolve_notification_language
     _lang = resolve_notification_language(hass)
     try:
-        from . import _TS_CACHE  # noqa: PLC0415
+        from .. import _TS_CACHE  # noqa: PLC0415
         _ap = (_TS_CACHE.get(_lang) or _TS_CACHE.get("en") or {}).get("ai_prompts", {})
     except Exception:
         _ap = {}
@@ -739,17 +733,21 @@ async def _tool_explain_issue(hass: HomeAssistant, params: dict) -> dict:
         message=issue.get("message", ""),
     )
 
-    explanation = await _async_call_ai(hass, prompt, "HACA MCP Explain")
+    # One slot per issue ID, holding the prompt it answered: an ID can name
+    # several issues of one entity, and a new message or language must not get
+    # the old answer. The cache never holds more entries than there are IDs.
+    entries = hass.config_entries.async_entries(DOMAIN)
+    entry_data = hass.data.get(DOMAIN, {}).get(entries[0].entry_id) if entries else None
+    cache = entry_data.setdefault(_AI_CACHE_KEY, {}) if isinstance(entry_data, dict) else {}
 
-    if explanation:
-        # Mettre en cache
-        if DOMAIN in hass.data:
-            entries = hass.config_entries.async_entries(DOMAIN)
-            if entries:
-                entry_data = hass.data[DOMAIN].get(entries[0].entry_id, {})
-                ai_cache = entry_data.get(_AI_CACHE_KEY, {})
-                ai_cache[cache_key] = explanation
-                entry_data[_AI_CACHE_KEY] = ai_cache
+    hit = cache.get(issue_id)
+    cached = hit is not None and hit[0] == prompt
+    if cached:
+        explanation = hit[1]
+    else:
+        explanation = await _async_call_ai(hass, prompt, "HACA MCP Explain")
+        if explanation:
+            cache[issue_id] = (prompt, explanation)
 
     return {
         "issue_id": issue_id,
@@ -757,5 +755,5 @@ async def _tool_explain_issue(hass: HomeAssistant, params: dict) -> dict:
         "explanation": explanation or _ap.get(
             "mcp_no_ai_available", "No AI service available."
         ),
-        "cached": False,
+        "cached": cached,
     }
