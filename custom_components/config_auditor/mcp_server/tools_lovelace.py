@@ -13,12 +13,11 @@ async def _tool_ha_get_lovelace(hass: HomeAssistant, params: dict) -> dict:
         if err:
             return err
 
-        config = await dashboard.async_load(force=False)
+        config, err = await _load_stored_config(dashboard, dashboard_id, force=False)
+        if err:
+            return err
         if not config or not isinstance(config, dict):
             return {"error": f"Dashboard '{dashboard_id}' returned empty config."}
-
-        if (strategy_err := _lovelace_strategy_error(dashboard_id, config)) is not None:
-            return strategy_err
 
         views = config.get("views", [])
         return {
@@ -91,9 +90,9 @@ async def _tool_ha_add_lovelace_card(hass: HomeAssistant, params: dict) -> dict:
         if not hasattr(dashboard, "async_save"):
             return {"error": "Dashboard is read-only (YAML mode). Switch to storage mode in Settings → Dashboards."}
 
-        config = await dashboard.async_load(force=True)
-        if (strategy_err := _lovelace_strategy_error(dashboard_id, config)) is not None:
-            return strategy_err
+        config, err = await _load_stored_config(dashboard, dashboard_id, force=True)
+        if err:
+            return err
 
         views = config.get("views", [])
 
@@ -127,37 +126,57 @@ async def _tool_ha_add_lovelace_card(hass: HomeAssistant, params: dict) -> dict:
 
 # ── DASHBOARDS EDIT ───────────────────────────────────────────────────────────
 
+# Home Assistant files the default dashboard under the key None, in both the
+# LovelaceData object and the dict it replaced; tools name it "lovelace".
+_DEFAULT_DASHBOARD_IDS = ("lovelace", "default")
+
+_TAKE_CONTROL_HINT = (
+    "Take control of the dashboard first (dashboard → pencil icon → 3-dot menu "
+    "→ Take control) to convert it into editable stored views."
+)
+
+
+def _dashboard_key(dashboard_id: str):
+    """The key Home Assistant stores this dashboard under."""
+    return None if dashboard_id in _DEFAULT_DASHBOARD_IDS else dashboard_id
+
+
+def _dashboard_ids(keys) -> list[str]:
+    """Dashboard keys as the ids the tools accept: the default one is "lovelace"."""
+    return ["lovelace" if k is None else str(k) for k in keys]
+
+
 async def _get_lovelace_dashboard(hass: HomeAssistant, dashboard_id: str = None):
     """Get a Lovelace dashboard object that supports async_load / async_save.
-    
+
     Returns (dashboard_obj, error_dict). If dashboard_obj is None, error_dict
     explains why. Handles all HA versions.
     """
     dashboard_id = dashboard_id or "lovelace"
     lovelace = hass.data.get("lovelace")
-    
+
     if lovelace is None:
         return None, {"error": "Lovelace component not loaded. Ensure frontend integration is active."}
-    
+
     dashboard = None
-    
+
     # Strategy 1: Object with .dashboards dict (HA 2024+)
     if hasattr(lovelace, "dashboards"):
         dbs = lovelace.dashboards
-        if isinstance(dbs, dict) and dashboard_id in dbs:
-            dashboard = dbs[dashboard_id]
-        if not dashboard and dashboard_id in ("lovelace", "default", None):
+        if isinstance(dbs, dict):
+            dashboard = dbs.get(_dashboard_key(dashboard_id))
+        if not dashboard and dashboard_id in _DEFAULT_DASHBOARD_IDS:
             if hasattr(lovelace, "async_load"):
                 dashboard = lovelace
-    
+
     # Strategy 2: Dict-like
     if not dashboard and isinstance(lovelace, dict):
         sub = lovelace.get("dashboards", {})
-        if isinstance(sub, dict) and dashboard_id in sub:
-            dashboard = sub[dashboard_id]
+        if isinstance(sub, dict):
+            dashboard = sub.get(_dashboard_key(dashboard_id))
         if not dashboard:
             dashboard = lovelace.get(dashboard_id)
-        if not dashboard and dashboard_id in ("lovelace", "default"):
+        if not dashboard and dashboard_id in _DEFAULT_DASHBOARD_IDS:
             dashboard = lovelace.get("lovelace")
         if not dashboard:
             cfg_obj = lovelace.get("config")
@@ -173,12 +192,14 @@ async def _get_lovelace_dashboard(hass: HomeAssistant, dashboard_id: str = None)
     
     available = []
     if hasattr(lovelace, "dashboards") and isinstance(lovelace.dashboards, dict):
-        available = list(lovelace.dashboards.keys())
+        available = _dashboard_ids(lovelace.dashboards)
     elif isinstance(lovelace, dict):
         sub = lovelace.get("dashboards", lovelace)
         if isinstance(sub, dict):
-            available = [k for k in sub.keys() if k not in ("mode", "resources", "dashboards", "config")]
-    
+            available = _dashboard_ids(
+                k for k in sub if k not in ("mode", "resources", "dashboards", "config", "yaml_dashboards")
+            )
+
     return None, {
         "error": f"Dashboard '{dashboard_id}' not accessible in storage mode.",
         "available_dashboards": available,
@@ -207,11 +228,30 @@ def _lovelace_strategy_error(dashboard_id: str, config) -> dict | None:
             "be introspected or edited."
         ),
         "strategy": strategy_type,
-        "hint": (
-            "Take control of the dashboard first (dashboard → pencil icon → 3-dot menu "
-            "→ Take control) to convert it into editable stored views."
-        ),
+        "hint": _TAKE_CONTROL_HINT,
     }
+
+
+async def _load_stored_config(dashboard, dashboard_id: str, *, force: bool):
+    """Load what a dashboard stores, or say why there is nothing to read or edit.
+
+    Returns (config, error_dict). The default dashboard stores nothing until it
+    is taken control of -- Home Assistant generates it -- and its loader then
+    raises ConfigNotFound, whose message is empty.
+    """
+    from homeassistant.components.lovelace.const import ConfigNotFound
+
+    try:
+        config = await dashboard.async_load(force)
+    except ConfigNotFound:
+        return None, {
+            "error": (
+                f"Dashboard '{dashboard_id}' has no stored config: Home Assistant "
+                "generates it automatically, or is running in recovery mode."
+            ),
+            "hint": _TAKE_CONTROL_HINT,
+        }
+    return config, _lovelace_strategy_error(dashboard_id, config)
 
 
 async def _tool_ha_list_dashboards(hass: HomeAssistant, params: dict) -> dict:
@@ -241,7 +281,7 @@ async def _tool_ha_list_dashboards(hass: HomeAssistant, params: dict) -> dict:
             results[0]["mode"] = "storage"
         
         for url_path, dash in dashboards.items():
-            if url_path in ("lovelace",):
+            if url_path in (None, "lovelace"):  # the default, listed first
                 continue
             info: dict = {"url_path": url_path}
             if hasattr(dash, "config") and isinstance(dash.config, dict):
@@ -278,9 +318,9 @@ async def _tool_ha_update_lovelace_card(hass: HomeAssistant, params: dict) -> di
         if err:
             return err
 
-        ll = await dashboard.async_load(False)
-        if (strategy_err := _lovelace_strategy_error(dashboard_id, ll)) is not None:
-            return strategy_err
+        ll, err = await _load_stored_config(dashboard, dashboard_id, force=False)
+        if err:
+            return err
 
         views = ll.get("views", [])
         if view_index >= len(views):
@@ -333,9 +373,9 @@ async def _tool_ha_remove_lovelace_card(hass: HomeAssistant, params: dict) -> di
         if err:
             return err
 
-        ll = await dashboard.async_load(False)
-        if (strategy_err := _lovelace_strategy_error(dashboard_id, ll)) is not None:
-            return strategy_err
+        ll, err = await _load_stored_config(dashboard, dashboard_id, force=False)
+        if err:
+            return err
 
         views = ll.get("views", [])
         if view_index >= len(views):
