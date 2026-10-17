@@ -553,11 +553,14 @@ HA_MEDIUM_TOOLS: list[dict[str, Any]] = [
         "description": "Retrieve state history of entities over a time period. Defaults to last 24h. Useful for debugging.",
         "inputSchema": {
             "type": "object",
-            "required": ["entity_ids"],
             "properties": {
                 "entity_ids": {
                     "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                    "description": "One entity_id or list of entity_ids, e.g. 'sensor.temperature' or ['light.salon', 'switch.tv']",
+                    "description": "One entity_id or list of entity_ids, e.g. 'sensor.temperature' or ['light.salon', 'switch.tv']. Required unless entity_id is given.",
+                },
+                "entity_id": {
+                    "type": "string",
+                    "description": "A single entity_id, as an alternative to entity_ids.",
                 },
                 "start": {
                     "type": "string",
@@ -826,7 +829,7 @@ HA_LOW_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "ha_manage_entity_labels",
-        "description": "Add or remove labels from entities. Provide: entity_id, labels list, action (add/remove).",
+        "description": "Add, remove or replace labels on entities. Provide: entity_ids (one or a list), labels list, action (add/remove/replace).",
         "inputSchema": {
             "type": "object",
             "required": ["entity_ids", "action"],

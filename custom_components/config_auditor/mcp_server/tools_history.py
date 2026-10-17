@@ -12,9 +12,12 @@ async def _tool_ha_get_history(hass: HomeAssistant, params: dict) -> dict:
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.history import get_significant_states
 
-    raw_ids = params.get("entity_ids", [])
+    # entity_id too: ha_get_logbook takes the singular, and agents carry it over.
+    raw_ids = params.get("entity_ids") or params.get("entity_id") or []
     if isinstance(raw_ids, str):
         raw_ids = [raw_ids]
+    if not raw_ids:
+        return {"error": "entity_ids (or entity_id) is required"}
 
     now = datetime.now(timezone.utc)
     try:
