@@ -5,7 +5,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 ---
-## [1.8.2] — 2026-10-04 — Les automatisations désactivées dans le registre des entités ne sont plus auditées comme si elles tournaient
+## [1.8.2] — 2026-11-16 — Les automatisations désactivées dans le registre des entités ne sont plus auditées comme si elles tournaient, une option pour ignorer les automatisations éteintes, les Réparations ne sont plus recréées à chaque scan, outils MCP de tableau de bord, journal, historique et explication réparés
 
 ### Ajouté
 
@@ -19,6 +19,10 @@ Versionnement : [Semantic Versioning](https://semver.org/lang/fr/)
 - **`haca_explain_issue` échouait à chaque appel depuis la 1.8.0** — le découpage du serveur MCP en package a laissé trois de ses imports pointer à l'intérieur de celui-ci, d'où `No module named '…mcp_server.conversation'`. Il fonctionne de nouveau, son prompt suit la langue des notifications, et son cache, lu et écrit à deux endroits différents, réutilise une réponse tant que le message de l'alerte ou la langue ne change pas.
 - **`ha_get_logbook` ne renvoyait jamais aucune entrée** — il appelait une fonction du journal que Home Assistant n'a jamais eue, et répondait donc toujours *Logbook API unavailable*. Il lance désormais la requête qu'utilise l'API du journal de Home Assistant, et renvoie les entrées les plus récentes de la période.
 - **`ha_get_history` ignorait `entity_id`** — il ne lisait que `entity_ids` : un agent qui envoyait le singulier, comme le prend `ha_get_logbook`, recevait *entity_ids must be provided* du recorder. Les deux sont acceptés désormais, et un appel sans l'un ni l'autre indique lequel fournir.
+
+### Modifié
+
+- **`hacs.json` ne déclare plus H.A.C.A réservé à la France** — sa clé `country`, un reliquat, pouvait le masquer aux utilisateurs hors de France dans le catalogue de la Marketplace (ex-HACS). Rien ne change pour une installation existante.
 
 ---
 ## [1.8.1] — 2026-09-26 — Ignorer des entités avec un pattern glob, plus d'entités signalées à tort désactivées ou disparues, chaque écriture vérifiée comme Home Assistant la relira, fichiers YAML réécrits dans leur propre mise en page, corrections IA et sauvegardes réparées

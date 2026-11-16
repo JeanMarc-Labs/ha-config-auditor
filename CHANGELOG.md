@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 Versioning: [Semantic Versioning](https://semver.org/)
 ---
-## [1.8.2] — 2026-10-04 — Automations disabled in the entity registry are no longer audited as if they ran
+## [1.8.2] — 2026-11-16 — Automations disabled in the entity registry no longer audited as if they ran, an option to ignore automations that are off, Repairs no longer recreated on every scan, MCP dashboard, logbook, history and explain tools repaired
 
 ### Added
 
@@ -19,6 +19,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`haca_explain_issue` failed on every call since 1.8.0** — splitting the MCP server into a package left three of its imports pointing inside it, so it stopped with `No module named '…mcp_server.conversation'`. It runs again, its prompt follows the notification language, and its cache, read and written in two different places, now reuses an answer until the issue's message or the language changes.
 - **`ha_get_logbook` never returned an entry** — it called a logbook function Home Assistant has never had, so it only ever answered *Logbook API unavailable*. It now runs the query Home Assistant's own logbook API runs, and returns the most recent entries of the period.
 - **`ha_get_history` ignored `entity_id`** — it read only `entity_ids`, so an agent that sent the singular, as `ha_get_logbook` takes it, got *entity_ids must be provided* from the recorder. Both are accepted now, and a call with neither says which one to give.
+
+### Changed
+
+- **`hacs.json` no longer declares H.A.C.A France-only** — its leftover `country` key could hide H.A.C.A from users outside France in the Marketplace (formerly HACS) catalog. Nothing changes for an existing install.
 
 ---
 ## [1.8.1] — 2026-09-26 — Ignore entities with a glob pattern, no more entities falsely reported disabled or missing, every write checked the way Home Assistant reads it back, YAML files kept in their own layout, AI fixes and backups repaired
